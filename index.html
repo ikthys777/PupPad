@@ -105,6 +105,32 @@ var tpId = 0, xmId = 0;
 var longPressTimer = null, longPressPos = null, didLongPress = false;
 var LONG_PRESS_MS = 1000;
 
+/* === Alert Flash + Vibrate === */
+var alertInterval = null;
+function triggerAlertEffect() {
+  if (alertInterval) clearInterval(alertInterval);
+  var flash = document.getElementById('alertFlash');
+  var on = true;
+  var count = 0;
+  var totalBlinks = 20; /* 20 blinks over 4 seconds = 200ms per blink */
+  alertInterval = setInterval(function() {
+    if (count >= totalBlinks) {
+      clearInterval(alertInterval);
+      alertInterval = null;
+      if (flash) flash.style.opacity = '0';
+      return;
+    }
+    if (on) {
+      if (flash) flash.style.opacity = '0.35';
+      try { navigator.vibrate(150); } catch(e) {}
+    } else {
+      if (flash) flash.style.opacity = '0';
+    }
+    on = !on;
+    count++;
+  }, 200);
+}
+
 /* === Build Sweep Lines HTML === */
 function buildSweepLines() {
   var h = '';
@@ -119,10 +145,10 @@ function buildSweepLines() {
 /* === Build Button HTML === */
 function btnHTML(btn) {
   var isOn = state.pid === btn.id;
-  return '<div class="pad-btn" data-id="'+btn.id+'" style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 10px 10px;border-radius:14px;cursor:pointer;background:'+(isOn?'rgba(255,255,255,0.08)':'rgba(255,255,255,0.03)')+';box-shadow:'+(isOn?'0 0 12px '+btn.glow+'44,inset 0 0 8px '+btn.glow+'22':'inset 0 1px 0 rgba(255,255,255,0.05),0 2px 4px rgba(0,0,0,0.25)')+';position:relative;overflow:hidden;min-width:100px;transition:all 0.15s">'
+  return '<div class="pad-btn" data-id="'+btn.id+'" style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 12px 12px;border-radius:16px;cursor:pointer;background:'+(isOn?'rgba(255,255,255,0.08)':'rgba(255,255,255,0.03)')+';box-shadow:'+(isOn?'0 0 12px '+btn.glow+'44,inset 0 0 8px '+btn.glow+'22':'inset 0 1px 0 rgba(255,255,255,0.05),0 2px 4px rgba(0,0,0,0.25)')+';position:relative;overflow:hidden;min-width:120px;transition:all 0.15s">'
     +'<div style="position:absolute;bottom:-4px;right:-5px;opacity:'+(isOn?0.12:0.03)+';transition:opacity 0.3s;pointer-events:none">'+pawSVG(20,btn.glow)+'</div>'
-    +'<div style="width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;background:linear-gradient(145deg,'+btn.color+','+btn.color+'bb);box-shadow:'+(isOn?'0 0 16px '+btn.glow+'77,0 3px 8px '+btn.color+'55':'0 3px 8px '+btn.color+'44,inset 0 1px 0 rgba(255,255,255,0.2)')+';transition:box-shadow 0.2s">'+btn.emoji+'</div>'
-    +'<span style="color:'+(isOn?btn.glow:'rgba(178,210,255,0.6)')+';font-size:10px;font-weight:700;letter-spacing:0.3px;transition:color 0.2s">'+btn.label+'</span>'
+    +'<div style="width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:34px;background:linear-gradient(145deg,'+btn.color+','+btn.color+'bb);box-shadow:'+(isOn?'0 0 16px '+btn.glow+'77,0 3px 8px '+btn.color+'55':'0 3px 8px '+btn.color+'44,inset 0 1px 0 rgba(255,255,255,0.2)')+';transition:box-shadow 0.2s">'+btn.emoji+'</div>'
+    +'<span style="color:'+(isOn?btn.glow:'rgba(178,210,255,0.6)')+';font-size:12px;font-weight:700;letter-spacing:0.3px;transition:color 0.2s">'+btn.label+'</span>'
     +'</div>';
 }
 
@@ -237,6 +263,9 @@ function render() {
     +'<div style="width:24px;height:2px;border-radius:1px;background:linear-gradient(90deg,rgba(56,189,248,0.25),transparent)"></div>'
     +'</div>'
 
+    /* Alert flash overlay */
+    +'<div id="alertFlash" style="position:fixed;top:0;left:0;right:0;bottom:0;background:radial-gradient(circle,#FF4444,#CC0000);opacity:0;pointer-events:none;z-index:90;transition:opacity 0.05s"></div>'
+
     +'</div>';
 
   attachEvents();
@@ -251,6 +280,7 @@ function attachEvents() {
       var btn = BTNS_LEFT.concat(BTNS_RIGHT).find(function(b){return b.id===id});
       if (!btn) return;
       doSound(btn.sound);
+      if (btn.id === 3) triggerAlertEffect();
       state.pid = btn.id;
       state.active = btn;
       state.pop = btn.msg;
@@ -259,7 +289,7 @@ function attachEvents() {
       activeTimer = setTimeout(function() {
         state.active = null; state.pop = ''; state.pid = -1;
         updateUI();
-      }, 2500);
+      }, btn.id === 3 ? 4500 : 2500);
     });
   });
 
