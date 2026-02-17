@@ -4,7 +4,7 @@
   "description": "Interactive radar pup pad",
   "start_url": "./index.html",
   "display": "fullscreen",
-  "orientation": "any",
+  "orientation": "landscape",
   "background_color": "#0F1D3A",
   "theme_color": "#1E3A5F",
   "icons": [
