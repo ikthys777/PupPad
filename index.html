@@ -309,18 +309,82 @@ function broadcastClear() {
   });
 }
 
-function drawRemoteStroke(x1, y1, x2, y2, color, width) {
-  var cvs = document.getElementById('drawCanvas');
-  if (!cvs) return;
-  var ctx = cvs.getContext('2d');
+/* === Virtual Canvas Coordinate System === */
+var VCANVAS_W = 1600;
+var VCANVAS_H = 900;
+var canvasMapping = null;
+
+function calcMapping(cvs) {
+  var rect = cvs.getBoundingClientRect();
+  var sw = rect.width, sh = rect.height;
+  var scale = Math.min(sw / VCANVAS_W, sh / VCANVAS_H);
+  var ox = (sw - VCANVAS_W * scale) / 2;
+  var oy = (sh - VCANVAS_H * scale) / 2;
+  canvasMapping = { scale: scale, ox: ox, oy: oy, sw: sw, sh: sh };
+  return canvasMapping;
+}
+
+function screenToVirtual(sx, sy) {
+  var m = canvasMapping;
+  if (!m) return { x: 0, y: 0 };
+  return { x: (sx - m.ox) / m.scale, y: (sy - m.oy) / m.scale };
+}
+
+function virtualToScreen(vx, vy) {
+  var m = canvasMapping;
+  if (!m) return { x: 0, y: 0 };
+  return { x: vx * m.scale + m.ox, y: vy * m.scale + m.oy };
+}
+
+function scaledLineWidth(vw) {
+  var m = canvasMapping;
+  if (!m) return vw;
+  return vw * m.scale;
+}
+
+function drawStrokeOnCanvas(ctx, vx1, vy1, vx2, vy2, color, vwidth) {
+  var p1 = virtualToScreen(vx1, vy1);
+  var p2 = virtualToScreen(vx2, vy2);
   ctx.strokeStyle = color;
-  ctx.lineWidth = width;
+  ctx.lineWidth = scaledLineWidth(vwidth);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.beginPath();
-  ctx.moveTo(x1 * cvs.width, y1 * cvs.height);
-  ctx.lineTo(x2 * cvs.width, y2 * cvs.height);
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
   ctx.stroke();
+}
+
+function drawRemoteStroke(x1, y1, x2, y2, color, width) {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs || !canvasMapping) return;
+  var ctx = cvs.getContext('2d');
+  drawStrokeOnCanvas(ctx, x1, y1, x2, y2, color, width);
+}
+
+function drawCanvasBorder() {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs || !canvasMapping) return;
+  var ctx = cvs.getContext('2d');
+  var tl = virtualToScreen(0, 0);
+  var br = virtualToScreen(VCANVAS_W, VCANVAS_H);
+  var w = br.x - tl.x, h = br.y - tl.y;
+  /* subtle paper background */
+  ctx.fillStyle = 'rgba(0,255,136,0.018)';
+  ctx.fillRect(tl.x, tl.y, w, h);
+  /* border */
+  ctx.strokeStyle = 'rgba(0,255,136,0.12)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(tl.x, tl.y, w, h);
+  /* corner marks */
+  var cm = 12;
+  ctx.strokeStyle = 'rgba(0,255,136,0.25)';
+  ctx.lineWidth = 2;
+  [[tl.x,tl.y,1,1],[br.x,tl.y,-1,1],[tl.x,br.y,1,-1],[br.x,br.y,-1,-1]].forEach(function(c) {
+    ctx.beginPath();
+    ctx.moveTo(c[0], c[1] + cm*c[3]); ctx.lineTo(c[0], c[1]); ctx.lineTo(c[0] + cm*c[2], c[1]);
+    ctx.stroke();
+  });
 }
 
 function clearLocalCanvas() {
@@ -328,6 +392,7 @@ function clearLocalCanvas() {
   if (!cvs) return;
   var ctx = cvs.getContext('2d');
   ctx.clearRect(0, 0, cvs.width, cvs.height);
+  if (canvasMapping) drawCanvasBorder();
 }
 
 var DRAW_COLORS = ['#FBBF24','#F87171','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
@@ -358,7 +423,7 @@ function openCanvas() {
     +'</div></div>';
 
   /* canvas area */
-  var canvasArea = '<div style="flex:1;position:relative;overflow:hidden">'
+  var canvasArea = '<div id="canvasWrap" style="flex:1;position:relative;overflow:hidden">'
     +'<canvas id="drawCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;cursor:crosshair"></canvas>'
     +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,255,136,0.015) 3px,rgba(0,255,136,0.015) 4px);pointer-events:none"></div>'
     +'</div>';
@@ -380,36 +445,30 @@ function openCanvas() {
   overlay.innerHTML = topBar + canvasArea + toolbar;
   document.body.appendChild(overlay);
 
-  /* size canvas to pixel ratio */
+  /* size canvas to pixel ratio and compute virtual mapping */
   var cvs = document.getElementById('drawCanvas');
   var rect = cvs.getBoundingClientRect();
-  cvs.width = rect.width * (window.devicePixelRatio || 1);
-  cvs.height = rect.height * (window.devicePixelRatio || 1);
+  var dpr = window.devicePixelRatio || 1;
+  cvs.width = rect.width * dpr;
+  cvs.height = rect.height * dpr;
   var ctx = cvs.getContext('2d');
-  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+  ctx.scale(dpr, dpr);
+  calcMapping(cvs);
+  drawCanvasBorder();
 
-  /* drawing events */
+  /* drawing events — all in virtual coordinates */
   cvs.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     isDrawing = true;
     var r = cvs.getBoundingClientRect();
-    lastPt = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+    lastPt = screenToVirtual(e.clientX - r.left, e.clientY - r.top);
   });
   cvs.addEventListener('pointermove', function(e) {
     if (!isDrawing || !lastPt) return;
     e.preventDefault();
     var r = cvs.getBoundingClientRect();
-    var pt = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
-    /* draw locally */
-    ctx.strokeStyle = drawColor;
-    ctx.lineWidth = drawWidth;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(lastPt.x * r.width, lastPt.y * r.height);
-    ctx.lineTo(pt.x * r.width, pt.y * r.height);
-    ctx.stroke();
-    /* broadcast */
+    var pt = screenToVirtual(e.clientX - r.left, e.clientY - r.top);
+    drawStrokeOnCanvas(ctx, lastPt.x, lastPt.y, pt.x, pt.y, drawColor, drawWidth);
     broadcastStroke(lastPt.x, lastPt.y, pt.x, pt.y, drawColor, drawWidth);
     lastPt = pt;
   });
@@ -453,6 +512,7 @@ function closeCanvas() {
   canvasOpen = false;
   isDrawing = false;
   lastPt = null;
+  canvasMapping = null;
   var overlay = document.getElementById('canvasOverlay');
   if (overlay) overlay.parentNode.removeChild(overlay);
   doSound('blip');
