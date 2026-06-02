@@ -739,12 +739,25 @@ function startCameraStream(video, facing) {
   if (cameraStream) {
     cameraStream.getTracks().forEach(function(t) { t.stop(); });
   }
-  var constraints = { video: { facingMode: facing, width: { ideal: 4032 }, height: { ideal: 3024 } }, audio: false };
-  return navigator.mediaDevices.getUserMedia(constraints).then(function(stream) {
-    cameraStream = stream;
-    video.srcObject = stream;
-    return video.play();
-  });
+  /* cascading fallback: try max res, then medium, then basic, then bare minimum */
+  var attempts = [
+    { video: { facingMode: facing, width: { ideal: 4032 }, height: { ideal: 3024 } }, audio: false },
+    { video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+    { video: { facingMode: facing }, audio: false },
+    { video: true, audio: false }
+  ];
+  function tryNext(i) {
+    if (i >= attempts.length) return Promise.reject(new Error('No camera available'));
+    return navigator.mediaDevices.getUserMedia(attempts[i]).then(function(stream) {
+      cameraStream = stream;
+      video.srcObject = stream;
+      return video.play();
+    }).catch(function(e) {
+      console.log('Camera attempt ' + i + ' failed:', e.name);
+      return tryNext(i + 1);
+    });
+  }
+  return tryNext(0);
 }
 
 function openCamera() {
