@@ -1034,50 +1034,47 @@ function openCamera() {
     if (currentIdx < 0) currentIdx = 0;
 
     var full = document.createElement('div');
-    full.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Trebuchet MS,sans-serif;touch-action:none';
+    full.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Trebuchet MS,sans-serif';
 
-    var touchStartX = 0, touchDeltaX = 0, swiping = false;
+    var touchStartX = 0, touchDeltaX = 0;
 
     function renderFullImage() {
       var total = cameraGallery.length;
       full.innerHTML = ''
-        +'<div style="position:absolute;top:8px;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:6px">'
+        +'<div style="position:absolute;top:8px;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:6px;z-index:5">'
         +'<span style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700">'+(currentIdx+1)+' / '+total+'</span>'
         +'</div>'
-        +'<img id="galleryImg" src="'+cameraGallery[currentIdx]+'" style="max-width:95%;max-height:85%;border-radius:12px;box-shadow:0 0 30px rgba(236,72,153,0.3);user-select:none;-webkit-user-drag:none;transition:transform 0.15s ease-out"/>'
+        +'<img id="galleryImg" src="'+cameraGallery[currentIdx]+'" style="max-width:95%;max-height:85%;border-radius:12px;box-shadow:0 0 30px rgba(236,72,153,0.3);user-select:none;-webkit-user-drag:none;transition:transform 0.15s ease-out;touch-action:pan-y"/>'
         +'<div style="position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:4px">'
         +cameraGallery.map(function(u, i) {
           return '<div style="width:8px;height:8px;border-radius:50%;background:'+(i===currentIdx?'#F472B6':'rgba(148,197,255,0.2)')+'"></div>';
         }).join('')
         +'</div>'
-        +(currentIdx > 0 ? '<div style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:8px" id="galleryPrev">\u276E</div>' : '')
-        +(currentIdx < total-1 ? '<div style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:8px" id="galleryNext">\u276F</div>' : '')
-        +'<div id="galleryCloseBtn" style="position:absolute;top:6px;right:10px;color:rgba(148,197,255,0.5);font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>';
+        +(currentIdx > 0 ? '<div style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:12px;z-index:5" id="galleryPrev">\u276E</div>' : '')
+        +(currentIdx < total-1 ? '<div style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:12px;z-index:5" id="galleryNext">\u276F</div>' : '')
+        +'<div id="galleryCloseBtn" style="position:absolute;top:6px;right:10px;color:rgba(148,197,255,0.5);font-size:12px;font-weight:700;padding:6px 14px;border-radius:8px;background:rgba(255,255,255,0.1);cursor:pointer;z-index:5">CLOSE</div>';
 
-      document.getElementById('galleryCloseBtn').addEventListener('click', function(e) {
-        e.stopPropagation();
+      document.getElementById('galleryCloseBtn').addEventListener('click', function() {
         if (full.parentNode) full.parentNode.removeChild(full);
       });
       var prev = document.getElementById('galleryPrev');
-      if (prev) prev.addEventListener('click', function(e) { e.stopPropagation(); currentIdx--; renderFullImage(); });
+      if (prev) prev.addEventListener('click', function() { currentIdx--; renderFullImage(); });
       var next = document.getElementById('galleryNext');
-      if (next) next.addEventListener('click', function(e) { e.stopPropagation(); currentIdx++; renderFullImage(); });
+      if (next) next.addEventListener('click', function() { currentIdx++; renderFullImage(); });
     }
 
-    /* swipe support */
-    full.addEventListener('pointerdown', function(e) {
-      touchStartX = e.clientX;
-      touchDeltaX = 0;
-      swiping = true;
-    });
-    full.addEventListener('pointermove', function(e) {
-      if (!swiping) return;
-      touchDeltaX = e.clientX - touchStartX;
-      var img = document.getElementById('galleryImg');
-      if (img) img.style.transform = 'translateX('+touchDeltaX+'px)';
-    });
-    full.addEventListener('pointerup', function() {
-      swiping = false;
+    /* swipe via touch events — more reliable on mobile than pointer events */
+    full.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+    }, {passive: true});
+    full.addEventListener('touchmove', function(e) {
+      if (e.touches.length === 1) {
+        touchDeltaX = e.touches[0].clientX - touchStartX;
+        var img = document.getElementById('galleryImg');
+        if (img) img.style.transform = 'translateX('+touchDeltaX+'px)';
+      }
+    }, {passive: true});
+    full.addEventListener('touchend', function() {
       var threshold = 60;
       if (touchDeltaX > threshold && currentIdx > 0) {
         currentIdx--;
