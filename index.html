@@ -8,6 +8,7 @@
 <meta name="theme-color" content="#1E3A5F">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <title>Pup Pad</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -92,7 +93,7 @@ function doSound(type) {
 var BTNS_LEFT=[
   {id:0,label:'Comms',color:'#3B82F6',glow:'#60A5FA',emoji:'\uD83D\uDCE1',sound:'ping',msg:'Signal locked!',bg:'#1e3a8a'},
   {id:1,label:'Map',color:'#10B981',glow:'#34D399',emoji:'\uD83D\uDDFA',sound:'chime',msg:'Coordinates loaded!',bg:'#064e3b'},
-  {id:2,label:'Scanner',color:'#F59E0B',glow:'#FBBF24',emoji:'\uD83D\uDD0D',sound:'scan',msg:'Scanning area...',bg:'#78350f'},
+  {id:2,label:'Draw',color:'#F59E0B',glow:'#FBBF24',emoji:'\uD83C\uDFA8',sound:'scan',msg:'Canvas open!',bg:'#78350f'},
   {id:3,label:'Alert',color:'#EF4444',glow:'#F87171',emoji:'\uD83D\uDEA8',sound:'alert',msg:'Alert sent!',bg:'#7f1d1d'}
 ];
 var BTNS_RIGHT=[
@@ -253,6 +254,210 @@ function startPolling() {
   }
 }
 
+/* === Shared Drawing Canvas === */
+var sbClient = null;
+var canvasChannel = null;
+var canvasOpen = false;
+var drawColor = '#FBBF24';
+var drawWidth = 4;
+var isDrawing = false;
+var lastPt = null;
+
+function getSupabaseClient() {
+  if (sbClient) return sbClient;
+  if (!isSupabaseConfigured()) return null;
+  try {
+    sbClient = supabase.createClient(supabaseUrl, supabaseKey);
+    return sbClient;
+  } catch(e) { console.log('SB client error:', e); return null; }
+}
+
+function joinCanvasChannel() {
+  var client = getSupabaseClient();
+  if (!client) return;
+  if (canvasChannel) return;
+  canvasChannel = client.channel('puppad-canvas', {
+    config: { broadcast: { self: false } }
+  });
+  canvasChannel.on('broadcast', { event: 'stroke' }, function(payload) {
+    var d = payload.payload;
+    drawRemoteStroke(d.x1, d.y1, d.x2, d.y2, d.color, d.width);
+  });
+  canvasChannel.on('broadcast', { event: 'clear' }, function() {
+    clearLocalCanvas();
+  });
+  canvasChannel.subscribe(function(status) {
+    if (status === 'SUBSCRIBED') console.log('Canvas channel joined');
+  });
+}
+
+function broadcastStroke(x1, y1, x2, y2, color, width) {
+  if (!canvasChannel) return;
+  canvasChannel.send({
+    type: 'broadcast',
+    event: 'stroke',
+    payload: { x1: x1, y1: y1, x2: x2, y2: y2, color: color, width: width, did: deviceId }
+  });
+}
+
+function broadcastClear() {
+  if (!canvasChannel) return;
+  canvasChannel.send({
+    type: 'broadcast',
+    event: 'clear',
+    payload: { did: deviceId }
+  });
+}
+
+function drawRemoteStroke(x1, y1, x2, y2, color, width) {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs) return;
+  var ctx = cvs.getContext('2d');
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x1 * cvs.width, y1 * cvs.height);
+  ctx.lineTo(x2 * cvs.width, y2 * cvs.height);
+  ctx.stroke();
+}
+
+function clearLocalCanvas() {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs) return;
+  var ctx = cvs.getContext('2d');
+  ctx.clearRect(0, 0, cvs.width, cvs.height);
+}
+
+var DRAW_COLORS = ['#FBBF24','#F87171','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
+
+function openCanvas() {
+  if (!isSupabaseConfigured()) {
+    state.pop = 'Connect Supabase first!';
+    updateUI();
+    return;
+  }
+  canvasOpen = true;
+  joinCanvasChannel();
+  doSound('scan');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'canvasOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+
+  /* top bar */
+  var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(255,255,255,0.03)">'
+    +'<div style="display:flex;align-items:center;gap:6px">'
+    +'<svg width="16" height="16" viewBox="0 0 100 100" fill="#FBBF24"><ellipse cx="50" cy="68" rx="20" ry="18"/><ellipse cx="24" cy="44" rx="9" ry="11" transform="rotate(-20 24 44)"/><ellipse cx="76" cy="44" rx="9" ry="11" transform="rotate(20 76 44)"/><ellipse cx="40" cy="26" rx="8" ry="11" transform="rotate(-8 40 26)"/><ellipse cx="60" cy="26" rx="8" ry="11" transform="rotate(8 60 26)"/></svg>'
+    +'<span style="color:#FBBF24;font-size:12px;font-weight:700;letter-spacing:1px">PAW CANVAS</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;align-items:center">'
+    +'<div id="canvasClearBtn" style="color:#F87171;font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;background:rgba(239,68,68,0.12);cursor:pointer">CLEAR</div>'
+    +'<div id="canvasCloseBtn" style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
+    +'</div></div>';
+
+  /* canvas area */
+  var canvasArea = '<div style="flex:1;position:relative;overflow:hidden">'
+    +'<canvas id="drawCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;cursor:crosshair"></canvas>'
+    +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,255,136,0.015) 3px,rgba(0,255,136,0.015) 4px);pointer-events:none"></div>'
+    +'</div>';
+
+  /* bottom toolbar */
+  var colorBtns = '';
+  DRAW_COLORS.forEach(function(c, i) {
+    var sel = c === drawColor;
+    colorBtns += '<div class="color-pick" data-color="'+c+'" style="width:28px;height:28px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid '+(sel?'#fff':'rgba(255,255,255,0.1)')+';box-shadow:'+(sel?'0 0 8px '+c+'77':'none')+';transition:all 0.15s"></div>';
+  });
+  var toolbar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(255,255,255,0.03)">'
+    +'<div style="display:flex;gap:6px;align-items:center">'+colorBtns+'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center">'
+    +'<div class="size-pick" data-size="3" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;background:'+(drawWidth<=3?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.04)')+'"><div style="width:6px;height:6px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="size-pick" data-size="6" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;background:'+(drawWidth>3&&drawWidth<=6?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.04)')+'"><div style="width:10px;height:10px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="size-pick" data-size="12" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;background:'+(drawWidth>6?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.04)')+'"><div style="width:14px;height:14px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'</div></div>';
+
+  overlay.innerHTML = topBar + canvasArea + toolbar;
+  document.body.appendChild(overlay);
+
+  /* size canvas to pixel ratio */
+  var cvs = document.getElementById('drawCanvas');
+  var rect = cvs.getBoundingClientRect();
+  cvs.width = rect.width * (window.devicePixelRatio || 1);
+  cvs.height = rect.height * (window.devicePixelRatio || 1);
+  var ctx = cvs.getContext('2d');
+  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+
+  /* drawing events */
+  cvs.addEventListener('pointerdown', function(e) {
+    e.preventDefault();
+    isDrawing = true;
+    var r = cvs.getBoundingClientRect();
+    lastPt = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  });
+  cvs.addEventListener('pointermove', function(e) {
+    if (!isDrawing || !lastPt) return;
+    e.preventDefault();
+    var r = cvs.getBoundingClientRect();
+    var pt = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+    /* draw locally */
+    ctx.strokeStyle = drawColor;
+    ctx.lineWidth = drawWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lastPt.x * r.width, lastPt.y * r.height);
+    ctx.lineTo(pt.x * r.width, pt.y * r.height);
+    ctx.stroke();
+    /* broadcast */
+    broadcastStroke(lastPt.x, lastPt.y, pt.x, pt.y, drawColor, drawWidth);
+    lastPt = pt;
+  });
+  cvs.addEventListener('pointerup', function() { isDrawing = false; lastPt = null; });
+  cvs.addEventListener('pointerleave', function() { isDrawing = false; lastPt = null; });
+
+  /* toolbar events */
+  document.querySelectorAll('.color-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      drawColor = el.dataset.color;
+      doSound('keyTap');
+      document.querySelectorAll('.color-pick').forEach(function(c) {
+        var s = c.dataset.color === drawColor;
+        c.style.border = '2px solid ' + (s ? '#fff' : 'rgba(255,255,255,0.1)');
+        c.style.boxShadow = s ? '0 0 8px ' + c.dataset.color + '77' : 'none';
+      });
+    });
+  });
+  document.querySelectorAll('.size-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      drawWidth = parseInt(el.dataset.size);
+      doSound('keyTap');
+      document.querySelectorAll('.size-pick').forEach(function(s) {
+        var sz = parseInt(s.dataset.size);
+        s.style.background = sz === drawWidth ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)';
+      });
+    });
+  });
+
+  document.getElementById('canvasClearBtn').addEventListener('click', function() {
+    clearLocalCanvas();
+    broadcastClear();
+    doSound('scan');
+  });
+  document.getElementById('canvasCloseBtn').addEventListener('click', function() {
+    closeCanvas();
+  });
+}
+
+function closeCanvas() {
+  canvasOpen = false;
+  isDrawing = false;
+  lastPt = null;
+  var overlay = document.getElementById('canvasOverlay');
+  if (overlay) overlay.parentNode.removeChild(overlay);
+  doSound('blip');
+}
+
 /* === Sweep Lines === */
 function buildSweepLines() {
   var h = '';
@@ -367,6 +572,7 @@ function attachEvents() {
       if (!btn) return;
       doSound(btn.sound);
       if (btn.id === 3) { triggerAlertEffect(); pushAlert(); }
+      if (btn.id === 2) { openCanvas(); return; }
       state.pid = btn.id;
       state.active = btn;
       state.pop = btn.msg;
