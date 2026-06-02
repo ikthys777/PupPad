@@ -262,6 +262,16 @@ var drawColor = '#FBBF24';
 var drawWidth = 4;
 var isDrawing = false;
 var lastPt = null;
+var drawTool = 'pen';
+var rainbowHue = 0;
+var selectedEmoji = '\uD83D\uDC3E';
+var zoomLevel = 1.0;
+var ZOOM_MIN = 0.5;
+var ZOOM_MAX = 4.0;
+var ZOOM_STEP = 0.25;
+
+var DRAW_COLORS = ['#FBBF24','#F87171','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
+var STAMP_EMOJIS = ['\uD83D\uDC3E','\uD83C\uDF1F','\u2B50','\uD83D\uDC36','\uD83D\uDC31','\uD83E\uDDB4','\uD83C\uDFBE','\u2764\uFE0F','\uD83D\uDD25','\uD83C\uDF08'];
 
 function getSupabaseClient() {
   if (sbClient) return sbClient;
@@ -281,7 +291,11 @@ function joinCanvasChannel() {
   });
   canvasChannel.on('broadcast', { event: 'stroke' }, function(payload) {
     var d = payload.payload;
-    drawRemoteStroke(d.x1, d.y1, d.x2, d.y2, d.color, d.width);
+    drawRemoteStroke(d.x1, d.y1, d.x2, d.y2, d.color, d.width, d.eraser);
+  });
+  canvasChannel.on('broadcast', { event: 'stamp' }, function(payload) {
+    var d = payload.payload;
+    drawRemoteStamp(d.emoji, d.vx, d.vy, d.size);
   });
   canvasChannel.on('broadcast', { event: 'clear' }, function() {
     clearLocalCanvas();
@@ -291,22 +305,25 @@ function joinCanvasChannel() {
   });
 }
 
-function broadcastStroke(x1, y1, x2, y2, color, width) {
+function broadcastStroke(x1, y1, x2, y2, color, width, eraser) {
   if (!canvasChannel) return;
   canvasChannel.send({
-    type: 'broadcast',
-    event: 'stroke',
-    payload: { x1: x1, y1: y1, x2: x2, y2: y2, color: color, width: width, did: deviceId }
+    type: 'broadcast', event: 'stroke',
+    payload: { x1:x1, y1:y1, x2:x2, y2:y2, color:color, width:width, eraser:!!eraser, did:deviceId }
+  });
+}
+
+function broadcastStamp(emoji, vx, vy, size) {
+  if (!canvasChannel) return;
+  canvasChannel.send({
+    type: 'broadcast', event: 'stamp',
+    payload: { emoji:emoji, vx:vx, vy:vy, size:size, did:deviceId }
   });
 }
 
 function broadcastClear() {
   if (!canvasChannel) return;
-  canvasChannel.send({
-    type: 'broadcast',
-    event: 'clear',
-    payload: { did: deviceId }
-  });
+  canvasChannel.send({ type: 'broadcast', event: 'clear', payload: { did:deviceId } });
 }
 
 /* === Virtual Canvas Coordinate System === */
@@ -317,95 +334,116 @@ var canvasMapping = null;
 function calcMapping(cvs) {
   var rect = cvs.getBoundingClientRect();
   var sw = rect.width, sh = rect.height;
-  var scale = Math.min(sw / VCANVAS_W, sh / VCANVAS_H);
-  var ox = (sw - VCANVAS_W * scale) / 2;
-  var oy = (sh - VCANVAS_H * scale) / 2;
-  canvasMapping = { scale: scale, ox: ox, oy: oy, sw: sw, sh: sh };
+  var baseScale = Math.min(sw / VCANVAS_W, sh / VCANVAS_H);
+  var scale = baseScale * zoomLevel;
+  var ox = sw / 2 - (VCANVAS_W / 2) * scale;
+  var oy = sh / 2 - (VCANVAS_H / 2) * scale;
+  canvasMapping = { scale:scale, ox:ox, oy:oy, sw:sw, sh:sh };
   return canvasMapping;
 }
 
 function screenToVirtual(sx, sy) {
   var m = canvasMapping;
-  if (!m) return { x: 0, y: 0 };
-  return { x: (sx - m.ox) / m.scale, y: (sy - m.oy) / m.scale };
+  if (!m) return {x:0, y:0};
+  return { x:(sx - m.ox) / m.scale, y:(sy - m.oy) / m.scale };
 }
 
 function virtualToScreen(vx, vy) {
   var m = canvasMapping;
-  if (!m) return { x: 0, y: 0 };
+  if (!m) return {x:0, y:0};
   return { x: vx * m.scale + m.ox, y: vy * m.scale + m.oy };
 }
 
-function scaledLineWidth(vw) {
-  var m = canvasMapping;
-  if (!m) return vw;
-  return vw * m.scale;
+function scaledWidth(vw) {
+  return canvasMapping ? vw * canvasMapping.scale : vw;
 }
 
-function drawStrokeOnCanvas(ctx, vx1, vy1, vx2, vy2, color, vwidth) {
+/* === Drawing Primitives === */
+function drawStrokeOnCanvas(ctx, vx1, vy1, vx2, vy2, color, vwidth, eraser) {
   var p1 = virtualToScreen(vx1, vy1);
   var p2 = virtualToScreen(vx2, vy2);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = scaledLineWidth(vwidth);
+  ctx.save();
+  if (eraser) {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(255,255,255,1)';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = color;
+  }
+  ctx.lineWidth = scaledWidth(eraser ? vwidth * 3 : vwidth);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.beginPath();
   ctx.moveTo(p1.x, p1.y);
   ctx.lineTo(p2.x, p2.y);
   ctx.stroke();
+  ctx.restore();
 }
 
-function drawRemoteStroke(x1, y1, x2, y2, color, width) {
-  var cvs = document.getElementById('drawCanvas');
-  if (!cvs || !canvasMapping) return;
-  var ctx = cvs.getContext('2d');
-  drawStrokeOnCanvas(ctx, x1, y1, x2, y2, color, width);
+function drawStampOnCanvas(ctx, emoji, vx, vy, vsize) {
+  var p = virtualToScreen(vx, vy);
+  var sz = scaledWidth(vsize);
+  ctx.font = sz + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, p.x, p.y);
 }
 
-function drawCanvasBorder() {
+function drawRemoteStroke(x1, y1, x2, y2, color, width, eraser) {
   var cvs = document.getElementById('drawCanvas');
   if (!cvs || !canvasMapping) return;
-  var ctx = cvs.getContext('2d');
-  var tl = virtualToScreen(0, 0);
-  var br = virtualToScreen(VCANVAS_W, VCANVAS_H);
-  var w = br.x - tl.x, h = br.y - tl.y;
-  /* subtle paper background */
-  ctx.fillStyle = 'rgba(0,255,136,0.018)';
-  ctx.fillRect(tl.x, tl.y, w, h);
-  /* border */
-  ctx.strokeStyle = 'rgba(0,255,136,0.12)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(tl.x, tl.y, w, h);
-  /* corner marks */
-  var cm = 12;
-  ctx.strokeStyle = 'rgba(0,255,136,0.25)';
-  ctx.lineWidth = 2;
-  [[tl.x,tl.y,1,1],[br.x,tl.y,-1,1],[tl.x,br.y,1,-1],[br.x,br.y,-1,-1]].forEach(function(c) {
-    ctx.beginPath();
-    ctx.moveTo(c[0], c[1] + cm*c[3]); ctx.lineTo(c[0], c[1]); ctx.lineTo(c[0] + cm*c[2], c[1]);
-    ctx.stroke();
-  });
+  drawStrokeOnCanvas(cvs.getContext('2d'), x1, y1, x2, y2, color, width, eraser);
+}
+
+function drawRemoteStamp(emoji, vx, vy, size) {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs || !canvasMapping) return;
+  drawStampOnCanvas(cvs.getContext('2d'), emoji, vx, vy, size);
 }
 
 function clearLocalCanvas() {
   var cvs = document.getElementById('drawCanvas');
   if (!cvs) return;
-  var ctx = cvs.getContext('2d');
-  ctx.clearRect(0, 0, cvs.width, cvs.height);
-  if (canvasMapping) drawCanvasBorder();
+  cvs.getContext('2d').clearRect(0, 0, cvs.width, cvs.height);
 }
 
-var DRAW_COLORS = ['#FBBF24','#F87171','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
+/* === Rainbow Color Helper === */
+function hslToHex(h) {
+  var s = 85, l = 60;
+  var c = (1 - Math.abs(2*l/100 - 1)) * s/100;
+  var x = c * (1 - Math.abs((h/60)%2 - 1));
+  var m = l/100 - c/2;
+  var r=0,g=0,b=0;
+  if(h<60){r=c;g=x}else if(h<120){r=x;g=c}else if(h<180){g=c;b=x}
+  else if(h<240){g=x;b=c}else if(h<300){r=x;b=c}else{r=c;b=x}
+  r=Math.round((r+m)*255);g=Math.round((g+m)*255);b=Math.round((b+m)*255);
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+}
 
+/* === Zoom Helper === */
+function applyZoom(cvs, ctx, strokes) {
+  calcMapping(cvs);
+  ctx.clearRect(0, 0, cvs.width, cvs.height);
+  strokes.forEach(function(s) {
+    if (s.type === 'stroke') drawStrokeOnCanvas(ctx, s.x1, s.y1, s.x2, s.y2, s.color, s.width, s.eraser);
+    else if (s.type === 'stamp') drawStampOnCanvas(ctx, s.emoji, s.vx, s.vy, s.size);
+  });
+}
+
+/* === Canvas UI === */
 function openCanvas() {
   if (!isSupabaseConfigured()) {
     state.pop = 'Connect Supabase first!';
-    updateUI();
-    return;
+    updateUI(); return;
   }
   canvasOpen = true;
+  drawTool = 'pen';
+  zoomLevel = 1.0;
+  rainbowHue = 0;
   joinCanvasChannel();
   doSound('scan');
+
+  var strokeHistory = [];
 
   var overlay = document.createElement('div');
   overlay.id = 'canvasOverlay';
@@ -414,38 +452,76 @@ function openCanvas() {
   /* top bar */
   var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(255,255,255,0.03)">'
     +'<div style="display:flex;align-items:center;gap:6px">'
-    +'<svg width="16" height="16" viewBox="0 0 100 100" fill="#FBBF24"><ellipse cx="50" cy="68" rx="20" ry="18"/><ellipse cx="24" cy="44" rx="9" ry="11" transform="rotate(-20 24 44)"/><ellipse cx="76" cy="44" rx="9" ry="11" transform="rotate(20 76 44)"/><ellipse cx="40" cy="26" rx="8" ry="11" transform="rotate(-8 40 26)"/><ellipse cx="60" cy="26" rx="8" ry="11" transform="rotate(8 60 26)"/></svg>'
+    +pawSVG(16,'#FBBF24')
     +'<span style="color:#FBBF24;font-size:12px;font-weight:700;letter-spacing:1px">PAW CANVAS</span>'
     +'</div>'
-    +'<div style="display:flex;gap:8px;align-items:center">'
+    +'<div style="display:flex;gap:6px;align-items:center">'
+    +'<div id="zoomOutBtn" style="color:#93C5FD;font-size:15px;font-weight:700;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:rgba(96,165,250,0.1);cursor:pointer">\u2212</div>'
+    +'<span id="zoomLabel" style="color:rgba(148,197,255,0.45);font-size:10px;font-weight:700;min-width:32px;text-align:center">1.0x</span>'
+    +'<div id="zoomInBtn" style="color:#93C5FD;font-size:15px;font-weight:700;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:rgba(96,165,250,0.1);cursor:pointer">+</div>'
+    +'<div style="width:1px;height:16px;background:rgba(255,255,255,0.08)"></div>'
     +'<div id="canvasClearBtn" style="color:#F87171;font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;background:rgba(239,68,68,0.12);cursor:pointer">CLEAR</div>'
     +'<div id="canvasCloseBtn" style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
     +'</div></div>';
 
-  /* canvas area */
+  /* canvas */
   var canvasArea = '<div id="canvasWrap" style="flex:1;position:relative;overflow:hidden">'
     +'<canvas id="drawCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;cursor:crosshair"></canvas>'
     +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,255,136,0.015) 3px,rgba(0,255,136,0.015) 4px);pointer-events:none"></div>'
     +'</div>';
 
   /* bottom toolbar */
-  var colorBtns = '';
-  DRAW_COLORS.forEach(function(c, i) {
-    var sel = c === drawColor;
-    colorBtns += '<div class="color-pick" data-color="'+c+'" style="width:28px;height:28px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid '+(sel?'#fff':'rgba(255,255,255,0.1)')+';box-shadow:'+(sel?'0 0 8px '+c+'77':'none')+';transition:all 0.15s"></div>';
-  });
-  var toolbar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(255,255,255,0.03)">'
-    +'<div style="display:flex;gap:6px;align-items:center">'+colorBtns+'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center">'
-    +'<div class="size-pick" data-size="3" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;background:'+(drawWidth<=3?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.04)')+'"><div style="width:6px;height:6px;border-radius:50%;background:#CBD5E1"></div></div>'
-    +'<div class="size-pick" data-size="6" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;background:'+(drawWidth>3&&drawWidth<=6?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.04)')+'"><div style="width:10px;height:10px;border-radius:50%;background:#CBD5E1"></div></div>'
-    +'<div class="size-pick" data-size="12" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;background:'+(drawWidth>6?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.04)')+'"><div style="width:14px;height:14px;border-radius:50%;background:#CBD5E1"></div></div>'
+  var toolbar = '<div style="display:flex;align-items:center;padding:5px 10px;background:rgba(255,255,255,0.03);gap:6px;overflow-x:auto">'
+    +'<div style="display:flex;gap:3px;align-items:center;flex-shrink:0">'
+    +'<div class="tool-pick" data-tool="pen" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\u270F\uFE0F</span>Pen</div>'
+    +'<div class="tool-pick" data-tool="eraser" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\uD83E\uDDF9</span>Eraser</div>'
+    +'<div class="tool-pick" data-tool="rainbow" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\uD83C\uDF08</span>Rainbow</div>'
+    +'<div class="tool-pick" data-tool="stamp" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\uD83D\uDCCC</span>Stamp</div>'
+    +'</div>'
+    +'<div style="width:1px;height:20px;background:rgba(255,255,255,0.08);flex-shrink:0"></div>'
+    +'<div id="colorArea" style="display:flex;gap:4px;align-items:center;flex-shrink:0"></div>'
+    +'<div id="emojiArea" style="display:none;gap:4px;align-items:center;flex-shrink:0"></div>'
+    +'<div style="margin-left:auto;display:flex;gap:4px;align-items:center;flex-shrink:0">'
+    +'<div class="size-pick" data-size="3" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:6px;height:6px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="size-pick" data-size="6" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:10px;height:10px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="size-pick" data-size="12" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:14px;height:14px;border-radius:50%;background:#CBD5E1"></div></div>'
     +'</div></div>';
 
   overlay.innerHTML = topBar + canvasArea + toolbar;
   document.body.appendChild(overlay);
 
-  /* size canvas to pixel ratio and compute virtual mapping */
+  /* populate colors */
+  var colorArea = document.getElementById('colorArea');
+  DRAW_COLORS.forEach(function(c) {
+    var el = document.createElement('div');
+    el.className = 'color-pick'; el.dataset.color = c;
+    el.style.cssText = 'width:22px;height:22px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid '+(c===drawColor?'#fff':'rgba(255,255,255,0.1)')+';box-shadow:'+(c===drawColor?'0 0 8px '+c+'77':'none')+';transition:all 0.15s;flex-shrink:0';
+    colorArea.appendChild(el);
+  });
+
+  /* populate emojis */
+  var emojiArea = document.getElementById('emojiArea');
+  STAMP_EMOJIS.forEach(function(em) {
+    var el = document.createElement('div');
+    el.className = 'emoji-pick'; el.dataset.emoji = em; el.textContent = em;
+    el.style.cssText = 'font-size:22px;cursor:pointer;padding:1px 3px;border-radius:6px;background:'+(em===selectedEmoji?'rgba(251,191,36,0.2)':'transparent')+';border:2px solid '+(em===selectedEmoji?'#FBBF24':'transparent')+';flex-shrink:0;transition:all 0.15s';
+    emojiArea.appendChild(el);
+  });
+
+  /* tool UI updater */
+  function updateToolUI() {
+    colorArea.style.display = drawTool === 'pen' ? 'flex' : 'none';
+    emojiArea.style.display = drawTool === 'stamp' ? 'flex' : 'none';
+    document.querySelectorAll('.tool-pick').forEach(function(el) {
+      var on = el.dataset.tool === drawTool;
+      el.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.04)';
+      el.style.color = on ? '#FBBF24' : 'rgba(148,197,255,0.5)';
+    });
+    var cvs = document.getElementById('drawCanvas');
+    if (cvs) cvs.style.cursor = drawTool === 'stamp' ? 'cell' : 'crosshair';
+  }
+
+  /* size canvas */
   var cvs = document.getElementById('drawCanvas');
   var rect = cvs.getBoundingClientRect();
   var dpr = window.devicePixelRatio || 1;
@@ -454,58 +530,124 @@ function openCanvas() {
   var ctx = cvs.getContext('2d');
   ctx.scale(dpr, dpr);
   calcMapping(cvs);
-  drawCanvasBorder();
 
-  /* drawing events — all in virtual coordinates */
+  /* drawing events */
   cvs.addEventListener('pointerdown', function(e) {
     e.preventDefault();
-    isDrawing = true;
     var r = cvs.getBoundingClientRect();
-    lastPt = screenToVirtual(e.clientX - r.left, e.clientY - r.top);
+    var vpt = screenToVirtual(e.clientX - r.left, e.clientY - r.top);
+    if (drawTool === 'stamp') {
+      var sz = drawWidth * 8;
+      drawStampOnCanvas(ctx, selectedEmoji, vpt.x, vpt.y, sz);
+      broadcastStamp(selectedEmoji, vpt.x, vpt.y, sz);
+      strokeHistory.push({type:'stamp', emoji:selectedEmoji, vx:vpt.x, vy:vpt.y, size:sz});
+      doSound('keyTap');
+      return;
+    }
+    isDrawing = true;
+    lastPt = vpt;
   });
+
   cvs.addEventListener('pointermove', function(e) {
     if (!isDrawing || !lastPt) return;
     e.preventDefault();
     var r = cvs.getBoundingClientRect();
     var pt = screenToVirtual(e.clientX - r.left, e.clientY - r.top);
-    drawStrokeOnCanvas(ctx, lastPt.x, lastPt.y, pt.x, pt.y, drawColor, drawWidth);
-    broadcastStroke(lastPt.x, lastPt.y, pt.x, pt.y, drawColor, drawWidth);
+    var color = drawColor;
+    var isEraser = drawTool === 'eraser';
+    if (drawTool === 'rainbow') {
+      color = hslToHex(rainbowHue % 360);
+      rainbowHue += 5;
+    }
+    drawStrokeOnCanvas(ctx, lastPt.x, lastPt.y, pt.x, pt.y, color, drawWidth, isEraser);
+    broadcastStroke(lastPt.x, lastPt.y, pt.x, pt.y, color, drawWidth, isEraser);
+    strokeHistory.push({type:'stroke', x1:lastPt.x, y1:lastPt.y, x2:pt.x, y2:pt.y, color:color, width:drawWidth, eraser:isEraser});
     lastPt = pt;
   });
   cvs.addEventListener('pointerup', function() { isDrawing = false; lastPt = null; });
   cvs.addEventListener('pointerleave', function() { isDrawing = false; lastPt = null; });
 
-  /* toolbar events */
-  document.querySelectorAll('.color-pick').forEach(function(el) {
+  /* wrap remote handlers to track history for zoom redraw */
+  var _origRS = drawRemoteStroke;
+  drawRemoteStroke = function(x1,y1,x2,y2,c,w,er) {
+    _origRS(x1,y1,x2,y2,c,w,er);
+    strokeHistory.push({type:'stroke',x1:x1,y1:y1,x2:x2,y2:y2,color:c,width:w,eraser:er});
+  };
+  var _origST = drawRemoteStamp;
+  drawRemoteStamp = function(em,vx,vy,sz) {
+    _origST(em,vx,vy,sz);
+    strokeHistory.push({type:'stamp',emoji:em,vx:vx,vy:vy,size:sz});
+  };
+  var _origCL = clearLocalCanvas;
+  clearLocalCanvas = function() { _origCL(); strokeHistory.length = 0; };
+
+  /* tool selection */
+  document.querySelectorAll('.tool-pick').forEach(function(el) {
     el.addEventListener('click', function() {
-      drawColor = el.dataset.color;
-      doSound('keyTap');
-      document.querySelectorAll('.color-pick').forEach(function(c) {
-        var s = c.dataset.color === drawColor;
-        c.style.border = '2px solid ' + (s ? '#fff' : 'rgba(255,255,255,0.1)');
-        c.style.boxShadow = s ? '0 0 8px ' + c.dataset.color + '77' : 'none';
-      });
+      drawTool = el.dataset.tool; doSound('keyTap'); updateToolUI();
     });
   });
+
+  /* color selection */
+  colorArea.addEventListener('click', function(e) {
+    var t = e.target.closest('.color-pick');
+    if (!t) return;
+    drawColor = t.dataset.color; doSound('keyTap');
+    document.querySelectorAll('.color-pick').forEach(function(c) {
+      var s = c.dataset.color === drawColor;
+      c.style.border = '2px solid '+(s?'#fff':'rgba(255,255,255,0.1)');
+      c.style.boxShadow = s ? '0 0 8px '+c.dataset.color+'77' : 'none';
+    });
+  });
+
+  /* emoji selection */
+  emojiArea.addEventListener('click', function(e) {
+    var t = e.target.closest('.emoji-pick');
+    if (!t) return;
+    selectedEmoji = t.dataset.emoji; doSound('keyTap');
+    document.querySelectorAll('.emoji-pick').forEach(function(el) {
+      var s = el.dataset.emoji === selectedEmoji;
+      el.style.background = s ? 'rgba(251,191,36,0.2)' : 'transparent';
+      el.style.border = '2px solid '+(s?'#FBBF24':'transparent');
+    });
+  });
+
+  /* size selection */
   document.querySelectorAll('.size-pick').forEach(function(el) {
     el.addEventListener('click', function() {
-      drawWidth = parseInt(el.dataset.size);
-      doSound('keyTap');
+      drawWidth = parseInt(el.dataset.size); doSound('keyTap');
       document.querySelectorAll('.size-pick').forEach(function(s) {
-        var sz = parseInt(s.dataset.size);
-        s.style.background = sz === drawWidth ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)';
+        s.style.background = parseInt(s.dataset.size) === drawWidth ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)';
       });
     });
   });
 
+  /* zoom */
+  document.getElementById('zoomInBtn').addEventListener('click', function() {
+    if (zoomLevel >= ZOOM_MAX) return;
+    zoomLevel = Math.min(ZOOM_MAX, +(zoomLevel + ZOOM_STEP).toFixed(2));
+    document.getElementById('zoomLabel').textContent = zoomLevel.toFixed(1) + 'x';
+    applyZoom(cvs, ctx, strokeHistory); doSound('keyTap');
+  });
+  document.getElementById('zoomOutBtn').addEventListener('click', function() {
+    if (zoomLevel <= ZOOM_MIN) return;
+    zoomLevel = Math.max(ZOOM_MIN, +(zoomLevel - ZOOM_STEP).toFixed(2));
+    document.getElementById('zoomLabel').textContent = zoomLevel.toFixed(1) + 'x';
+    applyZoom(cvs, ctx, strokeHistory); doSound('keyTap');
+  });
+
+  /* clear & close */
   document.getElementById('canvasClearBtn').addEventListener('click', function() {
-    clearLocalCanvas();
-    broadcastClear();
-    doSound('scan');
+    clearLocalCanvas(); broadcastClear(); doSound('scan');
   });
   document.getElementById('canvasCloseBtn').addEventListener('click', function() {
+    drawRemoteStroke = _origRS;
+    drawRemoteStamp = _origST;
+    clearLocalCanvas = _origCL;
     closeCanvas();
   });
+
+  updateToolUI();
 }
 
 function closeCanvas() {
