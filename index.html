@@ -9,6 +9,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <title>Pup Pad</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -92,7 +94,7 @@ function doSound(type) {
 /* === Button Data === */
 var BTNS_LEFT=[
   {id:0,label:'Comms',color:'#3B82F6',glow:'#60A5FA',emoji:'\uD83D\uDCE1',sound:'ping',msg:'Signal locked!',bg:'#1e3a8a'},
-  {id:1,label:'Map',color:'#10B981',glow:'#34D399',emoji:'\uD83D\uDDFA',sound:'chime',msg:'Coordinates loaded!',bg:'#064e3b'},
+  {id:1,label:'Map',color:'#10B981',glow:'#34D399',emoji:'\uD83D\uDDFA',sound:'chime',msg:'Treasure map loaded!',bg:'#064e3b'},
   {id:2,label:'Draw',color:'#F59E0B',glow:'#FBBF24',emoji:'\uD83C\uDFA8',sound:'scan',msg:'Canvas open!',bg:'#78350f'},
   {id:3,label:'Alert',color:'#EF4444',glow:'#F87171',emoji:'\uD83D\uDEA8',sound:'alert',msg:'Alert sent!',bg:'#7f1d1d'}
 ];
@@ -1020,6 +1022,451 @@ function closeCamera() {
   doSound('blip');
 }
 
+/* === Treasure Map System === */
+var mapChannel = null;
+var treasureMap = null;
+var mapOverlayCanvas = null;
+var mapIsDrawMode = false;
+var mapStrokes = [];
+var mapStamps = [];
+var mapDrawTool = 'pen';
+var mapDrawColor = '#FF4444';
+var mapDrawWidth = 4;
+var mapRainbowHue = 0;
+var mapSelectedEmoji = '\uD83D\uDC3E';
+var mapLocationMarker = null;
+var mapWatchId = null;
+var mapIsDrawing = false;
+var mapLastPt = null;
+var mapCurrentStroke = null;
+
+var MAP_COLORS = ['#FF4444','#FBBF24','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
+
+function joinMapChannel() {
+  var client = getSupabaseClient();
+  if (!client) return;
+  if (mapChannel) return;
+  mapChannel = client.channel('puppad-treasuremap', {
+    config: { broadcast: { self: false } }
+  });
+  mapChannel.on('broadcast', { event: 'map-stroke' }, function(payload) {
+    var d = payload.payload;
+    mapStrokes.push({type:'stroke', points:d.points, color:d.color, width:d.width, eraser:d.eraser});
+    redrawMapCanvas();
+  });
+  mapChannel.on('broadcast', { event: 'map-stamp' }, function(payload) {
+    var d = payload.payload;
+    mapStamps.push({lat:d.lat, lng:d.lng, emoji:d.emoji, size:d.size});
+    redrawMapCanvas();
+  });
+  mapChannel.on('broadcast', { event: 'map-clear' }, function() {
+    mapStrokes = []; mapStamps = [];
+    redrawMapCanvas();
+  });
+  mapChannel.subscribe(function(status) {
+    if (status === 'SUBSCRIBED') console.log('Map channel joined');
+  });
+}
+
+function broadcastMapStroke(stroke) {
+  if (!mapChannel) return;
+  mapChannel.send({
+    type:'broadcast', event:'map-stroke',
+    payload: { points:stroke.points, color:stroke.color, width:stroke.width, eraser:stroke.eraser, did:deviceId }
+  });
+}
+
+function broadcastMapStamp(stamp) {
+  if (!mapChannel) return;
+  mapChannel.send({
+    type:'broadcast', event:'map-stamp',
+    payload: { lat:stamp.lat, lng:stamp.lng, emoji:stamp.emoji, size:stamp.size, did:deviceId }
+  });
+}
+
+function broadcastMapClear() {
+  if (!mapChannel) return;
+  mapChannel.send({ type:'broadcast', event:'map-clear', payload:{did:deviceId} });
+}
+
+/* convert lat/lng to canvas pixel via Leaflet */
+function latLngToPixel(lat, lng) {
+  if (!treasureMap) return {x:0,y:0};
+  var pt = treasureMap.latLngToContainerPoint(L.latLng(lat, lng));
+  return {x:pt.x, y:pt.y};
+}
+
+function pixelToLatLng(x, y) {
+  if (!treasureMap) return {lat:0,lng:0};
+  var ll = treasureMap.containerPointToLatLng(L.point(x, y));
+  return {lat:ll.lat, lng:ll.lng};
+}
+
+function redrawMapCanvas() {
+  if (!mapOverlayCanvas || !treasureMap) return;
+  var ctx = mapOverlayCanvas.getContext('2d');
+  var w = mapOverlayCanvas.width, h = mapOverlayCanvas.height;
+  var dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, w, h);
+
+  /* draw strokes */
+  mapStrokes.forEach(function(s) {
+    if (!s.points || s.points.length < 2) return;
+    ctx.save();
+    if (s.eraser) {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(255,255,255,1)';
+      ctx.lineWidth = s.width * 3 * dpr;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.width * dpr;
+    }
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    var p0 = latLngToPixel(s.points[0].lat, s.points[0].lng);
+    ctx.moveTo(p0.x * dpr, p0.y * dpr);
+    for (var i = 1; i < s.points.length; i++) {
+      var p = latLngToPixel(s.points[i].lat, s.points[i].lng);
+      ctx.lineTo(p.x * dpr, p.y * dpr);
+    }
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  /* draw stamps */
+  mapStamps.forEach(function(s) {
+    var p = latLngToPixel(s.lat, s.lng);
+    var sz = s.size * dpr;
+    ctx.font = sz + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s.emoji, p.x * dpr, p.y * dpr);
+  });
+}
+
+function resizeMapCanvas() {
+  if (!mapOverlayCanvas) return;
+  var container = mapOverlayCanvas.parentElement;
+  if (!container) return;
+  var rect = container.getBoundingClientRect();
+  var dpr = window.devicePixelRatio || 1;
+  mapOverlayCanvas.width = rect.width * dpr;
+  mapOverlayCanvas.height = rect.height * dpr;
+  mapOverlayCanvas.style.width = rect.width + 'px';
+  mapOverlayCanvas.style.height = rect.height + 'px';
+  redrawMapCanvas();
+}
+
+function setMapDrawMode(enabled) {
+  mapIsDrawMode = enabled;
+  if (!treasureMap) return;
+  if (enabled) {
+    treasureMap.dragging.disable();
+    treasureMap.touchZoom.disable();
+    treasureMap.doubleClickZoom.disable();
+    treasureMap.scrollWheelZoom.disable();
+    if (mapOverlayCanvas) mapOverlayCanvas.style.pointerEvents = 'auto';
+  } else {
+    treasureMap.dragging.enable();
+    treasureMap.touchZoom.enable();
+    treasureMap.doubleClickZoom.enable();
+    treasureMap.scrollWheelZoom.enable();
+    if (mapOverlayCanvas) mapOverlayCanvas.style.pointerEvents = 'none';
+  }
+  /* update mode button */
+  var modeBtn = document.getElementById('mapModeBtn');
+  if (modeBtn) {
+    modeBtn.textContent = enabled ? '\uD83D\uDD12 Draw' : '\uD83D\uDD13 Explore';
+    modeBtn.style.background = enabled ? 'rgba(251,191,36,0.2)' : 'rgba(96,165,250,0.1)';
+    modeBtn.style.color = enabled ? '#FBBF24' : '#93C5FD';
+  }
+  var toolStrip = document.getElementById('mapToolStrip');
+  if (toolStrip) toolStrip.style.display = enabled ? 'flex' : 'none';
+}
+
+function openTreasureMap() {
+  if (!navigator.geolocation) {
+    state.pop = 'Location not supported!';
+    updateUI(); return;
+  }
+
+  mapStrokes = [];
+  mapStamps = [];
+  mapDrawTool = 'pen';
+  mapDrawColor = '#FF4444';
+  mapDrawWidth = 4;
+  mapRainbowHue = 0;
+  mapIsDrawMode = false;
+  joinMapChannel();
+  doSound('chime');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'mapOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+
+  /* top bar */
+  var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 10px;background:rgba(255,255,255,0.03);z-index:10">'
+    +'<div style="display:flex;align-items:center;gap:6px">'
+    +pawSVG(14,'#34D399')
+    +'<span style="color:#34D399;font-size:11px;font-weight:700;letter-spacing:1px">TREASURE MAP</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:5px;align-items:center">'
+    +'<div id="mapCenterBtn" style="font-size:12px;padding:3px 8px;border-radius:6px;background:rgba(52,211,153,0.1);color:#34D399;cursor:pointer;font-weight:700">\uD83D\uDCCD Center</div>'
+    +'<div id="mapModeBtn" style="font-size:11px;padding:3px 8px;border-radius:6px;background:rgba(96,165,250,0.1);color:#93C5FD;cursor:pointer;font-weight:700">\uD83D\uDD13 Explore</div>'
+    +'<div id="mapClearBtn" style="color:#F87171;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:rgba(239,68,68,0.1);cursor:pointer">CLEAR</div>'
+    +'<div id="mapCloseBtn" style="color:rgba(148,197,255,0.5);font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
+    +'</div></div>';
+
+  /* map container */
+  var mapArea = '<div style="flex:1;position:relative">'
+    +'<div id="mapContainer" style="position:absolute;top:0;left:0;right:0;bottom:0;z-index:1"></div>'
+    +'<canvas id="mapDrawCanvas" style="position:absolute;top:0;left:0;right:0;bottom:0;z-index:2;pointer-events:none;touch-action:none;cursor:crosshair"></canvas>'
+    +'</div>';
+
+  /* tool strip (shown in draw mode) */
+  var toolBtns = '';
+  ['pen','eraser','rainbow','stamp'].forEach(function(t) {
+    var icons = {pen:'\u270F\uFE0F',eraser:'\uD83E\uDDF9',rainbow:'\uD83C\uDF08',stamp:'\uD83D\uDCCC'};
+    var names = {pen:'Pen',eraser:'Eraser',rainbow:'Rainbow',stamp:'Stamp'};
+    toolBtns += '<div class="map-tool-pick" data-tool="'+t+'" style="display:flex;align-items:center;gap:2px;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:10px;font-weight:700"><span style="font-size:13px">'+icons[t]+'</span>'+names[t]+'</div>';
+  });
+
+  var colorBtns = '';
+  MAP_COLORS.forEach(function(c) {
+    colorBtns += '<div class="map-color-pick" data-color="'+c+'" style="width:20px;height:20px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid '+(c===mapDrawColor?'#fff':'rgba(255,255,255,0.1)')+';flex-shrink:0"></div>';
+  });
+
+  var emojiBtns = '';
+  STAMP_EMOJIS.forEach(function(em) {
+    emojiBtns += '<div class="map-emoji-pick" data-emoji="'+em+'" style="font-size:20px;cursor:pointer;padding:1px 2px;border-radius:4px;flex-shrink:0">'+em+'</div>';
+  });
+
+  var toolStrip = '<div id="mapToolStrip" style="display:none;align-items:center;padding:4px 10px;background:rgba(255,255,255,0.03);gap:5px;overflow-x:auto;z-index:10">'
+    +'<div style="display:flex;gap:3px;align-items:center;flex-shrink:0">'+toolBtns+'</div>'
+    +'<div style="width:1px;height:18px;background:rgba(255,255,255,0.08);flex-shrink:0"></div>'
+    +'<div id="mapColorArea" style="display:flex;gap:3px;align-items:center;flex-shrink:0">'+colorBtns+'</div>'
+    +'<div id="mapEmojiArea" style="display:none;gap:3px;align-items:center;flex-shrink:0">'+emojiBtns+'</div>'
+    +'<div style="margin-left:auto;display:flex;gap:3px;align-items:center;flex-shrink:0">'
+    +'<div class="map-size-pick" data-size="3" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:5px;height:5px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="map-size-pick" data-size="6" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:9px;height:9px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="map-size-pick" data-size="12" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:13px;height:13px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'</div></div>';
+
+  overlay.innerHTML = topBar + mapArea + toolStrip;
+  document.body.appendChild(overlay);
+
+  /* init canvas */
+  mapOverlayCanvas = document.getElementById('mapDrawCanvas');
+  resizeMapCanvas();
+
+  /* init Leaflet map */
+  treasureMap = L.map('mapContainer', {
+    zoomControl: false,
+    attributionControl: false
+  }).setView([35.82, -78.32], 15);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19
+  }).addTo(treasureMap);
+
+  /* paw icon for location marker */
+  var pawIcon = L.divIcon({
+    html: pawSVG(28, '#34D399'),
+    className: '',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+
+  /* get location */
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    var lat = pos.coords.latitude, lng = pos.coords.longitude;
+    treasureMap.setView([lat, lng], 16);
+    mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);
+  }, function() {
+    /* fallback: use default position */
+  }, {enableHighAccuracy: true});
+
+  /* watch location */
+  mapWatchId = navigator.geolocation.watchPosition(function(pos) {
+    var lat = pos.coords.latitude, lng = pos.coords.longitude;
+    if (mapLocationMarker) mapLocationMarker.setLatLng([lat, lng]);
+    else mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);
+  }, function(){}, {enableHighAccuracy: true});
+
+  /* redraw canvas on map move/zoom */
+  treasureMap.on('moveend zoomend', function() {
+    redrawMapCanvas();
+  });
+
+  /* drawing events on canvas */
+  mapOverlayCanvas.addEventListener('pointerdown', function(e) {
+    if (!mapIsDrawMode) return;
+    e.preventDefault();
+    var rect = mapOverlayCanvas.getBoundingClientRect();
+    var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    var ll = pixelToLatLng(sx, sy);
+
+    if (mapDrawTool === 'stamp') {
+      var stamp = {lat:ll.lat, lng:ll.lng, emoji:mapSelectedEmoji, size:mapDrawWidth * 6};
+      mapStamps.push(stamp);
+      broadcastMapStamp(stamp);
+      redrawMapCanvas();
+      doSound('keyTap');
+      return;
+    }
+
+    mapIsDrawing = true;
+    var color = mapDrawColor;
+    if (mapDrawTool === 'rainbow') {
+      color = hslToHex(mapRainbowHue % 360);
+    }
+    mapCurrentStroke = {
+      type:'stroke',
+      points:[{lat:ll.lat, lng:ll.lng}],
+      color: color,
+      width: mapDrawWidth,
+      eraser: mapDrawTool === 'eraser'
+    };
+    mapLastPt = ll;
+  });
+
+  mapOverlayCanvas.addEventListener('pointermove', function(e) {
+    if (!mapIsDrawing || !mapCurrentStroke) return;
+    e.preventDefault();
+    var rect = mapOverlayCanvas.getBoundingClientRect();
+    var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    var ll = pixelToLatLng(sx, sy);
+
+    if (mapDrawTool === 'rainbow') {
+      mapCurrentStroke.color = hslToHex(mapRainbowHue % 360);
+      mapRainbowHue += 5;
+      /* for rainbow, push each segment as separate stroke for color variation */
+      var seg = {type:'stroke', points:[{lat:mapLastPt.lat,lng:mapLastPt.lng},{lat:ll.lat,lng:ll.lng}], color:mapCurrentStroke.color, width:mapDrawWidth, eraser:false};
+      mapStrokes.push(seg);
+      broadcastMapStroke(seg);
+    } else {
+      mapCurrentStroke.points.push({lat:ll.lat, lng:ll.lng});
+    }
+    mapLastPt = ll;
+    redrawMapCanvas();
+  });
+
+  mapOverlayCanvas.addEventListener('pointerup', function() {
+    if (mapCurrentStroke && mapDrawTool !== 'rainbow') {
+      mapStrokes.push(mapCurrentStroke);
+      broadcastMapStroke(mapCurrentStroke);
+    }
+    mapIsDrawing = false;
+    mapCurrentStroke = null;
+    mapLastPt = null;
+  });
+
+  mapOverlayCanvas.addEventListener('pointerleave', function() {
+    if (mapCurrentStroke && mapDrawTool !== 'rainbow') {
+      mapStrokes.push(mapCurrentStroke);
+      broadcastMapStroke(mapCurrentStroke);
+    }
+    mapIsDrawing = false;
+    mapCurrentStroke = null;
+    mapLastPt = null;
+  });
+
+  /* update tool strip UI */
+  function updateMapToolUI() {
+    document.getElementById('mapColorArea').style.display = mapDrawTool === 'pen' ? 'flex' : 'none';
+    document.getElementById('mapEmojiArea').style.display = mapDrawTool === 'stamp' ? 'flex' : 'none';
+    document.querySelectorAll('.map-tool-pick').forEach(function(el) {
+      var on = el.dataset.tool === mapDrawTool;
+      el.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.04)';
+      el.style.color = on ? '#FBBF24' : 'rgba(148,197,255,0.5)';
+    });
+    document.querySelectorAll('.map-size-pick').forEach(function(el) {
+      el.style.background = parseInt(el.dataset.size) === mapDrawWidth ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)';
+    });
+  }
+  updateMapToolUI();
+
+  /* tool events */
+  document.querySelectorAll('.map-tool-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapDrawTool = el.dataset.tool; doSound('keyTap'); updateMapToolUI();
+    });
+  });
+
+  document.querySelectorAll('.map-color-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapDrawColor = el.dataset.color; doSound('keyTap');
+      document.querySelectorAll('.map-color-pick').forEach(function(c) {
+        var on = c.dataset.color === mapDrawColor;
+        c.style.border = '2px solid '+(on?'#fff':'rgba(255,255,255,0.1)');
+      });
+    });
+  });
+
+  document.querySelectorAll('.map-emoji-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapSelectedEmoji = el.dataset.emoji; doSound('keyTap');
+      document.querySelectorAll('.map-emoji-pick').forEach(function(e) {
+        var on = e.dataset.emoji === mapSelectedEmoji;
+        e.style.background = on ? 'rgba(251,191,36,0.2)' : 'transparent';
+      });
+    });
+  });
+
+  document.querySelectorAll('.map-size-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapDrawWidth = parseInt(el.dataset.size); doSound('keyTap'); updateMapToolUI();
+    });
+  });
+
+  /* mode toggle */
+  document.getElementById('mapModeBtn').addEventListener('click', function() {
+    setMapDrawMode(!mapIsDrawMode);
+    doSound('keyTap');
+  });
+
+  /* center on location */
+  document.getElementById('mapCenterBtn').addEventListener('click', function() {
+    if (mapLocationMarker) {
+      treasureMap.setView(mapLocationMarker.getLatLng(), 16);
+    }
+    doSound('chime');
+  });
+
+  /* clear */
+  document.getElementById('mapClearBtn').addEventListener('click', function() {
+    mapStrokes = []; mapStamps = [];
+    redrawMapCanvas();
+    broadcastMapClear();
+    doSound('scan');
+  });
+
+  /* close */
+  document.getElementById('mapCloseBtn').addEventListener('click', function() {
+    closeTreasureMap();
+  });
+}
+
+function closeTreasureMap() {
+  if (mapWatchId !== null) {
+    navigator.geolocation.clearWatch(mapWatchId);
+    mapWatchId = null;
+  }
+  if (treasureMap) {
+    treasureMap.remove();
+    treasureMap = null;
+  }
+  mapOverlayCanvas = null;
+  mapLocationMarker = null;
+  mapStrokes = [];
+  mapStamps = [];
+  var overlay = document.getElementById('mapOverlay');
+  if (overlay) overlay.parentNode.removeChild(overlay);
+  doSound('blip');
+}
+
 /* === Sweep Lines === */
 function buildSweepLines() {
   var h = '';
@@ -1134,6 +1581,7 @@ function attachEvents() {
       if (!btn) return;
       doSound(btn.sound);
       if (btn.id === 3) { triggerAlertEffect(); pushAlert(); }
+      if (btn.id === 1) { openTreasureMap(); return; }
       if (btn.id === 2) { openCanvas(); return; }
       if (btn.id === 6) { openCamera(); return; }
       state.pid = btn.id;
