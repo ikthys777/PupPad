@@ -99,7 +99,7 @@ var BTNS_LEFT=[
 var BTNS_RIGHT=[
   {id:4,label:'Tools',color:'#8B5CF6',glow:'#A78BFA',emoji:'\uD83D\uDD27',sound:'tap',msg:'Toolkit ready!',bg:'#4c1d95'},
   {id:5,label:'Weather',color:'#06B6D4',glow:'#22D3EE',emoji:'\u26C5',sound:'twinkle',msg:'Clear skies!',bg:'#164e63'},
-  {id:6,label:'Camera',color:'#EC4899',glow:'#F472B6',emoji:'\uD83D\uDCF7',sound:'blip',msg:'Snapshot captured!',bg:'#831843'},
+  {id:6,label:'Camera',color:'#EC4899',glow:'#F472B6',emoji:'\uD83D\uDCF7',sound:'blip',msg:'Say cheese!',bg:'#831843'},
   {id:7,label:'Power',color:'#F97316',glow:'#FB923C',emoji:'\u26A1',sound:'powerUp',msg:'Systems charged!',bg:'#7c2d12'}
 ];
 
@@ -660,6 +660,366 @@ function closeCanvas() {
   doSound('blip');
 }
 
+
+/* === Camera System === */
+var cameraChannel = null;
+var cameraStream = null;
+var cameraGallery = [];
+var cameraFilter = 'none';
+var cameraFacing = 'environment';
+var cameraSticker = null;
+var cameraReviewCanvas = null;
+
+var CAMERA_FILTERS = [
+  {name:'Normal',css:'none',icon:'\u25CB'},
+  {name:'B&W',css:'grayscale(100%)',icon:'\u25C9'},
+  {name:'Sepia',css:'sepia(100%)',icon:'\uD83C\uDF3E'},
+  {name:'Invert',css:'invert(100%)',icon:'\uD83D\uDD03'},
+  {name:'Vivid',css:'saturate(300%)',icon:'\uD83C\uDF1F'},
+  {name:'Alien',css:'hue-rotate(90deg)',icon:'\uD83D\uDC7D'},
+  {name:'Purple',css:'hue-rotate(270deg)',icon:'\uD83D\uDC9C'},
+  {name:'Cool',css:'hue-rotate(180deg) saturate(150%)',icon:'\u2744\uFE0F'}
+];
+
+function joinCameraChannel() {
+  var client = getSupabaseClient();
+  if (!client) return;
+  if (cameraChannel) return;
+  cameraChannel = client.channel('puppad-camera', {
+    config: { broadcast: { self: false } }
+  });
+  cameraChannel.on('broadcast', { event: 'photo' }, function(payload) {
+    showRemotePhoto(payload.payload.dataUrl);
+  });
+  cameraChannel.subscribe(function(status) {
+    if (status === 'SUBSCRIBED') console.log('Camera channel joined');
+  });
+}
+
+function broadcastPhoto(dataUrl) {
+  if (!cameraChannel) return;
+  cameraChannel.send({
+    type: 'broadcast', event: 'photo',
+    payload: { dataUrl: dataUrl, did: deviceId }
+  });
+}
+
+function showRemotePhoto(dataUrl) {
+  var popup = document.createElement('div');
+  popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:200;border-radius:16px;overflow:hidden;box-shadow:0 0 30px rgba(236,72,153,0.4),0 0 0 2px rgba(236,72,153,0.3);animation:fadeUp 0.3s ease-out';
+  popup.innerHTML = '<div style="background:#1a1a2e;padding:6px">'
+    +'<div style="display:flex;align-items:center;gap:6px;padding:4px 8px">'
+    +pawSVG(12,'#F472B6')
+    +'<span style="color:#F472B6;font-size:10px;font-weight:700">INCOMING SNAP</span>'
+    +'</div>'
+    +'<img src="'+dataUrl+'" style="display:block;border-radius:10px;max-width:260px;max-height:200px"/>'
+    +'</div>';
+  document.body.appendChild(popup);
+  doSound('ping');
+  setTimeout(function() {
+    popup.style.transition = 'opacity 0.5s';
+    popup.style.opacity = '0';
+    setTimeout(function() { if (popup.parentNode) popup.parentNode.removeChild(popup); }, 600);
+  }, 4000);
+}
+
+function compressForBroadcast(sourceCanvas) {
+  var tmp = document.createElement('canvas');
+  var maxW = 300;
+  var ratio = sourceCanvas.height / sourceCanvas.width;
+  tmp.width = maxW;
+  tmp.height = Math.round(maxW * ratio);
+  tmp.getContext('2d').drawImage(sourceCanvas, 0, 0, tmp.width, tmp.height);
+  return tmp.toDataURL('image/jpeg', 0.5);
+}
+
+function startCameraStream(video, facing) {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(function(t) { t.stop(); });
+  }
+  var constraints = { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
+  return navigator.mediaDevices.getUserMedia(constraints).then(function(stream) {
+    cameraStream = stream;
+    video.srcObject = stream;
+    return video.play();
+  });
+}
+
+function openCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    state.pop = 'Camera not supported!';
+    updateUI(); return;
+  }
+
+  cameraFilter = 'none';
+  cameraFacing = 'environment';
+  cameraSticker = null;
+  joinCameraChannel();
+  doSound('blip');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'cameraOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+
+  /* top bar */
+  var filterBtns = '';
+  CAMERA_FILTERS.forEach(function(f, i) {
+    filterBtns += '<div class="filter-pick" data-idx="'+i+'" style="display:flex;flex-direction:column;align-items:center;gap:1px;padding:2px 6px;border-radius:6px;cursor:pointer;background:'+(f.css===cameraFilter?'rgba(236,72,153,0.2)':'rgba(255,255,255,0.04)')+';transition:all 0.15s">'
+      +'<span style="font-size:14px">'+f.icon+'</span>'
+      +'<span style="font-size:8px;color:'+(f.css===cameraFilter?'#F472B6':'rgba(148,197,255,0.4)')+';font-weight:700">'+f.name+'</span>'
+      +'</div>';
+  });
+
+  var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 10px;background:rgba(255,255,255,0.03)">'
+    +'<div style="display:flex;align-items:center;gap:6px">'
+    +pawSVG(14,'#F472B6')
+    +'<span style="color:#F472B6;font-size:11px;font-weight:700;letter-spacing:1px">PAW CAM</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:3px;align-items:center;overflow-x:auto;flex:1;margin:0 8px">'+filterBtns+'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+    +'<div id="camFlipBtn" style="font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px;background:rgba(255,255,255,0.06)">\uD83D\uDD04</div>'
+    +'<div id="camCloseBtn" style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
+    +'</div></div>';
+
+  /* viewfinder area */
+  var viewfinder = '<div id="camViewArea" style="flex:1;position:relative;overflow:hidden;background:#000">'
+    +'<video id="camVideo" autoplay playsinline muted style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover"></video>'
+    +'<canvas id="camReviewCanvas" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;touch-action:none"></canvas>'
+    +'<div id="camFlash" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;opacity:0;pointer-events:none;transition:opacity 0.15s;z-index:2"></div>'
+    +'<div id="camStickerLayer" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;z-index:3;touch-action:none"></div>'
+    +'</div>';
+
+  /* bottom bar: gallery + shutter */
+  var bottomBar = '<div style="display:flex;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.03);gap:8px">'
+    +'<div id="camGalleryStrip" style="display:flex;gap:4px;align-items:center;flex:1;overflow-x:auto;min-height:44px"></div>'
+    +'<div id="camStickerBar" style="display:none;gap:4px;align-items:center;flex:1;overflow-x:auto"></div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+    +'<div id="camRetakeBtn" style="display:none;color:#93C5FD;font-size:10px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(96,165,250,0.1);cursor:pointer">RETAKE</div>'
+    +'<div id="camSaveBtn" style="display:none;color:#34D399;font-size:10px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(52,211,153,0.1);cursor:pointer">DONE</div>'
+    +'<div id="camShutterBtn" style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle,#F472B6,#EC4899);box-shadow:0 0 0 3px rgba(236,72,153,0.3),0 4px 12px rgba(0,0,0,0.5);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+    +'<div style="width:38px;height:38px;border-radius:50%;border:2px solid rgba(255,255,255,0.4)"></div>'
+    +'</div>'
+    +'</div></div>';
+
+  overlay.innerHTML = topBar + viewfinder + bottomBar;
+  document.body.appendChild(overlay);
+
+  /* populate sticker bar */
+  var stickerBar = document.getElementById('camStickerBar');
+  STAMP_EMOJIS.forEach(function(em) {
+    var el = document.createElement('div');
+    el.className = 'cam-sticker-pick';
+    el.dataset.emoji = em;
+    el.textContent = em;
+    el.style.cssText = 'font-size:24px;cursor:pointer;padding:2px 4px;border-radius:6px;background:transparent;border:2px solid transparent;flex-shrink:0;transition:all 0.15s';
+    stickerBar.appendChild(el);
+  });
+
+  var video = document.getElementById('camVideo');
+  var reviewCanvas = document.getElementById('camReviewCanvas');
+  var reviewMode = false;
+  var reviewStickers = [];
+
+  /* start camera */
+  startCameraStream(video, cameraFacing).catch(function(e) {
+    console.log('Camera error:', e);
+    state.pop = 'Camera access denied';
+    updateUI();
+    closeCamera();
+  });
+
+  /* filter selection */
+  document.querySelectorAll('.filter-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var idx = parseInt(el.dataset.idx);
+      cameraFilter = CAMERA_FILTERS[idx].css;
+      video.style.filter = cameraFilter;
+      doSound('keyTap');
+      document.querySelectorAll('.filter-pick').forEach(function(f, i) {
+        var on = parseInt(f.dataset.idx) === idx;
+        f.style.background = on ? 'rgba(236,72,153,0.2)' : 'rgba(255,255,255,0.04)';
+        f.querySelector('span:last-child').style.color = on ? '#F472B6' : 'rgba(148,197,255,0.4)';
+      });
+    });
+  });
+
+  /* flip camera */
+  document.getElementById('camFlipBtn').addEventListener('click', function() {
+    cameraFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+    startCameraStream(video, cameraFacing).catch(function(){});
+    doSound('keyTap');
+  });
+
+  /* shutter */
+  document.getElementById('camShutterBtn').addEventListener('click', function() {
+    if (reviewMode) return;
+    /* flash */
+    var flash = document.getElementById('camFlash');
+    flash.style.opacity = '0.8';
+    setTimeout(function() { flash.style.opacity = '0'; }, 150);
+    doSound('blip');
+
+    /* capture frame with filter */
+    var w = video.videoWidth, h = video.videoHeight;
+    reviewCanvas.width = w;
+    reviewCanvas.height = h;
+    var ctx = reviewCanvas.getContext('2d');
+    ctx.filter = cameraFilter;
+    if (cameraFacing === 'user') {
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0, w, h);
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.filter = 'none';
+
+    /* enter review mode */
+    reviewMode = true;
+    reviewStickers = [];
+    video.style.display = 'none';
+    reviewCanvas.style.display = 'block';
+    document.getElementById('camShutterBtn').style.display = 'none';
+    document.getElementById('camRetakeBtn').style.display = 'block';
+    document.getElementById('camSaveBtn').style.display = 'block';
+    document.getElementById('camGalleryStrip').style.display = 'none';
+    document.getElementById('camStickerBar').style.display = 'flex';
+    document.getElementById('camStickerLayer').style.display = 'block';
+  });
+
+  /* sticker placement in review */
+  document.getElementById('camStickerLayer').addEventListener('click', function(e) {
+    if (!cameraSticker) return;
+    var rect = this.getBoundingClientRect();
+    var xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    var yPct = ((e.clientY - rect.top) / rect.height) * 100;
+    var el = document.createElement('div');
+    el.textContent = cameraSticker;
+    el.style.cssText = 'position:absolute;left:'+xPct+'%;top:'+yPct+'%;transform:translate(-50%,-50%);font-size:36px;pointer-events:none';
+    this.appendChild(el);
+    reviewStickers.push({emoji:cameraSticker, xPct:xPct, yPct:yPct});
+    doSound('keyTap');
+  });
+
+  /* sticker selection */
+  stickerBar.addEventListener('click', function(e) {
+    var t = e.target.closest('.cam-sticker-pick');
+    if (!t) return;
+    var em = t.dataset.emoji;
+    cameraSticker = (cameraSticker === em) ? null : em;
+    doSound('keyTap');
+    document.querySelectorAll('.cam-sticker-pick').forEach(function(el) {
+      var on = el.dataset.emoji === cameraSticker;
+      el.style.background = on ? 'rgba(251,191,36,0.2)' : 'transparent';
+      el.style.border = '2px solid '+(on?'#FBBF24':'transparent');
+    });
+  });
+
+  /* retake */
+  document.getElementById('camRetakeBtn').addEventListener('click', function() {
+    exitReview();
+    doSound('keyTap');
+  });
+
+  /* save to gallery + broadcast */
+  document.getElementById('camSaveBtn').addEventListener('click', function() {
+    /* burn stickers onto canvas */
+    var ctx = reviewCanvas.getContext('2d');
+    var w = reviewCanvas.width, h = reviewCanvas.height;
+    reviewStickers.forEach(function(s) {
+      var px = s.xPct / 100 * w;
+      var py = s.yPct / 100 * h;
+      var sz = Math.round(w * 0.06);
+      ctx.font = sz + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(s.emoji, px, py);
+    });
+
+    /* save to gallery */
+    var thumbCanvas = document.createElement('canvas');
+    var thumbW = 400;
+    var ratio = h / w;
+    thumbCanvas.width = thumbW;
+    thumbCanvas.height = Math.round(thumbW * ratio);
+    thumbCanvas.getContext('2d').drawImage(reviewCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    var thumbUrl = thumbCanvas.toDataURL('image/jpeg', 0.7);
+    cameraGallery.push(thumbUrl);
+    renderGallery();
+
+    /* broadcast compressed */
+    var compressed = compressForBroadcast(reviewCanvas);
+    broadcastPhoto(compressed);
+
+    doSound('ping');
+    exitReview();
+  });
+
+  function exitReview() {
+    reviewMode = false;
+    cameraSticker = null;
+    video.style.display = 'block';
+    reviewCanvas.style.display = 'none';
+    document.getElementById('camShutterBtn').style.display = 'flex';
+    document.getElementById('camRetakeBtn').style.display = 'none';
+    document.getElementById('camSaveBtn').style.display = 'none';
+    document.getElementById('camGalleryStrip').style.display = 'flex';
+    document.getElementById('camStickerBar').style.display = 'none';
+    document.getElementById('camStickerLayer').style.display = 'none';
+    document.getElementById('camStickerLayer').innerHTML = '';
+    document.querySelectorAll('.cam-sticker-pick').forEach(function(el) {
+      el.style.background = 'transparent';
+      el.style.border = '2px solid transparent';
+    });
+  }
+
+  function renderGallery() {
+    var strip = document.getElementById('camGalleryStrip');
+    if (!strip) return;
+    strip.innerHTML = '';
+    if (cameraGallery.length === 0) {
+      strip.innerHTML = '<span style="color:rgba(148,197,255,0.25);font-size:10px;font-weight:700">No snaps yet</span>';
+      return;
+    }
+    cameraGallery.forEach(function(url, i) {
+      var el = document.createElement('img');
+      el.src = url;
+      el.dataset.idx = i;
+      el.style.cssText = 'width:44px;height:44px;border-radius:6px;object-fit:cover;cursor:pointer;border:2px solid rgba(236,72,153,0.2);flex-shrink:0';
+      el.addEventListener('click', function() { showGalleryFull(url); });
+      strip.appendChild(el);
+    });
+    strip.scrollLeft = strip.scrollWidth;
+  }
+
+  function showGalleryFull(url) {
+    var full = document.createElement('div');
+    full.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:200;display:flex;align-items:center;justify-content:center;cursor:pointer';
+    full.innerHTML = '<img src="'+url+'" style="max-width:95%;max-height:90%;border-radius:12px;box-shadow:0 0 30px rgba(236,72,153,0.3)"/>';
+    full.addEventListener('click', function() {
+      if (full.parentNode) full.parentNode.removeChild(full);
+    });
+    document.body.appendChild(full);
+  }
+
+  renderGallery();
+
+  /* close */
+  document.getElementById('camCloseBtn').addEventListener('click', function() {
+    closeCamera();
+  });
+}
+
+function closeCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(function(t) { t.stop(); });
+    cameraStream = null;
+  }
+  cameraGallery = [];
+  var overlay = document.getElementById('cameraOverlay');
+  if (overlay) overlay.parentNode.removeChild(overlay);
+  doSound('blip');
+}
+
 /* === Sweep Lines === */
 function buildSweepLines() {
   var h = '';
@@ -775,6 +1135,7 @@ function attachEvents() {
       doSound(btn.sound);
       if (btn.id === 3) { triggerAlertEffect(); pushAlert(); }
       if (btn.id === 2) { openCanvas(); return; }
+      if (btn.id === 6) { openCamera(); return; }
       state.pid = btn.id;
       state.active = btn;
       state.pop = btn.msg;
