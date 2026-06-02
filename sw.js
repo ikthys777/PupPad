@@ -1,4 +1,4 @@
-var CACHE_NAME = 'pup-pad-v4';
+var CACHE_NAME = 'pup-pad-v5';
 var urlsToCache = [
   './',
   './index.html',
