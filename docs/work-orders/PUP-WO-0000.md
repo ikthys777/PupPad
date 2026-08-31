@@ -20,6 +20,13 @@ Grok source workspaces.
 
 **Cadence:** investigate, then **STOP**. One PR, left unmerged for review.
 
+**First act, before anything else:**
+```
+git fetch origin && git checkout -B investigate/wo-0000 origin/main
+```
+Your worktree may be behind and may not contain this file. You sync your own tree;
+nobody reaches into it while you are running.
+
 ---
 
 ## 1. Scope
@@ -96,8 +103,16 @@ Named because they are the things most reasonable to fold in, and all are out:
 
 ## 5. Adversarial pass
 
-Run by a **fresh subagent with no investment in the findings being sound**, before
-`FEEDBACK.md` is written. Probe:
+Run by **you**, as a black-box task in your own workflow: a **fresh subagent with no
+investment in the findings being sound**, given only the artifact and none of your
+reasoning about it. Independence here comes from context isolation, not from who
+dispatched it.
+
+**`FEEDBACK.md` must record this exchange verbatim** — the exact prompt you gave the
+subagent and its unedited output, not a summary. CC-A reviews whether the
+adversarial pass *was any good*, which cannot be judged from a conclusion alone.
+
+Probe:
 
 - Take the module contract and try to build a game it cannot express. A contract
   that fits only the two games in hand is a description, not a contract.
@@ -115,8 +130,9 @@ Run by a **fresh subagent with no investment in the findings being sound**, befo
 `finding · where (file:line) · type (note|risk|scope-question|bug) · recommendation
 · decision-needed (yes/no)`.
 
-Required sections: what did not work and why; what was deliberately not done; a
-gates line stating the protected-surface diff status as a checkable fact.
+Required sections: **the verbatim adversarial exchange (§5)**; what did not work and
+why; what was deliberately not done; a gates line stating the protected-surface diff
+status as a checkable fact.
 
 ## 7. Flag-and-stop
 
@@ -145,6 +161,8 @@ with Vercel build output and auth/database scaffolding that is not wanted.
 
 ## 10. Provenance
 
-Written by Claude (chat architect) 2026-08-31, from the planning session that
+Amended 2026-08-31 before dispatch: added the first-act sync, and moved the
+adversarial pass to a black-box task you own with a verbatim-record requirement
+(`docs/architecture.md` §11). Written by Claude (chat architect) 2026-08-31, from the planning session that
 produced the genesis documents. First work order in the repository and the opening
 work order of the first dual-CC pilot.

@@ -105,7 +105,7 @@ sw.js          asset manifest + cache identity
 | Gyre's control surface | **Ported as-is, plus attract/repel, plus randomize.** | Scotty's observation that Buddy's actual engagement is the sliders. Attract/repel is the largest visible change per control; randomize is the highest joy-per-tap control available to a non-reader, since it needs no understanding of any individual slider. |
 | Deploy topology | **Two paths, one site: root = newest, `/stable/` = promoted.** | Satisfies rapid on-device iteration and a protected baseline simultaneously, which one branch cannot. See §6. |
 | Cache identity under two paths | **`CACHE_NAME` is namespaced per deploy path; CI asserts they differ.** | §3.1 — measured collision, not hypothetical. Invariant 7. |
-| Adversarial pass ownership | **CC-A dispatches the adversarial subagent, not CC-EM.** | With CC-A holding merge authority, the adversarial pass is the only independent check between builder and `main`. Dispatched by CC-EM it inherits the builder's framing and is not independent. Costs nothing to move. |
+| Adversarial pass ownership | **CC-B runs it itself, as a black-box task in its own dynamic workflow** — fresh context, sees only the artifact, no knowledge of the builder's reasoning. `FEEDBACK.md` records the exchange **verbatim**: the exact prompt given and the unedited output, never a summary. | *Amended 2026-08-31 — reverses the original ruling; see §11.* Independence is a property of **context isolation**, not of who issues the call. A fresh-context subagent that sees only the artifact is more independent than one CC-A dispatches and then hands a summary. CC-A's own independence is already structural: it is a separate session with separate context. The verbatim requirement is what makes CC-B's dispatch auditable — CC-A reviews whether the pass *was any good*, not merely what it concluded, and a summary written by the party being audited is where a weak pass hides. |
 | A third review layer? | **No — add a check that can go red instead.** | Two judgment-based reviewers already share a context and a disposition; a third correlates with them, inflating findings-count while lowering real detection. CI cannot be persuaded. |
 | Realtime co-op | **Do not build. Wire the seams, spike it later.** | See §7. |
 
@@ -139,6 +139,14 @@ autonomous merge reaches the repository and the test device, never the child.
 workflow. Scotty performs this in repository settings — the Precision's `gh` cannot
 (§3). The same workflow runs CI, so publication is gated on green by construction
 rather than by convention.
+
+**Bootstrap exception.** Until `PUP-WO-0100`/`0101` merge, no firebreak exists — a
+merge to `main` publishes live. P0 and P1 must nonetheless merge to `main`, because
+they are what *builds* the firebreak. What makes those merges safe is narrower than
+the rule they appear to break: their diffs are constrained to `docs/`, and Pages
+serves nothing under `docs/`. A P0/P1 work order's docs-only scope fence is
+therefore not merely scope hygiene — **it is the property that makes merging it
+safe**, and must be verified as such before merge, not assumed.
 
 **The cache hazard.** The root service worker's scope covers `/stable/`. Two builds
 sharing `CACHE_NAME` will fight, and the symptom is Buddy's tablet silently serving
@@ -190,7 +198,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | Control | Clause satisfied |
 |---|---|
 | Merge reaches repo and test path only; promotion is human | §6 — "merge is not deploy", the structural basis for delegated merge |
-| CC-A dispatches the adversarial pass | §7 clause 2, load-bearing once CC-A merges |
+| Adversarial pass by a fresh, context-isolated subagent, recorded verbatim | §7 clause 2, load-bearing once CC-A merges |
 | CI as a check that can go red | §7 clause 3 — "prove the rejection, not the issuance" |
 | Two worktrees, one writer per tree | §2 |
 | Info and decision tiers on separate ntfy topics | §8 |
@@ -210,6 +218,8 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | Date | Change | Reason |
 |---|---|---|
 | 2026-08-31 | Document created. | First architecture; repo shipped without one. |
+| 2026-08-31 | §5 adversarial-pass ownership reversed: CC-B runs it as a black-box task; `FEEDBACK.md` records the exchange verbatim. §9 traceability updated to match. | The original ruling located independence in *who dispatches*. It is actually a property of *context isolation*, which a black-box subagent achieves directly and more cheaply. The verbatim requirement closes the gap the original ruling was reaching for — it makes the quality of the builder's own adversarial pass reviewable rather than taken on trust. Raised by Scotty; the superseded ruling was Claude's. |
+| 2026-08-31 | §6 gains the bootstrap exception: P0 and P1 merges reach the live path by necessity, and are safe on the narrower `docs/`-only property rather than on the firebreak. | Found by CC-A on its first read. Recorded so it does not later read as a violated rule. |
 
 ## 12. Provenance
 

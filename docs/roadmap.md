@@ -140,7 +140,9 @@ being persuaded.
 
 **Goal.** The games surface exists, is reachable, and accepts new games as data.
 
-**Depends on:** P1. **Nothing merges into a live path before the firebreak holds.**
+**Depends on:** P1. **Nothing merges into a live path before the firebreak holds** —
+with the bootstrap exception in `docs/architecture.md` §6, which is what permits P0
+and P1 themselves to merge. From P2 onward the rule applies without exception.
 
 **Work orders:**
 
@@ -250,6 +252,12 @@ costs a fraction of what the network layer does.
   upward** — a superseded ruling becomes an architecture amendment, a changed
   constraint goes to the northstar and is re-ratified, an uncheckable gate is fixed
   here by amendment.
+- **Every work order, builder's first act:** `git fetch origin && git checkout -B
+  <wo-branch> origin/main`. The builder syncs its own tree — nobody reaches into it,
+  because one writer per tree is what keeps a running session's working state sound.
+- **Every work order boundary, architect:** pull the fresh HEAD of `main` before
+  reviewing or authoring. Reviewing against a stale tree is how a merged change gets
+  reviewed twice, or missed once.
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.
@@ -268,6 +276,7 @@ planned and what was built; history is left as written and never renumbered.
 | Date | Change | Reason |
 |---|---|---|
 | 2026-08-31 | Document created. | First roadmap; also the first dual-CC pilot, so CC-A needs a sequencing authority that is not a conversation. |
+| 2026-08-31 | P2's live-path rule gains an explicit bootstrap exception; standing cadence gains the per-work-order sync rules for both sessions. | The rule as written was violated by P0 and P1 by necessity — found by CC-A on its first read, before any dispatch. The sync rules close a gap where no party owned keeping the builder's tree current. |
 
 ## 8. Provenance
 
