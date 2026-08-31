@@ -1,0 +1,278 @@
+# PupPad — Roadmap
+
+**Status:** ratified · 2026-08-31 · Scotty + Claude (chat architect)
+**Gate:** Scotty ratifies phases and exit gates. CC-A selects work orders from this
+document and nowhere else.
+**Supersedes:** nothing — first roadmap.
+**Read first:** `docs/northstar.md` (invariants, cited by number below), then
+`docs/architecture.md` (shape and rulings).
+
+---
+
+## 1. How this document works
+
+Phases are **dependency-ordered, not calendar-ordered**. No dates are assigned,
+because a build done in whatever hours are available should be measured by gate
+completion, not by a schedule that will be wrong.
+
+Every phase carries a goal, its dependencies, its work orders, and an **exit gate**
+that someone who was not in the room could run and get an unambiguous yes or no.
+Every phase ends at a working, more-capable system.
+
+**"What do I build next" is answered from here**: the first work order in the
+earliest phase whose dependencies are green and whose gate has not passed. Never
+from a parallel task list, tracker, or state file.
+
+## 2. Work-order numbering
+
+**PREFIX: `PUP`.** Scheme is defined in the `repo-genesis` skill §6 and is not
+restated here: `PUP-WO-PSNN[a]` — phase, subsection, order, optional refinement
+suffix.
+
+**No legacy ids exist.** This repository had no work orders before 2026-08-31, so
+the scheme applies from `PUP-WO-0000` with nothing to reconcile. Ids are never
+renumbered once issued.
+
+## 3. Critical path
+
+```
+P0 investigate ──▶ P1 firebreak+CI ──▶ P2 games shell ──┬──▶ P3 Gyre
+                                                         └──▶ P4 Block Pop
+                                                                   │
+                                                          P5 co-op (deferred)
+```
+
+**Where risk concentrates: P1.** Not because it is hard, but because everything
+after it merges against a firebreak P1 builds. Until P1's gate passes, a merge to
+`main` reaches Buddy's tablet (architecture §3.1). P1 is the phase to over-review.
+
+**P3 and P4 run in parallel** once P2's registry contract is fixed. They share no
+code by design — that is what invariant 6 buys.
+
+**Human-track work, which is the most likely thing to block delivery while everyone
+stares at code:**
+
+- **Scotty flips Pages from `legacy` to GitHub Actions build type**, and later
+  points Pages at the workflow. The Precision's `gh` is read-only and cannot
+  (architecture §3). **P1 cannot complete without this.**
+- **Scotty creates the `stable` branch** and performs every promotion to it.
+- **Scotty subscribes both ntfy topics** and confirms the decision tier is audibly
+  distinct from the info tier.
+- **Scotty installs the `/stable/` copy** on Buddy's tablet as the home-screen icon
+  and the root copy on the test device.
+- **Scotty rules on the open questions** in architecture §10.
+
+## 4. Phase map
+
+| Phase | Goal | Ends at |
+|---|---|---|
+| **P0** | Understand the ground before changing it | A findings document, no behaviour change |
+| **P1** | Rebuild the firebreak and add a check that can go red | Merges no longer reach Buddy |
+| **P2** | The games surface exists and is extensible | Games button opens a picker with one placeholder |
+| **P3** | Gyre is playable from the pad | Buddy can open and drive the particle field |
+| **P4** | Block Pop is playable from the pad | Buddy can play both board sizes |
+| **P5** | Co-op — deferred, not scoped | — |
+
+---
+
+## P0 — Investigation and seam assessment
+
+**Goal.** Establish what is actually in the three codebases and where the seams
+fall, before any of it is changed.
+
+**Depends on:** nothing.
+
+**Work orders:**
+
+- **`PUP-WO-0000` — Initial state and seam investigation.** An *investigative*
+  work order: no feature code. Read `index.html` end to end and report the panel
+  lifecycle contract, the click router, the state shape, the sound bank, and the
+  PIN/lock behaviour. Read both Grok workspaces and report which files are pure
+  logic (portable as-is), which are React rendering (must be rewritten), and which
+  are scaffolding (discarded). Propose the concrete registry entry shape and the
+  game-module contract that architecture §4 describes in the abstract. Record
+  anything that contradicts `docs/architecture.md` §3 — **that contradiction is the
+  most valuable output of this phase**, and it goes to the architecture as an
+  amendment, not into a build.
+
+**Exit gate.** `docs/findings/PUP-WO-0000.md` exists on `main` and answers, in
+terms a work order can cite: (a) the exact function signature a game module must
+export; (b) the exact registry entry fields; (c) a file-by-file disposition of both
+Grok workspaces marked port / rewrite / discard; (d) a list of contradictions found
+against architecture §3, which may be empty but must be explicitly stated as empty.
+`git diff main --stat` for this work order shows changes under `docs/` only.
+
+---
+
+## P1 — Firebreak and CI
+
+**Goal.** Make merge stop meaning deploy, and add one check that can fail without
+being persuaded.
+
+**Depends on:** P0.
+
+**Work orders:**
+
+- **`PUP-WO-0100` — CI workflow.** A GitHub Actions workflow that, on every push
+  and pull request: parses every `.js` and the inline script of `index.html` for
+  syntax validity; asserts every local asset referenced by `index.html` appears in
+  `sw.js`'s `urlsToCache`; asserts `CACHE_NAME` changed when any cached asset
+  changed; and runs a headless load that opens the console and fails on any console
+  error.
+- **`PUP-WO-0101` — Two-path publication.** Extend the workflow to publish `main`
+  to the site root and `stable` to `/stable/`. Namespace `CACHE_NAME` per deploy
+  path and assert in CI that the two differ.
+
+**Exit gate.** All four must hold:
+1. A pull request with a deliberate syntax error in `index.html` shows CI **red**.
+2. A pull request adding an asset without adding it to `urlsToCache` shows CI
+   **red**. *(Both prove the rejection, not the issuance — a check nobody has
+   watched go red is indistinguishable from one that cannot.)*
+3. `curl -sI https://ikthys777.github.io/PupPad/stable/` returns 200, and the
+   commit it serves differs from the one at the site root after a merge to `main`
+   with no promotion. *(Falsifies northstar invariant 4.)*
+4. With both paths loaded and cached, `caches.keys()` in each shows disjoint names.
+   *(Falsifies northstar invariant 7.)*
+
+---
+
+## P2 — Games shell
+
+**Goal.** The games surface exists, is reachable, and accepts new games as data.
+
+**Depends on:** P1. **Nothing merges into a live path before the firebreak holds.**
+
+**Work orders:**
+
+- **`PUP-WO-0200` — Button swap and registry.** Replace `id:7` Power with Games in
+  `BTNS_RIGHT`; reassign the `powerUp` sound to games-open. Add the registry array
+  and the game-module contract from `PUP-WO-0000`'s findings.
+- **`PUP-WO-0201` — Picker overlay.** A full-screen overlay following the existing
+  `openX()`/`closeX()` panel pattern. Large tiles, one per registry entry, each
+  carrying an icon **and** its word. Renders from the registry with no knowledge of
+  any specific game. Ships with one trivial placeholder game proving the contract.
+
+**Exit gate.**
+1. No reference to a Power button remains: `grep -ri power index.html` returns only
+   the sound-bank definition.
+2. Adding a second placeholder game to the picker requires changes to exactly three
+   things — its own module, one registry entry, one `urlsToCache` line — verified by
+   `git diff --stat`. *(Falsifies northstar invariant 6.)*
+3. With all text covered in a screenshot of the picker, a person who has not seen
+   the app can state what each tile does. *(Falsifies northstar invariant 1.)*
+4. Airplane mode, cold start, open picker, open placeholder game, return to console
+   — all succeed. *(Falsifies northstar invariant 3.)*
+5. Cold-start time to interactive console is recorded on the test device as a
+   baseline number. **Threshold is architecture §10's open question**; this gate
+   requires the measurement, not a verdict.
+
+---
+
+## P3 — Gyre
+
+**Goal.** Buddy can open the particle field and drive it.
+
+**Depends on:** P2.
+
+**Work orders:**
+
+- **`PUP-WO-0300` — Simulation port.** Port `sim.ts`, `palettes.ts`, and
+  `backgrounds.ts` to vanilla. Replace the Zustand store with a plain state object.
+  Keep `localStorage` persistence.
+- **`PUP-WO-0301` — Controls and additions.** Port the slider surface to PupPad's
+  theme. Add attract/repel and randomize (architecture §5). Sliders must be
+  operable by a non-reader.
+
+**Exit gate.**
+1. Every slider in the source's control set is present and changes the field
+   visibly within one second of being dragged.
+2. Randomize produces a visibly different field on each of five consecutive taps.
+3. Attract/repel visibly inverts particle behaviour.
+4. Settings survive a full app restart.
+5. There is no reachable state from which returning to the console takes more than
+   one tap. *(Falsifies northstar invariant 5.)*
+6. Airplane mode, cold start, play, return — succeeds.
+
+---
+
+## P4 — Block Pop
+
+**Goal.** Buddy can play both board sizes, with no fail state that ends play.
+
+**Depends on:** P2. Runs in parallel with P3.
+
+**Work orders:**
+
+- **`PUP-WO-0400` — Engine port.** Port `engine.ts`, `pieces.ts`, `types.ts` to
+  vanilla. **All board mutation flows through one reducer taking
+  `{playerId, action}`; trays are an array keyed by player** — architecture §7
+  seams 1–3, installed now because retrofitting them later is expensive.
+- **`PUP-WO-0401` — Board and tray UI.** Render in PupPad's theme: dark radar
+  field, paw-and-label header matching the existing panels, pieces recoloured to
+  the console's button glow palette, `doSound()` in place of the source's own audio.
+- **`PUP-WO-0402` — Modes and end state.** Both `easy` 6×6 and `classic` 8×8.
+  Soften game-over to a single play-again affordance.
+
+**Exit gate.**
+1. Both board sizes playable start to finish.
+2. Reaching a no-moves state presents exactly one control, and tapping it starts a
+   new game. *(Falsifies northstar invariant 5.)*
+3. `players: 2` can be set on a tray array in a scratch branch and the engine
+   accepts a second player's action without engine changes. *(Proves architecture
+   §7 seams, without building co-op.)*
+4. With all text covered, the board and tray are operable. *(Northstar invariant 1.)*
+5. Airplane mode, cold start, play, return — succeeds.
+
+---
+
+## P5 — Realtime co-op
+
+**Deferred, and deliberately not scoped to work-order level.** Pre-writing distant
+phases in work-order detail is the most common way a roadmap goes stale on the day
+it is written.
+
+**Intent** is recorded in architecture §7, including the four seams P4 installs.
+
+**The spike that will shape it:** local two-player on one tablet, built first, on
+`classic`. If the shared-board experience does not work with two people at one
+screen and zero network, the networked version will not work either — and the spike
+costs a fraction of what the network layer does.
+
+**Not started until P3 and P4 gates pass.**
+
+## 5. Standing cadence
+
+- **Every phase boundary: audit the numbering and the documents.** Has anything
+  been dropped? Has any ratified change reached the code but not these documents?
+  This is cheap here and expensive at launch — it is the failure mode that most
+  reliably goes unnoticed, because nothing announces it.
+- **Every work order: the builder's `FEEDBACK.md` is read for findings that belong
+  upward** — a superseded ruling becomes an architecture amendment, a changed
+  constraint goes to the northstar and is re-ratified, an uncheckable gate is fixed
+  here by amendment.
+- **Every work order boundary: an unconditional heartbeat** on the info topic,
+  whether or not anything needs attention. Silence must mean stopped, never still
+  going.
+
+## 6. Reconciliation
+
+Nothing built yet. This table opens at the first divergence between what was
+planned and what was built; history is left as written and never renumbered.
+
+| Number as built | What it actually was | What this roadmap planned |
+|---|---|---|
+| — | — | — |
+
+## 7. Amendments
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-08-31 | Document created. | First roadmap; also the first dual-CC pilot, so CC-A needs a sequencing authority that is not a conversation. |
+
+## 8. Provenance
+
+Written by Claude (chat architect) with Scotty, 2026-08-31, from the same planning
+session as the northstar and architecture. P0 is staged as an investigative work
+order at Scotty's direction, so CC-A opens the loop with an assessment rather than
+a build. Exit gates for P1 and P2 are drawn from the falsification column of
+`docs/northstar.md` §4.
