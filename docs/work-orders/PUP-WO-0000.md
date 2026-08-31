@@ -43,7 +43,10 @@ nobody reaches into it while you are running.
 2. **Read `sw.js`** and document exactly what a new cached asset requires.
 3. **Read both Grok workspaces.** Sources are on the box at
    `~/PupPad-sources/blockpop/` and `~/PupPad-sources/gyre/` (see §9). Produce a
-   **file-by-file disposition table** marking every file `port` (pure logic, moves
+   **file-by-file disposition table** covering every **source** file — `src/`,
+   configuration, and package manifests. `.grok/` agent metadata and `.vercel/` build
+   output are generated noise: state their counts and exclude them wholesale rather
+   than listing them. *(Ruled 2026-08-31; §3.4 governs.)* Mark each `port` (pure logic, moves
    near 1:1), `rewrite` (React rendering, needs a vanilla equivalent), or `discard`
    (auth, database, SSR, build scaffolding).
 4. **Specify the game-module contract.** The exact function signature a game module
@@ -156,7 +159,9 @@ The two Grok workspaces are placed on the box at `~/PupPad-sources/` by the huma
 before kickoff. They are **reference material, not repository content** — nothing
 from them is committed in this work order. `blockpop/` carries Block Pop
 (`src/components/game/`, `src/lib/game/`); `gyre/` carries the particle field
-(`src/components/field/`). Both are TanStack Start + React 19 + Zustand exports
+(`src/components/field/`). `_incoming/` holds the original zips and is a transfer artifact, not a workspace —
+ignore it; it is not an undescribed source under §7. Both are TanStack Start +
+React 19 + Zustand exports
 with Vercel build output and auth/database scaffolding that is not wanted.
 
 ## 10. Provenance

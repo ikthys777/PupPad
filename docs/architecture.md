@@ -30,10 +30,19 @@ A single-page progressive web app. One HTML file carries all markup, styles, and
 behaviour; a service worker caches it for offline use; a manifest makes it
 installable. No build step, no package manager, no framework, no dependencies.
 
-Eight buttons flank a radar canvas — four per rail. Each opens a full-screen
-overlay panel built by an `openX()` function that appends a div, paired with a
-`closeX()` that removes it. A click router in `attachEvents()` dispatches on
-`data-id` against two button arrays.
+Eight buttons flank a radar canvas — four per rail. **Three of the eight open a
+panel** — Map (`openTreasureMap`), Draw (`openCanvas`), Camera (`openCamera`) — each
+a full-screen overlay built by an `openX()` that appends a div, paired with a
+`closeX()` that removes it. The other five (Comms, Alert, Tools, Weather, Power)
+play a sound and show a toast; no panel exists.
+
+`attachEvents()` is **not** a router. `data-id` looks up the button record, but the
+behaviour branch at `index.html:1680-1699` is a hardcoded `if (btn.id === 1/2/3/6)`
+chain. **Adding a ninth id means editing that chain** — which is precisely what
+northstar invariant 6 forbids, and therefore the central problem `PUP-WO-0200` must
+solve: dispatch has to become registry-driven, not an id comparison. *(Both
+corrections found by CC-A against the code, 2026-08-31; the previous text overclaimed
+on both counts.)*
 
 ## 3. Ground truth — measured 2026-08-31
 
@@ -148,10 +157,20 @@ serves nothing under `docs/`. A P0/P1 work order's docs-only scope fence is
 therefore not merely scope hygiene — **it is the property that makes merging it
 safe**, and must be verified as such before merge, not assumed.
 
-**The cache hazard.** The root service worker's scope covers `/stable/`. Two builds
-sharing `CACHE_NAME` will fight, and the symptom is Buddy's tablet silently serving
-the dev build. Cache names are namespaced per path; CI asserts it (§3.1,
-invariant 7).
+**The cache hazard — and why namespacing alone is not the fix.** `sw.js:19-27`'s
+activate handler calls `caches.keys()` and deletes every cache whose name is not its
+own. **`caches.keys()` is origin-scoped, not service-worker-scope-scoped**, so each
+deploy path sees the other's caches and reaps them. Namespacing `CACHE_NAME` does not
+merely fail to help — it guarantees mutual deletion on every activation, and the
+symptom is Buddy's tablet losing offline capability whenever the dev build activates
+(northstar invariants 3 and 7, both).
+
+**Required fix, owned by `PUP-WO-0101`:** each deploy carries a `CACHE_PREFIX`, and
+the activate handler reaps only caches matching **its own prefix** —
+`name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME`. CI asserts both that the two
+prefixes differ and that the reap is prefix-bounded. *(Found by CC-A, 2026-08-31,
+before `PUP-WO-0101` was authored. The earlier ruling — "namespace `CACHE_NAME`" —
+was insufficient and is superseded.)*
 
 ## 7. Deferred with intent — realtime co-op
 
@@ -219,6 +238,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 |---|---|---|
 | 2026-08-31 | Document created. | First architecture; repo shipped without one. |
 | 2026-08-31 | §5 adversarial-pass ownership reversed: CC-B runs it as a black-box task; `FEEDBACK.md` records the exchange verbatim. §9 traceability updated to match. | The original ruling located independence in *who dispatches*. It is actually a property of *context isolation*, which a black-box subagent achieves directly and more cheaply. The verbatim requirement closes the gap the original ruling was reaching for — it makes the quality of the builder's own adversarial pass reviewable rather than taken on trust. Raised by Scotty; the superseded ruling was Claude's. |
+| 2026-08-31 | §6 cache-hazard fix corrected: namespacing `CACHE_NAME` is insufficient because `caches.keys()` is origin-scoped; the activate reap must be prefix-bounded. §2 corrected — only three of eight buttons open panels, and `attachEvents()` is an id `if`-chain, not a router. | All three found by CC-A reading the code against the documents, before dispatch. The cache error would have shipped a `/stable/` split that silently destroyed Buddy's offline cache — the exact failure the split exists to prevent. The §2 errors were mine, from a chat-session reading. |
 | 2026-08-31 | §6 gains the bootstrap exception: P0 and P1 merges reach the live path by necessity, and are safe on the narrower `docs/`-only property rather than on the firebreak. | Found by CC-A on its first read. Recorded so it does not later read as a violated rule. |
 
 ## 12. Provenance

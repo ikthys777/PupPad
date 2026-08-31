@@ -131,8 +131,11 @@ being persuaded.
 3. `curl -sI https://ikthys777.github.io/PupPad/stable/` returns 200, and the
    commit it serves differs from the one at the site root after a merge to `main`
    with no promotion. *(Falsifies northstar invariant 4.)*
-4. With both paths loaded and cached, `caches.keys()` in each shows disjoint names.
-   *(Falsifies northstar invariant 7.)*
+4. With both paths loaded and cached, `caches.keys()` in each shows disjoint names,
+   **and — the part that actually matters — after force-activating the root service
+   worker, the `/stable/` cache still exists.** `caches.keys()` is origin-scoped, so
+   the reap must be prefix-bounded or the two paths delete each other (architecture
+   §6). *(Falsifies northstar invariants 3 and 7.)*
 
 ---
 
