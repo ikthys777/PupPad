@@ -18,6 +18,19 @@
 
 **First act:** `git fetch origin && git checkout -B build/wo-0105 origin/main`.
 
+> **STATUS ON `main`, 2026-09-01 — THE DEFECT IS STILL LIVE AND NOTHING HAS SHIPPED.**
+> Verified rather than inferred: `sw.js` on `main` is **361 lines with no status
+> guard** — the only status token in the file is the `504` offline synth at `:357`.
+> **PR #25 is open and unmerged.**
+>
+> Two merge commits carry this work order's *number* and neither carries its *fix*:
+> `805ae54` (§0a) and `78ac016` (**"the quota path splits to `PUP-WO-0108`"**) each
+> merged **one file — this one**. That second title is the hazard: it reads like a
+> change that landed. **It did not.** Only the work order moved.
+> *(Flagged by the co-architect, who grepped `main` rather than trusting the title —
+> which is architecture §5's rule about a diagnosis being a claim, applied to a
+> commit subject.)*
+
 ---
 
 ## 0. This is live, and it is on the tablet now
@@ -260,13 +273,22 @@ they are recorded here as the standing scope, not as work.** Item 3 is what is o
   out of it at all.
 
 **Protected surfaces — must diff to empty:** `index.html`, `manifest.json`, both
-icons. **`sw.js` is the subject.** `.github/ci/` may be touched **only** for the
-tests in §3 — the cache gate's shape is `PUP-WO-0104`'s and must not be pre-empted.
+icons. **`sw.js` is the subject.** `.github/ci/` **and
+`.github/workflows/ci.yml`'s `checks` job** may be touched **only** for the tests
+in §3 — registering a check is part of building it, since an unregistered check is a
+file and not a gate — the cache gate's shape is `PUP-WO-0104`'s and must not be pre-empted.
 
 ## 3. Acceptance — proven, not asserted
 
-1. `git fetch origin && git diff origin/main --stat` shows `sw.js`, `.github/ci/`
-   and `docs/` only.
+1. `git fetch origin && git diff origin/main --stat` shows `sw.js`, `.github/ci/`,
+   `.github/workflows/ci.yml` and `docs/` only. Changes to `ci.yml` must be confined
+   to the `checks` job — no trigger, permission, environment or other job may move.
+   *(Corrected 2026-09-01. This line previously omitted `ci.yml` while §0a.4 and §3.8
+   both **required** wiring the checks into it — **the work order forbade what it
+   demanded**, which is CC-A's own map-before-dispatch ruling failing on CC-A's own
+   authoring, and the third appearance of this shape after `PUP-WO-0102` §2/§3.1.
+   The builder **declared it before the gate ran** rather than crossing it silently
+   or arguing it, which is the behaviour the contradiction rule exists to produce.)*
 2. **Demonstrated RED first, in a real browser:** against an origin returning 404,
    show the app shell poisoned *before* the fix and clean *after*. `PUP-WO-0103`'s
    lens 1 reproduced the poisoning; reproduce it yourself rather than citing it.
@@ -327,9 +349,13 @@ tests in §3 — the cache gate's shape is `PUP-WO-0104`'s and must not be pre-e
   `registration.scope` while `addAll` resolves against the script URL, and the
   harness's HTTP-versus-quota ordering model, which is backwards and which `sw.js`
   *reasons from* to conclude a fallback "is not needed."
-  **Ranked as P1 work carried past the phase gate — the same category §6.4 already
-  uses for `PUP-WO-0104` — and ahead of 0104, because it is live severity where 0104
-  is defence.** *(`PUP-WO-0107` was dissolved into §0a.4 and its number is not
+  **Parked STRICTLY BEHIND P2, in sequence: `PUP-WO-0104`, `0106`, `0108`, tiles.**
+  *(CC-A first ranked 0108 ahead of 0104 on live severity. **That argument rested on a
+  child using the app, and Scotty removed exactly that premise** when he dropped the
+  merge gate: Buddy is not using PupPad until we say so, so **nothing is live-severity
+  while nobody is holding the tablet.** The same reasoning that widened the merge
+  authority demotes 0108 — ruled 2026-09-01 by the co-architect, and the symmetry is
+  the reason it is right rather than merely decided.)* *(`PUP-WO-0107` was dissolved into §0a.4 and its number is not
   reused.)*
 
 **And a standing instruction on this work order specifically, from Scotty:
