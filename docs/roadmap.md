@@ -340,6 +340,20 @@ Stated because folding it into either was the obvious move and both are wrong.
 - **Every work order boundary, architect:** pull the fresh HEAD of `main` before
   reviewing or authoring. Reviewing against a stale tree is how a merged change gets
   reviewed twice, or missed once.
+- **Every scope-fence and protected-surface check, both sessions: fetch, then
+  measure against `origin/main`.** Never against a local `main` branch ref — nothing
+  fast-forwards it, and in this repo's worktrees it has run four commits stale.
+  **A work order must write the check as `git fetch origin && git diff origin/main
+  --stat`, never `git diff main --stat`.** The two questions take two refs: *what
+  this PR contains* is measured against `origin/main`; *what the builder actually
+  touched* against `git merge-base origin/main HEAD`. This is not bookkeeping — the
+  scope fence is what makes a pre-firebreak merge safe (architecture §6), so a fence
+  checked against the wrong ref is a safety check measuring the wrong thing. And
+  when the live base has moved, another session's merged commits appear in the
+  diff: they are never to be reverted to make the fence clean.
+  *(Added 2026-09-01 — `PUP-WO-0000` §3.1 and `PUP-WO-0100`'s first draft both
+  carried the wrong form; CC-B happened to use the right one anyway, which is
+  exactly why the rule belongs here rather than in one work order's memory.)*
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.

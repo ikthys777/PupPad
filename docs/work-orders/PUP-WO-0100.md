@@ -42,6 +42,14 @@ serves `main:/` as static files; it does not execute or expose `.github/`.
 the moment this merges, with no firebreak in place. That is not a style rule; it
 is the reason this work order can merge at all.
 
+**Which makes the ref you measure against part of the safety argument.** Fetch, and
+diff against `origin/main` — the live base — never against your local `main`, which
+nothing fast-forwards and which is stale right now. Two different questions need two
+different refs: *"what does this PR contain"* is measured against `origin/main`, and
+*"what did I actually touch"* against `git merge-base origin/main HEAD`. Confusing
+them makes another session's merged commits appear in your diff. See §7 for what to
+do when that happens, and what not to do.
+
 ## 1. Scope
 
 Build `.github/workflows/ci.yml`, running on **every pull request and every push
@@ -104,7 +112,13 @@ future edit to this file.
 
 ## 3. Acceptance — what must be proven, not asserted
 
-1. `git diff main --stat` shows changes under `.github/` and `docs/` only.
+1. **`git fetch origin && git diff origin/main --stat`** shows changes under
+   `.github/` and `docs/` only. **Against `origin/main`, and fetched first — not
+   against your local `main`.** Your local `main` is a branch ref that nothing
+   fast-forwards; it is four commits stale as this is written. Diffing against it
+   reports merged work as though this branch introduced it, and per §0 this is the
+   check that establishes the merge is safe. A merge-safety check measuring the
+   wrong ref is worse than none.
 2. **All four checks are green on the unmodified tree**, in a real run on the PR.
 3. **Every one of the four checks is demonstrated RED**, each by its own
    deliberate break, and each break then reverted. This is the acceptance
@@ -229,6 +243,13 @@ Park the branch and surface to CC-A rather than working around:
   flaky check and note it** — park and ask. A muted check is worse than none.
 - Any need for a credential, token, or repository setting change.
 - The workflow requiring `permissions:` beyond `contents: read`.
+- **`origin/main` moved under you mid-run** — your §3.1 diff shows files you never
+  touched. **Do not make the fence clean by reverting them.** They are somebody
+  else's merged work, and deleting merged commits to satisfy a scope check is the
+  one failure here that destroys rather than delays. Confirm with `git merge-base
+  origin/main HEAD` that they are outside your span, say so in `FEEDBACK.md`, and
+  ask whether to rebase. *(The fetch itself is routine and belongs to §3.1, not
+  here; what belongs here is the halt when the fetch shows a moved base.)*
 
 ## 8. Kickoff prompt
 
