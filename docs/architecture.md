@@ -315,6 +315,37 @@ at all. If that does not feel good, the networked version will not either.
   mid-work says so explicitly and names its next step. The one stall that was cheap
   to recover was cheap *only* because the builder's final line named where it had
   stopped, which let it be resumed at that point instead of re-deriving it.
+- **Ending a turn is not stalling, and no artifact can tell them apart.** A session
+  that finishes a turn with a status report and no abandoned action is idle *by
+  design*. A stalled one looks identical from outside — and so does one mid-subagent.
+  Three states, one appearance. *(Found 2026-09-01 across a false alarm and the
+  wrong correction to it.)*
+- **A liveness signal sampled only at turn boundaries cannot see work that happens
+  between them.** A watchdog reading a state file that advances only when a turn ends
+  reports a session running a long subagent as indistinguishable from a dead one. A
+  liveness check must take the newest of several independent clocks, at least one of
+  which advances *while* work happens, and require agreement before declaring a stall.
+- **Busy-versus-idle cannot answer "was this already underway?" — only a start time
+  can.** The distinguishing signal is *when the work began*, measured against *when it
+  was asked for*. This is the sharp one, because it is where the same defect recurred
+  **inside its own correction**: a watchdog false-positive was diagnosed as a stall on
+  evidence that could not separate stalled from working; the retraction then asserted
+  the session *"had been running the whole time"* on evidence that could not separate
+  *already running* from *started because it was told to*. Both were wrong the same
+  way. **In both cases a signal that could have settled it was available and unused.**
+  The instrument was not missing — **it was not asked the question.** Generalise from
+  that rather than from "the watchdog was wrong."
+- **Retract the false claim, not everything attached to it.** The same message that
+  wrongly asserted a stall also carried a correct finding — that the frozen artifact
+  omitted the builder's feedback file, putting the build-phase evidence outside what
+  the reviewer would see, which is the `PUP-WO-0101` failure the broadened freeze rule
+  exists to prevent. Acting on it produced a 203-line feedback file committed *as* the
+  freeze, so the pass read a complete artifact. A blanket "disregard my last message"
+  would have thrown that away. **And one data point survives the retraction:** the
+  `PUP-WO-0102` stall at the freeze-then-dispatch boundary was real. One instance is
+  not a pattern and does not justify a process change — but it is not zero, and it
+  stays on the record as an open one-off rather than being retracted alongside the
+  false one.
 - **The build loop's notification channel is notify-only** while the ntfy server has
   no ACL (§3). Topics are unguessable rather than authenticated, which is adequate
   for alerts and inadequate for anything that acts. The standing rule holds: an
@@ -367,6 +398,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §5: feedback becomes per-work-order (`docs/feedback/<WO-id>.md`) and the freeze covers every file a work order names as a deliverable, not only code. `docs/FEEDBACK.md` migrated to `docs/feedback/PUP-WO-0100.md`; `PUP-WO-0000`'s transcript recovered to `docs/findings/PUP-WO-0000-adversarial.md`. | Two defects from `PUP-WO-0100`, one on each side. **The naming defect was CC-A's:** the two-artifact ruling made transcripts durable but left feedback a single rolling file, so the builder — following it exactly — destroyed the previous work order's record at the tip on the rule's first application. **The freeze defect was CC-B's**, self-reported and led with: it froze the code and rewrote its feedback mid-pass, so the red demonstrations and the determinism justification went unreviewed. Both are cases of a rule being right in intent and underspecified in scope. |
 | 2026-09-01 | **§6.1 added — the offline read is origin-wide too.** §5 gains two rulings: deploy ordering enforced by the workflow rather than by prose (with every published copy checked in the run that publishes it), and the standing question *"what legitimate behaviour does this fix now refuse?"* | `PUP-WO-0101`'s second adversarial pass. §6 documented only the *reap* and was incomplete in a way that **read as complete**, which is the more dangerous kind: it invited the conclusion that prefix-bounding the reap closed the hazard. The read makes the promoted copy serve the test build's bytes offline — invariant 7 falsified by the invariant's own stated test, with every check green. The ordering ruling comes from the same pass: `refs/heads/stable` still carries the origin-wide reaper, so a paragraph was the only thing standing between a flip and a deleted cache. All three points in §6.1 are the builder's, ratified substantially as written. |
 | 2026-09-01 | §6.1 point 2 gains three refinements (a stub that cannot *pose* the question; the dangerous value can be ordinary success, so the assertion passes by not running; proving a detector is load-bearing needs a *sole* detector removed) plus the anchor-break-is-not-flakiness rule. §5 gains map-before-dispatch and search-for-the-belief. §8 gains the heartbeat ambiguity. | All from `PUP-WO-0102`, and all but one are the builder's, including a correction to a rule the builder itself wrote and CC-A had ratified. The two §5 entries are CC-A's own defects: a work order whose §2 forbade what its §3 required, and one wrong belief surviving two corrections because the search matched its wording rather than its meaning. |
+| 2026-09-01 | §8 gains four entries on liveness: ending a turn is not stalling; turn-boundary sampling cannot see between turns; busy/idle cannot answer *was this already underway* — only a start time can; and retract the false claim rather than everything attached to it. **No cadence change was made**; §5's pass-dispatch step stands as ratified. | A watchdog false positive was reported as a second stall, CC-A drafted a process redesign on it before confirming the session had stopped, and then **the correction repeated the error one level up** — asserting the builder had been running all along, on a signal that could not distinguish that from *started because it was told to*. The builder produced the timings that settled it. Recorded because the recurrence inside the correction is the reusable part, not the original alarm. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
