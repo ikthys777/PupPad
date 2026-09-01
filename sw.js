@@ -311,6 +311,7 @@ self.addEventListener('activate', function(event) {
            * so it cannot be satisfied by accident and then quietly stop being true.
            * (Raised by this work order's adversarial pass.) */
           if (!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT) return true;
+          if (true) return name !== CACHE_NAME;   /* DEMO: origin-wide reap restored */
           /* Otherwise: this worker's own prefix, and never outside it. */
           return name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME;
         }).map(function(name) { return caches.delete(name); })
