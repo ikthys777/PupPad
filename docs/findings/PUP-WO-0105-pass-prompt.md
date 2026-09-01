@@ -37,9 +37,15 @@ READ THE FEEDBACK FILE BEFORE PROBING, especially §2's four-class table and §5
 honest account of what acceptance 3 does NOT cover. Then attack both.
 
 YOU MAY RUN THINGS. node v24.16.0; Chromium via playwright `channel: 'chromium'`
-(or PUPPAD_CHROMIUM). Checks take a directory as argv[2]; `.github/ci/node_modules`
-holds playwright. To compare against the unguarded worker:
+(or PUPPAD_CHROMIUM) — verified to launch, version 141.0.7390.37. Checks take a
+directory as argv[2]. To compare against the unguarded worker:
 `git show origin/main:sw.js`.
+
+**`playwright` resolves from `.github/ci/`, NOT from the repo root.** A script you
+write elsewhere dies with `ERR_MODULE_NOT_FOUND: Cannot find package 'playwright'`,
+which looks like a missing dependency and is not one. Either put your script in
+`.github/ci/`, or symlink `.github/ci/node_modules` next to it. This cost the builder
+two cycles; it is written down so it costs you none.
 DO NOT MODIFY THE REPOSITORY — it is frozen. No commits, pushes, stashes or edits under
 the repo path. Copy with `cp -r`, NEVER `cp -a`: this is a git WORKTREE and copying its
 .git pointer file makes stray commits land on the frozen branch.

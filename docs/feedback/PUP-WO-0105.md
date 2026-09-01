@@ -219,3 +219,30 @@ for a fix, in the same file, against the same invariant, and it would have passe
 every check that exists today because nothing exercises opaque responses. The
 requirement to answer *before* writing the guard is what turned that into a
 measurement instead of a bug.
+
+### 6.5 My pointer resolver produced a false GREEN, which my own mitigation does not cover
+
+`PUP-WO-0103` ended with member 4 and a one-line mitigation: *when the resolver reports
+a miss, print the surrounding lines of the cited file, never the count.* I implemented
+that and it worked. Then the resolver passed on a claim it had not checked.
+
+The prompt tells the reviewer Chromium is available. My resolver probed it with an
+inline `node -e`, piped through `tail -1`, and reported the last line of output without
+testing the exit status. The probe had actually crashed —
+`ERR_MODULE_NOT_FOUND: Cannot find package 'playwright'` — and the line `tail` handed
+back was `Node.js v24.16.0`, which reads exactly like a successful version report. The
+run then printed **ALL POINTERS RESOLVE**.
+
+The claim happens to be true: Chromium launches, version 141.0.7390.37, verified
+properly afterwards. The resolver did not know that.
+
+**Member 4's mitigation addresses false REDS and does nothing for false GREENS.** In
+`PUP-WO-0103` my resolver reported a dangle that was a case-sensitive grep; here it
+reported success it never established. Both directions, one tool, one work order apart
+— so the honest statement of the rule is not *"print context on a miss"* but **"a
+pointer resolver must fail closed: an unresolvable check is a MISS, never a pass."**
+The specific bug is `cmd | tail` discarding the exit status, which is the same
+`$?`-of-the-wrong-process trap `PUP-WO-0103` recorded in its byte assertion.
+
+Recommended for architecture §6.1 beside member 4, since the mitigation as recorded is
+incomplete.
