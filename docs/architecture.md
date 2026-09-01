@@ -253,6 +253,42 @@ true while looking nothing like a degenerate stub:
   once — redundancy working, and a badly designed meta-test. *(Recorded because the
   failed first attempt is what makes the second worth anything.)*
 
+**The family, stated once, because it now has four members and one shape.** Each is
+a run whose exit code is indistinguishable from a sound one:
+
+1. **An assertion that passes by not running** — neuter a stub with an *ordinary
+   success* value and the code never reaches the branch the assertion guards.
+2. **An assertion that passes and certifies the forbidden state** — the check ran,
+   compared what it was told to compare, and the thing it compared was the thing the
+   invariant forbids. `PUP-WO-0103`'s own headline evidence read *"root
+   tree=b00e76ad published=b00e76ad / promoted tree=b00e76ad published=b00e76ad"* —
+   two identical hashes, written down as proof the check works.
+3. **A failure whose cause is not the one under test** — red, and red for the wrong
+   reason. Four occurrences in one work order (§5's *red is not a demonstration*).
+4. **A pointer that resolves in the author's head and not in the reviewer's tree.**
+   **Every path a review prompt cites is an assertion that the file exists in the
+   tree the reviewer is given**, and nothing in a freeze checklist resolves one:
+   head, tree, protected-surface diffs and green checks are four checks, none of
+   which opens a path the prompt names. *(`PUP-WO-0103`'s frozen prompt cited
+   `PUP-WO-0104.md` and `§6.2`; both existed on `main` and neither existed on the
+   branch, so its M9/M7 fence was inert and the authority that removed the rollback
+   lever was unreadable — leaving a reviewer to read a removed surface as an
+   unexplained deviation from a work order that still demanded it.)*
+
+**In all four the verdict was read instead of what produced it.** Members 1–2 are
+green, 3 is red, 4 never runs at all — which is why "look harder at the result" has
+never been the fix for any of them.
+
+**Member 4 is one line, and being mechanisable makes it a rule rather than advice**
+(§5): before dispatching a pass, resolve every path and every section the prompt
+cites **against the frozen tree, not against `main`**. *Not assigned to a work order
+here — it belongs wherever CI is next opened, and this project has learned what
+happens when scope is added to a work order already in flight.*
+
+**A freeze verifies that the artifact stopped moving. It does not verify that the
+artifact was correct when it stopped**, and a stale baseline passes every freeze
+check there is.
+
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
 contradicted — is worth its cost here, because §6.1 exists precisely because a defect
@@ -498,6 +534,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §8 gains the checkpoint-commit rule, in the form that survives an unexpected stop. | A builder stalled mid-fix holding 172 uncommitted lines that existed nowhere else. The instinct — *commit before you stop* — is right and unenforceable, because the stop was not chosen; stated as *commit each coherent unit as it is completed*, it fires during the work rather than at an end nobody can predict. Recorded with the asymmetry that prompted it: the architect's own tree happened to be clean, which was luck rather than discipline, and is the argument for the rule rather than against needing one. |
 | 2026-09-01 | §6.2 records the `stable` ruleset verified in **both** directions and removes `PUP-WO-0103`'s rollback lever and its whole dispatch surface; §6.3 rules that no `github-pages` branch exists or should, and that its appearance is an alarm. | The ruleset permits repository admin and refuses installation tokens, both now proven — the second by a real push returning `GH013` with `stable` unmoved. The authority the lever was built to provide already existed structurally, so the lever is removed rather than hardened, taking F1 and F2 with it. **Ordering matters: the dispatch surface could only be removed once the publish job gained a `pull_request` path, or the archive refusals would have become undemonstrable.** **The reusable finding is an instrument that cannot return a negative:** a shim response omitting `bypass_actors` was read as an empty list, and a `--dry-run` push was read as a verdict though it never reaches the server. Both could only produce the answer they produced. |
 | 2026-09-01 | §5 gains: red is not a demonstration — assert the commit that ran and the failing step's name, never the conclusion alone. | Four times in `PUP-WO-0103` a red run was read as a successful refusal demonstration, each red for the wrong reason, the last of them a stale run for a superseded commit. The builder named it as one missing habit rather than four mistakes and observed it was mechanisable, which is what makes it a ruling. It completes a pair with §6.1: a green run certifying nothing and a red run proving nothing are the same defect — the verdict read instead of what produced it. |
+| 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
