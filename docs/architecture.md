@@ -319,6 +319,28 @@ happens when scope is added to a work order already in flight.*
 artifact was correct when it stopped**, and a stale baseline passes every freeze
 check there is.
 
+**A PER-CHANGE SAFETY ARGUMENT DOES NOT COMPOSE ACROSS CHANGES IN ONE COMMIT.**
+*(`PUP-WO-0105`'s builder, against its own accepted decision.)* Two individually-safe
+changes in one commit are not a safe commit, **and the per-change analysis is what
+makes that invisible.**
+
+Concretely: a four-class response matrix measured a cache-write guard and showed
+exactly one cell moving — sound, and the basis on which a UI test was waived. The
+same commit also bumped `CACHE_VERSION`. The matrix **varied the response and
+nothing else**, so it could not see that the bump discarded every runtime-cached
+asset; invariant 3's own falsification test then rendered **0 of 24 map tiles**
+against 24 of 24. **The argument offered for not running the UI test is what
+concealed the defect the UI test finds.**
+
+Two rules follow, and the second is the cheaper one:
+
+- **Ask of every claim what was actually VARIED to produce it.** A measurement's
+  scope is a property of the fixture, not of the confidence in the sentence.
+- **The author of a claim can check its scope by opening the file; a reviewer can
+  only infer it.** Those are different duties and the record should say so rather
+  than split fault evenly — but the reviewer's share is real whenever a waiver was
+  granted on the claim's strength.
+
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
 contradicted — is worth its cost here, because §6.1 exists precisely because a defect
@@ -604,6 +626,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.1: member 4's rule gains its second clause — print the cited file's surrounding lines on a miss, never the count — because **member 4's enforcement is itself subject to member 3**. | The builder's, found while running member 4's first real enforcement, about a minute after it was ratified: a case-sensitive grep reported a quoted invariant as missing when it was present and materially identical. A pointer resolver exists to turn absence into red, so every bug in it presents as a dangle — making it the one check whose false positives are indistinguishable from its true positives without opening the file. The tool built to enforce *read what produced the verdict* did not obey it. |
 | 2026-09-01 | §6.4 added: the order is `PUP-WO-0105` → flip → `PUP-WO-0104`, and the "0104 before any `sw.js` change" constraint is restated as **a worker change must be gated by a check for the class it changes**. P1 closes on its own gate, with 0104 carried past it. | The constraint as written cut both ways — the co-architect spotted that it would gate 0105's own one-line fix for a defect live on the tablet. Restating it by *class* rather than by *file* resolves that without weakening it: 0105's acceptance requires building the check for its own defect class, so it brings the gate rather than bypassing it. |
 | 2026-09-01 | §6.1 member 4 gains two more clauses: the resolver must **fail closed**, and **not every path-shaped string is a pointer**. | Both from the rule's next two uses. The builder's resolver printed `ALL POINTERS RESOLVE` while a probe had crashed — `\| tail` discarded the exit status and returned a line that read like a version report; the claim was true and unestablished. CC-A's resolver then flagged a gitignored path cited as environment advice. **One false green and one false red from the same rule, one work order apart** — the print-the-lines clause covers only the red half. |
+| 2026-09-01 | §6.1 gains: **a per-change safety argument does not compose across changes in one commit**, with the varied-what rule and the author/reviewer scope asymmetry. | `PUP-WO-0105`'s builder, against a decision CC-A had already accepted. A response matrix measured the guard, CC-A extended it to the whole commit, and a `CACHE_VERSION` bump in the same commit discarded every runtime-cached asset — 0 of 24 map tiles under invariant 3's own falsification test. The waiver of the UI test rested on the argument that concealed what the UI test finds. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
