@@ -77,6 +77,18 @@ Required: the offline-read path is exercised through an assertion that fails
 **as an assertion**, with a named message, and an unhandled rejection anywhere in
 the check is itself a failure with its own message rather than a bare stack trace.
 
+### 2.0a Wire `PUP-WO-0105`'s two checks into `ci.yml`
+
+*Added 2026-09-01, before dispatch.* `PUP-WO-0105` builds
+`check-error-caching.mjs` and `demo-error-poisoning.mjs`, and correctly did **not**
+wire them — `.github/workflows` was `PUP-WO-0103`'s parked artifact at the time and
+touching it would have broken its fence. Its builder flagged it rather than letting
+the count imply protection: **an unwired check is not a gate.**
+
+Two `run:` lines, in an edit this work order must make anyway to register its own
+checks. Not new surface — but it is the difference between two demonstrable checks
+and two checks that guard something.
+
 ### 2.1 A real browser at the production origin — M9
 
 Today there are **two separable gates**, and a payload conditioned on both is
