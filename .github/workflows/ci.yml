@@ -403,65 +403,110 @@ jobs:
             [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
             echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
 
-            # ROUND 5 §7 FLAG 4, RULED BLOCKING — AND IT IS A REGRESSION MY OWN O2 FIX
-            # INTRODUCED. Under the old `ci-<sha>` concurrency key, a merge to main and
-            # a promotion of that same commit shared a group and evicted each other, so
-            # this race could not arise. Keying by ref+sha lets them run in PARALLEL,
-            # and `refs/heads/stable` moving between the checkout six steps up and this
-            # `ls-remote` now reaches here.
+            # ROUND 5 §7 FLAG 4, RULED BLOCKING — a regression MY OWN O2 FIX introduced.
+            # Under the old `ci-<sha>` key a merge to main and a promotion of that same
+            # commit shared a concurrency group and evicted each other, so this race
+            # could not arise. Keying by ref+sha lets them run in PARALLEL, and
+            # refs/heads/stable moving between the checkout and this `ls-remote` now
+            # reaches here. It used to print "REFUSING TO PUBLISH — northstar
+            # invariant 4" for ANY mismatch: M1's shape with the stakes raised, fired by
+            # a benign race at the moment a human is doing what the flip sequence says.
             #
-            # This used to print "REFUSING TO PUBLISH — northstar invariant 4" for ANY
-            # mismatch, with no remedy. That is M1's exact shape with the stakes raised:
-            # the gravest message in the project, fired by a BENIGN race, at the moment
-            # a human is doing precisely what the flip sequence instructs — and a false
-            # invariant-4 alarm there invites reaching for something destructive.
+            # THE FIRST FIX OVERCORRECTED AND THE NARROW PASS CAUGHT IT. It classified
+            # by ancestry and then announced "Nothing is wrong with any bytes." ANCESTRY
+            # IS A FACT ABOUT THE COMMIT DAG AND SAYS NOTHING ABOUT TREES — a descendant
+            # may carry any content at all, and a reviewer demonstrated one carrying
+            # main's exact tree while this step denied anything was wrong and told the
+            # reader "do NOT read it as the promoted copy having been corrupted."
+            # Replacing an over-broad ALARM with a confident DENIAL is not an
+            # improvement. Ancestry proves STALENESS. That is now all it claims.
             #
-            # The two causes are distinguishable by ANCESTRY, so distinguish them:
-            #   the ref moved FORWARD   someone pushed after this run checked out. On
-            #                           `stable` that IS a human promoting. The bytes
-            #                           are fine; this checkout is merely stale, and the
-            #                           push that moved it has its own run.
-            #   the ref DIVERGED        rewound or force-pushed. That is the invariant-4
-            #                           shape and it is named as such.
-            # Both still REFUSE — a stale checkout must not publish — but they refuse
-            # for the reason that is true, and neither remedy is "fast-forward stable".
+            # (The reviewer rated that DISQUALIFYING as a false negative on invariant 4.
+            # It is not, and the distinction matters: northstar invariant 4 reads "the
+            # copy Buddy uses advances only when a HUMAN promotes it", falsified by
+            # "observe the promoted copy change WITHOUT a human action." Only a human
+            # can push refs/heads/stable — Protect-stable refuses installation tokens
+            # and this workflow holds no ref-write capability — so a human putting main's
+            # tree on stable IS a promotion, which the invariant permits. The over-claim
+            # was real; the severity rested on reading invariant 4 as being about which
+            # tree lands rather than about what caused it to land.)
             [ "$head_sha" = "$remote_sha" ] || {
-              moved=unknown
-              if git -C "src/$ref" fetch -q --no-tags origin "refs/heads/${ref}" 2>/dev/null \
+              # ONE annotation per branch, not twelve. GitHub renders only 10 annotations
+              # of each level PER STEP, and the first version emitted 12 errors — so the
+              # two "Do NOT" guardrails, the whole point of the change, fell past the cap
+              # and never rendered. %0A keeps it to one; the plain text goes to the log.
+              nl2ann() { awk 'BEGIN{ORS=""}{if(NR>1)printf "%%0A"; print}'; }
+              moved=unknown; gerr=
+              # Fetch by URL, not by `origin`. `origin` is whatever actions/checkout
+              # left; nothing asserts it is $remote, and when it is not the fetch
+              # SUCCEEDS and the object is simply absent — a silent success landing in
+              # the `unknown` branch with no error for the reader to read.
+              if gerr=$(git -C "src/$ref" fetch -q --no-tags "$remote" "refs/heads/${ref}" 2>&1) \
                  && git -C "src/$ref" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
-                if git -C "src/$ref" merge-base --is-ancestor "$head_sha" "$remote_sha" 2>/dev/null
-                then moved=forward; else moved=diverged; fi
+                # merge-base reports an UNREADABLE GRAPH as exit 1 — the same code as
+                # "not an ancestor" — so status alone cannot tell a genuine rewind from
+                # object damage. The distinguishing signal is on stderr, which an earlier
+                # version discarded with 2>/dev/null and then told the reader to "read
+                # the git error above". Capture it and classify on it.
+                if gerr=$(git -C "src/$ref" merge-base --is-ancestor "$head_sha" "$remote_sha" 2>&1)
+                then moved=forward
+                elif [ -n "$gerr" ]; then moved=unknown
+                else moved=diverged; fi
               fi
               case "$moved" in
                 forward)
-                  echo "::error::refs/heads/${ref} MOVED FORWARD while this run was building."
-                  echo "::error::checkout=${head_sha} is an ANCESTOR of remote=${remote_sha}."
-                  echo "::error::THIS IS NOT AN INVARIANT 4 FAILURE. Nothing is wrong with any"
-                  echo "::error::bytes. Someone pushed to refs/heads/${ref} after this run"
-                  echo "::error::checked it out — on 'stable' that is A HUMAN PROMOTING, which is"
-                  echo "::error::exactly what the flip sequence instructs."
-                  echo "::error::Refusing anyway, because this run's checkout is now stale and a"
-                  echo "::error::stale copy must not publish."
-                  echo "::error::REMEDY: none needed here. The push that moved the ref has its own"
-                  echo "::error::run, and that run publishes ${remote_sha:0:12}. Wait for it, or"
-                  echo "::error::re-run this one. Do NOT fast-forward anything to answer this, and"
-                  echo "::error::do NOT read it as the promoted copy having been corrupted."
+                  msg=$(printf '%s\n' \
+                    "refs/heads/${ref} MOVED FORWARD while this run was building." \
+                    "checkout=${head_sha} is an ANCESTOR of remote=${remote_sha}." \
+                    "WHAT THIS ESTABLISHES: this run's checkout is STALE. Someone pushed to" \
+                    "refs/heads/${ref} after this run checked it out. On 'stable' only a human" \
+                    "can do that, so it is a promotion, which northstar invariant 4 permits." \
+                    "WHAT IT DOES NOT ESTABLISH: anything whatever about the new commit's" \
+                    "CONTENT. Ancestry is a property of the commit graph, not of trees, and a" \
+                    "descendant may carry any tree at all. THIS RUN HAS NOT EXAMINED" \
+                    "${remote_sha}. Do not read this as saying the promoted copy is fine." \
+                    "Refusing, because a stale copy must not publish." \
+                    "REMEDY: do NOT fast-forward anything to answer this. The push that moved" \
+                    "the ref has its own run, which examines and publishes that commit. But do" \
+                    "not assume it landed: a publish or deploy job evicted while pending prints" \
+                    "nothing at all (see the concurrency blocks in this file). VERIFY by" \
+                    "fetching /PupPad/stable/build-stamp.json and checking .sha is the commit" \
+                    "you pushed.")
+                  # On a pull request nothing can publish — DRY_RUN=true, and `deploy`
+                  # requires a push — so there is no publication for staleness to
+                  # endanger. Failing here would red-mark EVERY in-flight PR every time a
+                  # human promotes, since a promotion IS a forward move of stable.
+                  if [ "${{ github.event_name }}" = pull_request ]; then
+                    printf '::warning::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                    printf '%s\n' "$msg"
+                    echo "(pull request: nothing can publish from this run, so this is not fatal)"
+                    continue
+                  fi
+                  printf '::error::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                  printf '%s\n' "$msg"
                   ;;
                 diverged)
-                  echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha},"
-                  echo "::error::and the checkout is NOT an ancestor of the remote tip — the ref was"
-                  echo "::error::rewound or force-pushed."
-                  echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
-                  echo "::error::REMEDY: find out who rewrote refs/heads/${ref} and why. Do NOT"
-                  echo "::error::fast-forward anything until that is answered."
+                  msg=$(printf '%s\n' \
+                    "src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}," \
+                    "and the checkout is NOT an ancestor of the remote tip: the ref was" \
+                    "REWOUND or force-pushed. The graph was readable, so this is not a" \
+                    "lookup failure." \
+                    "REFUSING TO PUBLISH — northstar invariant 4." \
+                    "REMEDY: find out who rewrote refs/heads/${ref} and why. Do NOT" \
+                    "fast-forward anything until that is answered.")
+                  printf '::error::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                  printf '%s\n' "$msg"
                   ;;
                 *)
-                  echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha},"
-                  echo "::error::and this run COULD NOT ESTABLISH which way the ref moved (the fetch"
-                  echo "::error::or the object lookup failed). REFUSING TO PUBLISH."
-                  echo "::error::Nothing is established about the bytes in either direction, so this"
-                  echo "::error::is NOT an invariant 4 finding. REMEDY: read the git error above."
-                  echo "::error::Do NOT fast-forward anything."
+                  msg=$(printf '%s\n' \
+                    "src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}," \
+                    "and this run COULD NOT ESTABLISH which way the ref moved. REFUSING." \
+                    "Nothing is established about the bytes in either direction, so this is" \
+                    "NOT an invariant 4 finding — and it does not rule one out either." \
+                    "git said: ${gerr:-(nothing: the object was absent after a successful fetch)}" \
+                    "REMEDY: read the git output on the line above. Do NOT fast-forward.")
+                  printf '::error::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                  printf '%s\n' "$msg"
                   ;;
               esac
               exit 1; }
@@ -1117,7 +1162,15 @@ jobs:
         #
         # ================= WHAT THIS STEP CANNOT SEE =================
         # ROUND 5 §7 FLAG 2. This step covers a job that STARTED and was then
-        # cancelled: a manual cancel, or a superseded pull-request run.
+        # cancelled: a manual cancel that lands while THIS job is running, or a
+        # superseded pull-request run.
+        #
+        # AND THE LIKELIEST MANUAL CANCEL IS NOT ONE OF THEM. `publish` has
+        # `needs: checks`, and `checks` is fourteen steps including two browser
+        # installs — by far the longest window and the moment a human is most likely to
+        # hit Cancel. A cancel arriving then leaves `publish` cancelled BEFORE it is
+        # assigned a runner, so this step never executes. "Manual cancels are covered"
+        # would be false; most are not.
         #
         # IT CANNOT FIRE ON THE PATH O1 AND O2 EXIST TO ELIMINATE. `pages-publish-push`
         # is one concurrency slot for every push and GitHub keeps only ONE PENDING run
@@ -1138,19 +1191,29 @@ jobs:
         # will not run either. Silence after a double-cancel is expected, not a defect.
         if: cancelled()
         run: |
-          echo "::warning::This run STARTED and was then CANCELLED before it finished verifying."
-          echo "::warning::NOTHING WAS UPLOADED and NOTHING WAS DEPLOYED — the site still"
-          echo "::warning::serves whatever it served before this run started."
-          echo "::warning::This is the fail-closed path, not a failure to check. Re-run or"
-          echo "::warning::push again when you want a verdict on this commit."
-          echo "::warning::"
-          echo "::warning::THIS MESSAGE DOES NOT COVER EVERY WAY A RUN CAN FAIL TO PUBLISH."
-          echo "::warning::A publish or deploy job EVICTED WHILE PENDING (one concurrency slot,"
-          echo "::warning::one pending run) never gets a runner, so it prints NOTHING AT ALL."
-          echo "::warning::If you were promoting: verify it landed by fetching"
-          echo "::warning::  https://ikthys777.github.io/PupPad/stable/build-stamp.json"
-          echo "::warning::and checking that .sha is the commit you pushed. Absence of an error"
-          echo "::warning::is not evidence your promotion landed."
+          # ONE annotation. GitHub renders only 10 warnings per step and the first
+          # version emitted 13, so the URL and the "absence of an error is not evidence"
+          # line — the entire actionable payload — fell past the cap and never rendered.
+          # One of the thirteen was an EMPTY `::warning::`, burning a slot to print
+          # nothing.
+          msg=$(printf '%s\n' \
+            "This run STARTED and was then CANCELLED before it finished verifying." \
+            "NOTHING WAS DEPLOYED — the site still serves whatever it served before." \
+            "(The upload step may or may not have completed; only the DEPLOY is" \
+            "guaranteed not to have happened, because deploy requires publish to" \
+            "have succeeded.)" \
+            "This is the fail-closed path, not a failure to check." \
+            "" \
+            "THIS MESSAGE DOES NOT COVER EVERY WAY A RUN CAN FAIL TO PUBLISH." \
+            "A publish or deploy job EVICTED WHILE PENDING (one concurrency slot, one" \
+            "pending run) never gets a runner and prints NOTHING AT ALL — and neither" \
+            "does a cancel that arrives while the 'checks' job is still running." \
+            "IF YOU WERE PROMOTING, and only then: verify it landed by fetching" \
+            "  https://ikthys777.github.io/PupPad/stable/build-stamp.json" \
+            "and checking .sha is the commit you pushed. Absence of an error is not" \
+            "evidence your promotion landed. (That URL 404s until the Pages flip.)")
+          printf '::warning::%s\n' "$(printf '%s' "$msg" | awk 'BEGIN{ORS=""}{if(NR>1)printf "%%0A"; print}')"
+          printf '%s\n' "$msg"
 
   # ==========================================================================
   # Deployment — the ONLY job that can change what the site serves.

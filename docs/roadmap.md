@@ -80,6 +80,16 @@ stares at code:**
      and confirm `.sha` is the commit you just pushed. *(`curl -s`, not `-sI`:
      `-I` is `--head` and returns no body.)*
 
+  **STEP 2 DOES NOT WORK UNTIL THE PAGES FLIP IS DONE, AND THAT IS THE POINT AT WHICH
+  IT STARTS MATTERING.** Measured 2026-09-01: this repository's Pages source is still
+  `build_type: legacy`, publishing `main:/` by branch, so there is no `publish` job in
+  the live workflow and `/PupPad/stable/build-stamp.json` returns **404** — which reads
+  exactly like *"my promotion did not land."* Until the flip, a 404 there means the
+  two-copy pipeline is not deployed yet; it is not evidence about any promotion. After
+  the flip it is the mechanism below. Note also `cache-control: max-age=600` on that
+  origin: within ten minutes of a promotion the stamp can still be the previous one, so
+  re-fetch rather than concluding the promotion failed.
+
   **Step 2 is not a formality and a green run is not a substitute for it.**
   `pages-publish` and `pages-deploy` are each a single concurrency group, and GitHub
   keeps only ONE PENDING RUN per group — a newly queued run evicts an already-pending
