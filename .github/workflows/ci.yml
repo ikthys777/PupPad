@@ -1,0 +1,83 @@
+# PupPad CI — four checks, each of which can go red for exactly one reason.
+#
+# This workflow REPORTS. It does not publish, deploy, or write to any branch
+# (northstar invariant 4). Publication is PUP-WO-0101's.
+#
+# Why this file is safe to merge before the firebreak it helps build exists:
+# GitHub Pages under build_type "legacy" serves main:/ as static files and does
+# not serve or execute .github/. So a diff confined to .github/ and docs/ reaches
+# the repository without reaching Buddy's tablet (architecture §6, bootstrap
+# exception; PUP-WO-0100 §0).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Minimal by construction. A workflow that inherits write scope it does not use is
+# a credential sitting in the blast radius of every future edit to this file.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded PR runs, but NEVER a run on main. A cancelled run is neither
+  # green nor red, and main is what publishes to the tablet — two quick pushes
+  # must not leave the live commit with no verdict at all. Matters more once
+  # PUP-WO-0101 gates publication on this.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Four checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@v7
+        with:
+          # fetch-depth: 0 is load-bearing, not a default worth trimming. Check 3
+          # resolves a merge-base; a shallow clone makes that impossible, and a
+          # cache-identity check that cannot find its base compares nothing.
+          fetch-depth: 0
+
+      - name: Use Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .github/ci/package-lock.json
+
+      - name: Install CI tooling
+        # Confined to .github/ on purpose: the repository root is the deployed
+        # artifact, and a package manifest there would make "no build step, no
+        # dependencies" false for the thing that ships (architecture §5).
+        working-directory: .github/ci
+        run: npm ci
+
+      # ---------------------------------------------------------------- 1 ----
+      - name: "Check 1 — every .js and the inline script of index.html parse"
+        run: node .github/ci/check-syntax.mjs .
+
+      # ---------------------------------------------------------------- 2 ----
+      - name: "Check 2 — every local asset index.html references is in urlsToCache"
+        run: node .github/ci/check-assets.mjs .
+
+      # ---------------------------------------------------------------- 3 ----
+      - name: "Check 3 — CACHE_NAME changed when a cached asset changed"
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: node .github/ci/check-cache-name.mjs .
+
+      # ---------------------------------------------------------------- 4 ----
+      - name: Install the browser check 4 drives
+        working-directory: .github/ci
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: "Check 4 — the console opens clean over HTTP, with no network"
+        # No NODE_PATH: ESM ignores it. The script resolves `playwright` by walking
+        # up from its own location to .github/ci/node_modules, which is why the
+        # tooling can stay out of the repository root.
+        run: node .github/ci/check-load.mjs .
