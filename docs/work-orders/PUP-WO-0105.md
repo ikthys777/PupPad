@@ -50,11 +50,53 @@ poisoning a live device, and 0104 explicitly forbids touching `sw.js`, so 0104
 **Triggers are not limited to a deploy.** A Pages incident, a 503, a 429, or a
 no-deployment gap all produce a non-200 while the device is online.
 
-## 0a. Round 3 — the fix must be able to ARRIVE
+## 0a. Round 3 — the quota path, SPLIT OUT to `PUP-WO-0108`
 
-*Added by CC-A 2026-09-01, after the round-2 pass. **This section is ranked first and
-it is the only thing this work order still needs.** The guard in §1 is built,
-verified twice in a real browser, and is not reopened here.*
+> **AMENDED 2026-09-01, after round 3. §0a.1–§0a.3 are NO LONGER THIS WORK ORDER'S
+> and are `PUP-WO-0108`'s opening scope. §0a.4 stands and is MET. §0a.5 stands.**
+> They are left in place rather than deleted because the reasoning is what 0108
+> inherits, and because the error in fusing them is the reusable part.
+>
+> **CC-A's scoping error, stated plainly.** §0a argued F1 blocks the merge because §0
+> claims tablet reach and P1's gate items 3 and 4 are live verifications. That
+> argument is sound about **the quota defect** and unsound about **the guard**: a
+> correct guard is not made dishonest by a second, independent defect in a different
+> lifecycle event. What fused them is that F1 arrived as a critique *of the guard's
+> reach* — but reach is a property of the **install** path, a different mechanism.
+> **And §0a missed the answer to its own objection:** gate items 3 and 4 are specified
+> as live verifications **on the tablet**, run by a person. They cannot pass on an
+> adult's browser while the child's device stays poisoned.
+>
+> **The evidence that decided it is the builder's.** Two rounds on the install path
+> produced **two live-severity regressions**, both self-reported against the builder's
+> own interest. That is not builder error — it is the signature of a scope that does
+> not fit the work order it is in, which is precisely what §7 predicted and what
+> §0a.5 half-accepted and then continued past anyway.
+>
+> **Round 3's own measurements settle the risk of reverting:**
+>
+> | worker | states | app shell |
+> |---|---|---|
+> | round-3 install fix | `activated` | **NULL — no app at all** |
+> | round-2 guard alone | `redundant` | **200, is the app** |
+> | today's live worker | — | **200, is the app** |
+>
+> The round-2 guard is **non-harmful** on a squeezed device — a *reach* limitation,
+> not a harm. The round-3 fix is the only one of the three that can leave a child with
+> nothing, because the swallow lets `activate` run and `activate` deletes
+> `pup-pad-v16`, which held the last good shell.
+>
+> **The durable finding, carried to `PUP-WO-0108` and to architecture §6.1:**
+> `activate`'s legacy deletion has an **unstated precondition — that `install`
+> succeeded.** `event.waitUntil` rejecting is what enforced it, implicitly, by
+> preventing activation; the swallow removed the enforcement without replacing it.
+> The deletion carries twenty lines documenting its **cross-copy** precondition and
+> never states its **within-copy** one. **Never delete a cache that is serving until
+> its replacement is provisioned** — which covers the version-bump reap too, and
+> nobody has looked at that.
+
+*Added by CC-A 2026-09-01, after the round-2 pass. The guard in §1 is built and
+verified twice in a real browser, and is not reopened.*
 
 **The finding, and it is disqualifying for §0's own claim.** `install` is
 `caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))`. On a device with no quota
@@ -129,6 +171,17 @@ surface. **If your measurements contradict that ranking, that is a flag-and-stop
 
 ### 0a.4 The check comes back — §3.5 is unmet, and §6.4 rests on it
 
+> **MET at round 3, and this section stays LIVE.** `check-error-caching.mjs`,
+> `demo-error-poisoning.mjs` and `demo-quota-install.mjs` are recovered, wired into
+> `ci.yml`, and green. Round 3 also fixed an **eighth false green** inside them: the
+> fixture's `cache.keys()` returned bare strings where the real API returns `Request`
+> objects, so a keep-list matched nothing and **a mutant deleting the whole keep-list
+> passed the entire suite**. Repaired by asserting *the act of deletion* rather than
+> the residue `addAll` erases. `demo-quota-install.mjs` is retained **re-labelled as
+> the characterisation of an open defect** — 0108 inherits a working reproduction
+> instead of rebuilding one. **Architecture §6.4's ordering premise is now true rather
+> than assumed.**
+
 `check-error-caching.mjs` and `demo-error-poisoning.mjs` were built and then
 **stripped** at `d53dfbc` ("sw.js ships alone"). That was right for that commit's
 purpose and is **not right for the merge**: acceptance criterion §3.5 — *the one that
@@ -186,8 +239,12 @@ they are recorded here as the standing scope, not as work.** Item 3 is what is o
    Note `PUP-WO-0600` may vendor those assets and dissolve the question; do not
    depend on that.
 
-3. **Make the fix able to arrive** — the install path, §0a. Ranked first; it is the
-   only part of this work order still open.
+3. ~~**Make the fix able to arrive** — the install path, §0a.~~ **WITHDRAWN
+   2026-09-01 and moved to `PUP-WO-0108`.** Round 3 built it and it regressed the
+   device class it was written for: the quota swallow lets `activate` run, and
+   `activate` deletes `pup-pad-v16`, which held the last good shell. See §0a's
+   amendment banner. **`install` reverts to `caches.open(CACHE_NAME).then(c =>
+   c.addAll(urlsToCache))`.** Everything under `.github/ci/` from round 3 **stays.**
 
 4. **Do not change anything else in `sw.js`.** Not the reap, not the prefix
    derivation, not the `/stable/` decline, not the legacy exception. They are correct
@@ -242,12 +299,10 @@ tests in §3 — the cache gate's shape is `PUP-WO-0104`'s and must not be pre-e
 6. **Every demonstration asserts the commit and the failing step name**
    (architecture §5).
 
-7. **The guard ARRIVES on a squeezed device** (§0a.1). Demonstrate the A/B again,
-   now with the fix present: quota constrained, install completes, the new worker
-   reaches `activated`, and the poisoned shell is repaired. **And demonstrate the
-   other half of §0a.2 in the same run** — a genuine bad precache (a 404 on a
-   `urlsToCache` entry) still fails the install loudly, with the old worker left in
-   place. One without the other proves nothing.
+7. ~~The guard arrives on a squeezed device.~~ **WITHDRAWN to `PUP-WO-0108`** with
+   §1.3. **Replaced by:** the revert restores round 2's `install` exactly, and no
+   check is left asserting behaviour the revert removed. An assertion pointing at
+   code that is gone is family member 1 — it passes by not running.
 8. **§3.5's check exists, is registered in `ci.yml`, and covers both classes**
    (§0a.4), each shown red first.
 
@@ -264,6 +319,18 @@ tests in §3 — the cache gate's shape is `PUP-WO-0104`'s and must not be pre-e
   receive it, because OSM tiles are per-coordinate map data and unvendorable. It gets
   its own numbered work order **after P2**. Do not answer it here.
 - **The un-closable Map overlay** — `PUP-WO-0106`, CC-A's to author.
+- **The quota path — `PUP-WO-0108`, CC-A's to author, and it is where §0a.1–§0a.3
+  went.** Its opening scope is round 3's four findings, which specify it better than
+  a fresh draft could: `activate`'s unstated precondition, a **proportional** reclaim
+  (a lens built one — it repairs the shell *and* keeps the map, so the trade this
+  work order called forced **is not forced**), the keep-list resolving against
+  `registration.scope` while `addAll` resolves against the script URL, and the
+  harness's HTTP-versus-quota ordering model, which is backwards and which `sw.js`
+  *reasons from* to conclude a fallback "is not needed."
+  **Ranked as P1 work carried past the phase gate — the same category §6.4 already
+  uses for `PUP-WO-0104` — and ahead of 0104, because it is live severity where 0104
+  is defence.** *(`PUP-WO-0107` was dissolved into §0a.4 and its number is not
+  reused.)*
 
 **And a standing instruction on this work order specifically, from Scotty:
 `PUP-WO-0105` does not grow again.** Seven work orders exist and zero games. P1 was
