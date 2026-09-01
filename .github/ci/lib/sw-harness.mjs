@@ -17,12 +17,45 @@ export class FakeCacheStorage {
     this.names = new Set(names);
     this.deleted = [];
     this.entries = new Map();          // cacheName -> Map(url -> response)
+    /** Every url a worker ATTEMPTED to write, in order — including refused ones. */
+    this.putAttempts = [];
+    /** When set, the store holds at most this many entries ACROSS ALL CACHES; a
+     *  write beyond it throws QuotaExceededError. Capacity rather than a counter,
+     *  because the install path under test RECLAIMS and RETRIES — a cumulative
+     *  counter cannot express "deleting entries made room", which is the whole
+     *  behaviour being asserted. Verified against Chromium: a real addAll rejects
+     *  with a QuotaExceededError DOMException, and an HTTP failure with a
+     *  TypeError, so the two are separable exactly as modelled here. */
+    this.capacityEntries = null;
+    /** URLs for which addAll should reject with a TypeError, modelling a 404 or a
+     *  network drop on a precached entry. Kept DISTINCT from capacityEntries on
+     *  purpose: the install path must survive a quota failure and must NOT survive
+     *  this one, and a check that cannot express both cannot assert the difference. */
+    this.httpFailFor = null;
+    /** Base for resolving relative keys, set by loadWorker from the worker's scope.
+     *
+     * THE REAL CACHE API STORES RESOLVED ABSOLUTE URLS. This fake stored the raw
+     * string, so `addAll(['./index.html'])` keyed the entry as `./index.html` while
+     * a real browser keys it `https://…/PupPad/index.html`. Any worker that looks up
+     * its own precached entries by absolute URL — which is what `cache.keys()` hands
+     * back in production — therefore saw them as FOREIGN. PUP-WO-0105's reclaim did
+     * exactly that and deleted the entries it was provisioning, a defect that exists
+     * only in the fixture. A stub whose keys do not match the real API's cannot be
+     * used to reason about key-sensitive code. */
+    this.baseUrl = null;
   }
   async keys() { return [...this.names]; }
   async delete(name) {
     this.deleted.push(name);
     return this.names.delete(name);
   }
+  /** Resolve a key the way the real Cache API does. */
+  _key(req) {
+    const raw = typeof req === 'string' ? req : req.url;
+    if (!this.baseUrl) return raw;
+    try { return new URL(raw, this.baseUrl).href; } catch { return raw; }
+  }
+
   async open(name) {
     this.names.add(name);
     if (!this.entries.has(name)) this.entries.set(name, new Map());
@@ -33,13 +66,61 @@ export class FakeCacheStorage {
        * direct violation of "a worker touches only what it owns" — wrote nothing
        * this harness could see, so no check could assert anything about install.
        * A stub that swallows its input cannot fail. */
-      addAll: async (urls) => { for (const u of urls) store.set(String(u), 'PRECACHED'); },
-      add: async (u) => { store.set(String(u), 'PRECACHED'); },
-      put: async (req, res) => { store.set(typeof req === 'string' ? req : req.url, res); },
-      match: async (req) => store.get(typeof req === 'string' ? req : req.url),
+      /* addAll routes through put() so write attempts are counted and a simulated
+       * quota applies to the precache too — the install path PUP-WO-0105 round 3
+       * is about. Real addAll is atomic; this mirrors that by staging first. */
+      addAll: async (urls) => {
+        const staged = [];
+        for (const u of urls) {
+          const url = this._key(u);
+          if (this.httpFailFor && (this.httpFailFor.has(url) || this.httpFailFor.has(String(u)))) {
+            throw new TypeError("Failed to execute 'addAll' on 'Cache': Request failed");
+          }
+          this.putAttempts.push(url);
+          this._admit(store, url, staged.length);
+          staged.push(url);
+        }
+        for (const url of staged) store.set(url, 'PRECACHED');
+      },
+      add: async (u) => { store.set(this._key(u), 'PRECACHED'); },
+      /* WRITE-ATTEMPT COUNTER. PUP-WO-0105 round 1 recommended this and it was
+       * recorded rather than applied; round 2 then found the vacuity it predicted.
+       * Without it a check can only infer "the worker did not write" from an
+       * untouched seed — which is equally true when the worker was never asked to
+       * write at all, and that is how an assertion passes about an error response
+       * that never existed. Counting the ATTEMPT lets a check assert the PRESENCE
+       * of a refusal instead of the ABSENCE of a symptom. */
+      put: async (req, res) => {
+        const url = this._key(req);
+        this.putAttempts.push(url);
+        this._admit(store, url);
+        store.set(url, res);
+      },
+      match: async (req) => store.get(this._key(req)),
+      /* Cache.delete — ABSENT UNTIL PUP-WO-0105 round 3, and its absence meant no
+       * check could exercise a worker that deletes a single ENTRY. The reap deletes
+       * whole caches (CacheStorage.delete, which did exist), so nothing had needed
+       * it; the moment the install path reclaimed entries, every such worker died on
+       * `cache.delete is not a function` — a stub that cannot represent the operation
+       * at all, which is the same fixture-shape blindness this work order is about.
+       * Found by an assertion that needed it, not by an audit. */
+      delete: async (req) => store.delete(this._key(req)),
       keys: async () => [...store.keys()],
     };
   }
+  /** Total entries across every cache — quota is per ORIGIN, not per cache. */
+  _size() { let n = 0; for (const [, st] of this.entries) n += st.size; return n; }
+
+  /** Throw QuotaExceededError if admitting one more entry would exceed capacity.
+   *  An overwrite of an existing key costs nothing, matching real storage. */
+  _admit(store, url, pending = 0) {
+    if (this.capacityEntries === null) return;
+    if (store.has(url)) return;
+    if (this._size() + pending + 1 > this.capacityEntries) {
+      const e = new Error('Quota exceeded.'); e.name = 'QuotaExceededError'; throw e;
+    }
+  }
+
   /**
    * CacheStorage.match — ORIGIN-WIDE, exactly like the real one. An earlier
    * version returned undefined unconditionally, which made check 5 structurally
@@ -48,7 +129,7 @@ export class FakeCacheStorage {
    * cannot fail is not a test.
    */
   async match(req) {
-    const url = typeof req === 'string' ? req : req.url;
+    const url = this._key(req);
     for (const [, store] of this.entries) if (store.has(url)) return store.get(url);
     return undefined;
   }
@@ -148,6 +229,8 @@ export function loadWorker(swPath, scope, cacheStorage, extraGlobals = {}) {
      * default deliberately. */
     ...extraGlobals,
   };
+  /* Give the fake cache the worker's scope so its keys resolve like the real API's. */
+  if (cacheStorage && cacheStorage.baseUrl == null) cacheStorage.baseUrl = scope;
   sandbox.self.self = sandbox.self;
   vm.createContext(sandbox);
   new vm.Script(readFileSync(swPath, 'utf8'), { filename: swPath }).runInContext(sandbox);
