@@ -861,6 +861,40 @@ jobs:
         with:
           path: dist
 
+      - name: "cancelled — fail closed AND SAY SO"
+        # ACCEPTANCE 8a, PARTIALLY DISCHARGED AND THE REST EXPLICITLY WAIVED.
+        # The item reads "a cancelled or absent run does not publish, demonstrated —
+        # not reasoned." Round 4 found it in none of the three permitted states: not
+        # demonstrated, not flagged, not waived. It is now in two of them, honestly.
+        #
+        # THE PROPERTY HOLDS BY CONSTRUCTION, and that half IS reasoning, so it is
+        # labelled as such: on cancellation the runner skips every remaining step
+        # without an always()/cancelled() condition, so `Upload the site` never runs;
+        # and `deploy` carries `needs: publish`, so a publish that did not succeed
+        # means the deploy job does not exist. Nothing reaches the site.
+        #
+        # WHAT WAS MISSING WAS THE "SAY SO". The GATE step is `if: !cancelled()`, so
+        # on an actual cancellation it is SKIPPED and the job ended in silence — a
+        # human reading the run saw no refusal at all, which is indistinguishable
+        # from a run that simply had nothing to do. This step is that sentence.
+        #
+        # WAIVED, WITH THE REASON: the demonstration is not mine to produce.
+        # Cancelling a run is a write-scoped API call, and `git`/`gh` in the build
+        # environment are intentionally read-only. Whoever merges can discharge it in
+        # one action — start a push run and cancel it — and this step is what they
+        # should look for in the log. Until then item 8a is WAIVED, not demonstrated,
+        # and this comment is the flag rather than a green tick standing in for one.
+        #
+        # One honest limit: a SECOND cancel request force-kills the job and this step
+        # will not run either. Silence after a double-cancel is expected, not a defect.
+        if: cancelled()
+        run: |
+          echo "::warning::This run was CANCELLED before it could finish verifying."
+          echo "::warning::NOTHING WAS UPLOADED and NOTHING WAS DEPLOYED — the site still"
+          echo "::warning::serves whatever it served before this run started."
+          echo "::warning::This is the fail-closed path, not a failure to check. Re-run or"
+          echo "::warning::push again when you want a verdict on this commit."
+
   # ==========================================================================
   # Deployment — the ONLY job that can change what the site serves.
   #

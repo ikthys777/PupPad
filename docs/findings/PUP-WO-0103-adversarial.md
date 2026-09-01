@@ -19,6 +19,57 @@ made during this work order, in response to real problems.
 
 ---
 
+## HOW TO READ THIS FILE'S LINE CITATIONS — added in ROUND 5, and the answer is CORRECT, NOT STRIKE
+
+Round 4 raised this file itself as a §7 count: *"the recorded pass names subject
+`c8c8cf1`, its `ci.yml` citations land on unrelated text and several are past
+end-of-file, and it lists `workflow_dispatch` as a live attack surface after that
+surface was removed."* That is architecture §6.1 member 4 — **a pointer that resolves
+in the author's head and not in the reviewer's tree** — sitting in the evidence file
+for a merge. CC-A's round-5 dispatch required it corrected or struck, and said to say
+which.
+
+**CORRECTED, BY MARKING. The citations are deliberately NOT re-anchored.** Every line
+number below was accurate against the commit it was written against. Rewriting them to
+point into today's `ci.yml` would make this file lie about what the reviewers actually
+read, and destroy the only means of auditing the pass. A record is worth having
+because it is fixed; a record edited to stay convenient is not evidence.
+
+So the fix is to remove the file's *implicit* claim — that its pointers resolve in the
+working tree — and state the measurements instead:
+
+| | measured 2026-09-01, at round 5 |
+|---|---|
+| PART I / FIRST PASS subject | `c8c8cf1a4dc291877b69d18648d491270d7836d3` |
+| SECOND PASS subject | `246c5f7` |
+| `ci.yml` citations in PART I | 85 |
+| `ci.yml` citations in the second pass | 22 |
+| `ci.yml` length when PART I was written | shorter than today |
+| `ci.yml` length today | 939 lines |
+| citations past today's end-of-file | **0** |
+
+**AND THAT LAST ROW CORRECTS ROUND 4, WHICH IS LEFT STANDING ABOVE.** Round 4 said
+*"several are past end-of-file."* That was true when round 4 measured it. It is FALSE
+today, and the reason it became false is worse than the defect it described: `ci.yml`
+GREW past those line numbers, so citations that once failed loudly now resolve
+**silently to unrelated text**. A dangling pointer announces itself. A pointer that
+lands on the wrong line does not. Nothing was fixed between those two measurements —
+the file got longer.
+
+**`workflow_dispatch` is NOT a live surface and has not been one since before round 4.**
+It appears 16 times in this record, described as reachable. Verified against the tree
+today: `ci.yml` has exactly two mentions of it, both in comments about its removal, and
+the parsed trigger list is `['pull_request', 'push']` — nothing else. Every finding
+below that turns on a dispatch input (notably the `mode=`/`stable_sha` family) is
+describing an artifact that no longer exists. They are kept because the REASONING is
+still instructive and because deleting a finding deletes the evidence that it was ever
+answered.
+
+**Therefore: read every `ci.yml:NNN` below as "line NNN of the subject named above",
+never as a location in the current file.** To follow one, check out that subject.
+
+---
+
 ## 1. The prompt, exactly as given
 
 ```
