@@ -248,7 +248,20 @@ jobs:
       - name: Check out main
         uses: actions/checkout@v7
         with:
-          ref: refs/heads/main
+          # ON A PULL REQUEST, THE ROOT COPY IS THE PR'S OWN HEAD.
+          #
+          # It was `refs/heads/main` unconditionally, which made the PR path useless
+          # for the thing it was added for: a PR carrying a .gitattributes, a symlink
+          # or a `stable/` path had its defect in its HEAD, and the job cheerfully
+          # built main's clean tree instead. The demo/pr-refuse-* PRs "failed" without
+          # once exercising the refusal they are named after.
+          #
+          # Building the PR head is also what a PR should verify — what the site would
+          # serve IF this merged. It cannot publish: `deploy` is push-only.
+          # The promoted copy stays refs/heads/stable in every event, because a PR
+          # never proposes a change to the promoted copy; only a human moving that ref
+          # does (northstar invariant 4).
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'refs/heads/main' }}
           path: src/main
           fetch-depth: 0
 
@@ -274,6 +287,13 @@ jobs:
           remote="https://github.com/${GITHUB_REPOSITORY}.git"
           for ref in main stable; do
             head_sha=$(git -C "src/$ref" rev-parse HEAD)
+            if [ "$ref" = main ] && [ "${{ github.event_name }}" = pull_request ]; then
+              # The root copy is deliberately NOT refs/heads/main here — it is what
+              # main would become. Nothing is published from a pull request, and the
+              # promoted copy below is still asserted against the server.
+              echo "main: PR head ${head_sha:0:12} (what the root copy would become); this run cannot deploy"
+              continue
+            fi
             # Exact-match the ref: `ls-remote <pattern>` matches on path-component
             # tails, so a branch literally named decoy/refs/heads/main would return
             # two lines and wedge publication (fail-closed, but wedged).

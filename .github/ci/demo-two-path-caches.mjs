@@ -134,10 +134,18 @@ console.log('  after both workers installed:', afterBoth.join(', '));
 const rootCache   = afterBoth.find(n => n === ROOT_CACHE);
 const stableCache = afterBoth.find(n => n === STABLE_CACHE);
 if (rootCache)   ok('root worker created its own prefixed cache'); else bad('root worker cache missing');
-if (afterBoth.includes(STABLE_CACHE))
-  ok('the PROMOTED copy\'s pre-existing cache survived the root worker activating (F0)');
-else
-  bad('THE ROOT WORKER DESTROYED THE PROMOTED COPY\'S CACHE', `${STABLE_CACHE} was seeded before any worker ran and is gone`);
+/* The F0 name-existence assertion that stood here is DELETED, not fixed.
+ *
+ * It seeded the promoted cache, brought up the root worker, then registered the
+ * stable worker — whose install RECREATES a cache of that name — and only then
+ * asserted the name was present. Name-existence cannot distinguish "survived" from
+ * "deleted, then recreated by the next step", and it printed `ok` on a run where the
+ * root worker demonstrably deleted it. My fix, and vacuous.
+ *
+ * NOT ASSERTED HERE: that the promoted copy's cache survives the root worker's
+ * activation. The force-activate assertion further down covers the re-activation
+ * case; the FIRST activation is uncovered. (PUP-WO-0104) */
+console.log('  NOT ASSERTED: survival of the promoted cache through the root worker\'s FIRST activation — see PUP-WO-0104');
 if (stableCache) ok('stable worker created its own prefixed cache'); else bad('stable worker cache missing');
 
 /* ---- item 5: legacy gone, by literal; unrelated cache untouched ---- */
@@ -189,32 +197,23 @@ else bad('root worker CACHED a /stable/ asset under the root prefix — invarian
 if ((await keys(root)).length === before.length) ok('no new cache was created by that request');
 else bad('a new cache appeared during the /stable/ probe', (await keys(root)).join(', '));
 
-/* ---- F4: a top-level NAVIGATION to /stable/ must not poison the root cache ----
+/* ---- F4's navigation probe: DELETED, NOT FIXED (PUP-WO-0103 round 3) ----
  *
- * The probe above uses a subresource `fetch`. A top-level navigation is a different
- * request — `mode: 'navigate'`, `destination: 'document'` — and a worker that
- * branches on either serves it while declining the subresource. That mutant passed
- * all six checks: the sandbox could not express a navigation, and this file never
- * performed one. It is the promotion-lag case, when only the root worker exists and
- * someone opens the promoted copy for the first time. */
-const navBefore = await keys(root);
-const navPage = await context.newPage();
-await navPage.goto(`${ORIGIN}${STABLE_BASE}index.html`, { waitUntil: 'load' });
-await navPage.waitForTimeout(600);
-const poisoned = await root.evaluate(async ({ cacheName, STABLE_BASE }) => {
-  const names = await caches.keys();
-  if (!names.includes(cacheName)) return { missing: true };
-  const c = await caches.open(cacheName);
-  return { missing: false, urls: (await c.keys()).map((r) => new URL(r.url).pathname)
-                                                 .filter((p) => p.startsWith('/stable/')) };
-}, { cacheName: ROOT_CACHE, STABLE_BASE });
-await navPage.close();
-if (poisoned.missing) bad(`the root cache ${ROOT_CACHE} does not exist — this assertion tested nothing`);
-else if (poisoned.urls.length === 0) ok('a top-level NAVIGATION to /stable/ left no foreign bytes under the root prefix');
-else bad('a NAVIGATION to /stable/ was cached under the ROOT prefix — invariant 7 fails',
-         poisoned.urls.join(', '));
-if ((await keys(root)).length === navBefore.length) ok('no new cache appeared during the navigation probe');
-else bad('a new cache appeared during the navigation probe', (await keys(root)).join(', '));
+ * It filtered cached paths with `.startsWith('/stable/')` while the harness serves
+ * '/PupPad/stable/', so it could not match ANY input — and the correct value was
+ * passed into the evaluate and never read. The stale literals survived the rename
+ * that made this file serve the real deployed paths, which is why the fix looked
+ * complete: the SERVING agreed with the deployment and the ASSERTIONS did not.
+ *
+ * Deleted rather than repaired, on the ruling that an assertion which cannot fire is
+ * FALSE COVERAGE and worse than none — a green line reads as a guarantee. PUP-WO-0104
+ * builds the real one, along with the browser-at-the-production-origin work that
+ * makes this class inexpressible instead of merely detected.
+ *
+ * NOT ASSERTED HERE, said out loud so its absence is visible:
+ *   - that a top-level NAVIGATION to /stable/ leaves no foreign bytes under the root
+ *     prefix. Nothing checks this now. (PUP-WO-0104) */
+console.log('  NOT ASSERTED: navigation-poisoning of the root cache by /stable/ — see PUP-WO-0104');
 
 /* ---- item 5, SECOND HALF: offline cold-load after the legacy migration ----
  *
