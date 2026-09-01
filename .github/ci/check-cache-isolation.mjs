@@ -165,6 +165,44 @@ await orphan.dispatch('activate');
 if (unregistered) ok('a worker at a non-canonical scope unregisters itself instead of orphaning a cache');
 else bad('a worker at a non-canonical scope stayed registered', 'its prefix nests under neither deploy path, so nothing will ever reap it');
 
+/* ---- 8. the OFFLINE READ must be scoped too (northstar invariant 7's own test) ---- */
+/* "Load the promoted copy after the test copy has been cached; find any asset
+ * served from the other build." The reap being prefix-bounded is not enough — a
+ * worker that falls back to CacheStorage.match reads every cache on the origin. */
+const shared = 'https://ikthys777.github.io/PupPad/shared-lib.js';
+const crossStore = new FakeCacheStorage();
+const stableSeed = loadWorker(SW, STABLE_SCOPE, crossStore);
+const stableCache = await crossStore.open(stableSeed.get('CACHE_NAME'));
+await stableCache.put(shared, 'BYTES FROM THE OTHER DEPLOY PATH');
+
+const rootOffline = loadWorker(SW, ROOT_SCOPE, crossStore);
+let servedOffline;
+const offline = await rootOffline.dispatch('fetch', { request: { url: shared } });
+if (offline.respondWithCalled) {
+  try { servedOffline = await offline.responses[0]; } catch { servedOffline = undefined; }
+}
+if (servedOffline === 'BYTES FROM THE OTHER DEPLOY PATH')
+  bad('the root worker SERVED the other deploy path\'s cached bytes when offline',
+      'CacheStorage.match is origin-wide — invariant 7 falsified by its own stated test');
+else
+  ok('offline fallback reads only this worker\'s own cache, not the origin');
+
+/* ---- 9. legitimate percent-encoded assets must still be served (invariant 3) ---- */
+const encodedOk = ['/PupPad/my%20photo.png', '/PupPad/caf%C3%A9.png', '/PupPad/a%2Bb.png'];
+const rootEnc = loadWorker(SW, ROOT_SCOPE, new FakeCacheStorage());
+for (const p of encodedOk) {
+  const r = await rootEnc.dispatch('fetch', { request: { url: 'https://ikthys777.github.io' + p } });
+  if (r.respondWithCalled) ok(`serves a legitimately encoded asset: ${p}`);
+  else bad('declined a legitimately encoded asset — it works online and is absent offline', p);
+}
+
+/* ---- 10. the foreign subtree's DIRECTORY, with no trailing slash ---- */
+for (const p of ['/PupPad/stable', '/PupPad/stable?x=1']) {
+  const r = await rootEnc.dispatch('fetch', { request: { url: 'https://ikthys777.github.io' + p } });
+  if (!r.respondWithCalled) ok(`root worker declines the bare foreign directory: ${p}`);
+  else bad('root worker serves the foreign directory without its trailing slash', `${p} — a host 301s this to /stable/ and a subresource fetch follows`);
+}
+
 /* ---- verdict ---- */
 if (failures.length) {
   console.error(`\nCHECK 5 FAILED — ${failures.length} assertion(s):\n`);

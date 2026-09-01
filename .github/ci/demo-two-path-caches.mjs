@@ -22,6 +22,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { FakeCacheStorage, loadWorker } from './lib/sw-harness.mjs';
 
 const REPO = resolve(process.argv[2] || process.cwd());
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.json':'application/json',
@@ -51,6 +52,16 @@ const server = createServer(async (req, res) => {
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 
+/* Cache names are DERIVED from the worker under test, never hardcoded. An earlier
+ * version pinned 'v17', so the moment CACHE_VERSION was bumped — which check 3
+ * MANDATES whenever a cached asset changes — this check went red and the two
+ * checks contradicted each other on every app change. A check that cannot survive
+ * the change another check requires is a check that will be deleted. */
+const probeStore = new FakeCacheStorage();
+const ROOT_CACHE = loadWorker(join(REPO, 'sw.js'), `${ORIGIN}/`, probeStore).get('CACHE_NAME');
+const STABLE_CACHE = loadWorker(join(REPO, 'sw.js'), `${ORIGIN}/stable/`, probeStore).get('CACHE_NAME');
+console.log(`  cache names derived from sw.js: root=${ROOT_CACHE} stable=${STABLE_CACHE}`);
+
 const opts = { args: ['--no-sandbox', '--disable-dev-shm-usage'] };
 if (process.env.PUPPAD_CHROMIUM) opts.executablePath = process.env.PUPPAD_CHROMIUM;
 else opts.channel = 'chromium';
@@ -66,11 +77,12 @@ const keys = (pg) => pg.evaluate(() => caches.keys());
 /* ---- seed a device that already holds the legacy cache (item 6) ---- */
 const root = await context.newPage();
 await root.goto(`${ORIGIN}/__seed.html`, { waitUntil: 'load' });
-await root.evaluate(async () => {
-  await caches.open('pup-pad-v16');                       // the real legacy name
-  await caches.open('puppad|%2F|v1');                     // a stale cache of root's OWN prefix
-  await caches.open('some-other-app');                    // an unrelated cache on this origin
-});
+const SEED_STALE = ROOT_CACHE.replace(/[^|]*$/, 'seed-stale');
+await root.evaluate(async ({ stale }) => {
+  await caches.open('pup-pad-v16');      // the real legacy name
+  await caches.open(stale);              // a stale cache of root's OWN prefix
+  await caches.open('some-other-app');   // an unrelated cache on this origin
+}, { stale: SEED_STALE });
 console.log('  seeded (no worker has run yet):', (await keys(root)).join(', '));
 
 /* ---- bring up BOTH workers ---- */
@@ -90,15 +102,15 @@ await stable.waitForTimeout(1200);
 
 const afterBoth = await keys(root);
 console.log('  after both workers installed:', afterBoth.join(', '));
-const rootCache   = afterBoth.find(n => n === 'puppad|%2F|v17');
-const stableCache = afterBoth.find(n => n === 'puppad|%2Fstable%2F|v17');
+const rootCache   = afterBoth.find(n => n === ROOT_CACHE);
+const stableCache = afterBoth.find(n => n === STABLE_CACHE);
 if (rootCache)   ok('root worker created its own prefixed cache'); else bad('root worker cache missing');
 if (stableCache) ok('stable worker created its own prefixed cache'); else bad('stable worker cache missing');
 
 /* ---- item 6: legacy gone, by literal; unrelated cache untouched ---- */
 if (!afterBoth.includes('pup-pad-v16')) ok('legacy pup-pad-v16 removed (item 6)');
 else bad('legacy pup-pad-v16 still present');
-if (!afterBoth.includes('puppad|%2F|v1')) ok("root's own stale cache reaped");
+if (!afterBoth.includes(SEED_STALE)) ok("root's own stale cache reaped");
 else bad("root's own stale cache survived");
 if (afterBoth.includes('some-other-app')) ok('an unrelated cache on the same origin was NOT touched');
 else bad('an unrelated cache on the same origin was DELETED — the reap is origin-wide');
@@ -115,7 +127,7 @@ await root.reload({ waitUntil: 'load' });
 await root.waitForTimeout(1500);
 const afterReactivate = await keys(root);
 console.log('  after force-activating the ROOT worker:', afterReactivate.join(', '));
-if (afterReactivate.includes('puppad|%2Fstable%2F|v17'))
+if (afterReactivate.includes(STABLE_CACHE))
   ok('THE /stable/ CACHE SURVIVED the root worker activating (item 5 — roadmap P1 gate 4)');
 else
   bad('the /stable/ cache was DELETED by the root worker activating — invariant 7 fails');
@@ -124,15 +136,20 @@ else
 const controlled = await root.evaluate(() => !!navigator.serviceWorker.controller);
 if (controlled) ok('root page is controlled by the root worker'); else bad('root page is not controlled');
 const before = await keys(root);
-const stableEntry = await root.evaluate(async (origin) => {
+const probe = await root.evaluate(async ({ origin, cacheName }) => {
   await fetch(origin + '/stable/manifest.json', { cache: 'no-store' });
-  const c = await caches.open('puppad|%2F|v17');
-  const hit = await c.match(origin + '/stable/manifest.json');
-  return !!hit;
-}, ORIGIN);
-if (!stableEntry) ok('root worker did NOT cache a /stable/ asset under its own prefix (item 7)');
+  const names = await caches.keys();
+  // Do NOT caches.open() here: open CREATES the cache, which both hides a moved
+  // name and manufactures the very cache the next assertion counts.
+  if (!names.includes(cacheName)) return { missing: true };
+  const c = await caches.open(cacheName);
+  return { missing: false, hit: !!(await c.match(origin + '/stable/manifest.json')) };
+}, { origin: ORIGIN, cacheName: ROOT_CACHE });
+if (probe.missing) bad(`the root cache ${ROOT_CACHE} does not exist — this assertion tested nothing`);
+else if (!probe.hit) ok('root worker did NOT cache a /stable/ asset under its own prefix (item 7)');
 else bad('root worker CACHED a /stable/ asset under the root prefix — invariant 7 fails');
 if ((await keys(root)).length === before.length) ok('no new cache was created by that request');
+else bad('a new cache appeared during the /stable/ probe', (await keys(root)).join(', '));
 
 await context.close(); await browser.close(); server.close();
 if (fails.length) { console.error(`\nDEMO FAILED — ${fails.length}:`); for (const f of fails) console.error('  ' + f); process.exit(1); }

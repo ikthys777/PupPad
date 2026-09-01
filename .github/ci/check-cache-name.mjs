@@ -21,6 +21,10 @@
  * papering over — see FEEDBACK.md.
  */
 import { execFileSync } from 'node:child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { FakeCacheStorage, loadWorker } from './lib/sw-harness.mjs';
 
 const REPO = process.argv[2] || process.cwd();
 const git = (...a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8' }).trim();
@@ -85,55 +89,47 @@ function urls(src) {
     .map(x => norm(x[1])).map(x => (x === '' ? 'index.html' : x)));
 }
 /**
- * Read the literal that identifies this cache generation.
+ * Determine the cache identity a revision's sw.js would ACTUALLY use.
  *
- * PUP-WO-0101 moved that literal. Before it, `CACHE_NAME = 'pup-pad-v16'` was the
- * whole identity. After it, the name is DERIVED per deploy path
- * (`CACHE_PREFIX + CACHE_VERSION`) so that one byte-identical sw.js can serve two
- * paths, and the part that must change when a cached asset changes is
- * `CACHE_VERSION`. Reading `CACHE_NAME` after that point reads a computed
- * expression and parses nothing.
+ * This does not read a literal — it EVALUATES the worker at a fixed scope and asks
+ * what CACHE_NAME comes out. Every regex attempt at this has been defeated, and
+ * each time by something more ordinary than the last:
  *
- * Both forms are accepted because this check compares two revisions and the BASE
- * revision legitimately predates the change — not as a fallback for sloppiness.
- * The assertion itself is unchanged: the identity literal must differ between base
- * and head whenever a cached asset changed, and an unparseable identity still
- * fails rather than passing quietly.
+ *   - reading `CACHE_VERSION` from anywhere, so a value in a COMMENT won.
+ *   - anchoring to `^\s*var`, which is a LINE start, not code — so a block comment
+ *     whose lines begin at column 0 still won.
+ *   - and with or without an anchor, `String.match` returns the FIRST hit, so two
+ *     `var CACHE_VERSION = …;` lines are enough: the check reads one, the worker
+ *     uses the other.
+ *
+ * A regex is answering "does this text appear?" when the question is "what will
+ * this code compute?". `check-cache-isolation.mjs` already evaluates the worker at
+ * two scopes; this uses the same harness. A cache identity that cannot be
+ * evaluated fails loudly rather than being guessed at from its spelling.
  */
-function cacheName(src) {
+const IDENTITY_SCOPE = 'https://ikthys777.github.io/PupPad/';
+
+function cacheIdentity(src) {
   if (!src) return null;
-  /* THREE THINGS ARE LOAD-BEARING HERE, and the first two were learned the hard
-   * way when this check was weakened and the weakening was not noticed:
-   *
-   * 1. `^\s*var ` — the match must be an ASSIGNMENT, not any occurrence. Without
-   *    the anchor, `String.match` returns the FIRST hit anywhere in the file, so
-   *    the string `CACHE_VERSION = 'v99';` sitting inside a COMMENT satisfies the
-   *    check while the real assignment says something else. This file's own
-   *    explanatory prose was enough to defeat it.
-   * 2. The derivation assertion below — reading a version literal proves nothing
-   *    unless CACHE_NAME is actually built from it. A bumped CACHE_VERSION with
-   *    `CACHE_NAME = CACHE_PREFIX + 'v17'` pinned would otherwise pass while the
-   *    runtime cache identity is byte-identical and every client keeps the stale
-   *    asset forever.
-   * 3. The trailing `;` — otherwise `CACHE_VERSION = 'v' + (n)` matches the
-   *    leading 'v' and a fragment is compared as if it were the identity.
-   */
-  const version = src.match(/^\s*var\s+CACHE_VERSION\s*=\s*(['"])([^'"]*)\1\s*;/m);
-  if (version) {
-    /* The identity is CACHE_PREFIX + CACHE_VERSION, and this check is only
-     * meaningful if the code says so. Whitespace-tolerant, structure-strict. */
-    if (!/^\s*var\s+CACHE_NAME\s*=\s*CACHE_PREFIX\s*\+\s*CACHE_VERSION\s*;/m.test(src)) return null;
-    return version[2];
+  const tmp = join(tmpdir(), `puppad-sw-${Math.random().toString(36).slice(2)}.js`);
+  try {
+    writeFileSync(tmp, src);
+    const w = loadWorker(tmp, IDENTITY_SCOPE, new FakeCacheStorage());
+    const name = w.get('CACHE_NAME');
+    return typeof name === 'string' && name.length ? name : null;
+  } catch {
+    return null;                 /* unparseable or throws at load: not an identity */
+  } finally {
+    try { unlinkSync(tmp); } catch {}
   }
-  const legacy = src.match(/^\s*var\s+CACHE_NAME\s*=\s*(['"])([^'"]*)\1\s*;/m);
-  return legacy ? legacy[2] : null;
 }
+
 
 const swHead = readAt(head, 'sw.js'), swBase = readAt(base, 'sw.js');
 if (!swHead) fail('sw.js does not exist at HEAD.');
 const listHead = urls(swHead), listBase = urls(swBase);
 if (!listHead) fail('could not parse urlsToCache from sw.js at HEAD (sw.js:2-8).');
-const nameHead = cacheName(swHead), nameBase = cacheName(swBase);
+const nameHead = cacheIdentity(swHead), nameBase = cacheIdentity(swBase);
 if (!nameHead) fail('could not establish the cache identity from sw.js at HEAD.\n' +
   '  Expected either `var CACHE_VERSION = \'…\';` TOGETHER WITH\n' +
   '  `var CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;`, or (pre-PUP-WO-0101)\n' +

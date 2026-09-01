@@ -13,7 +13,11 @@ import { readFileSync } from 'node:fs';
 
 /** A Cache API stand-in shared across "workers", because the real one is ORIGIN-scoped. */
 export class FakeCacheStorage {
-  constructor(names = []) { this.names = new Set(names); this.deleted = []; }
+  constructor(names = []) {
+    this.names = new Set(names);
+    this.deleted = [];
+    this.entries = new Map();          // cacheName -> Map(url -> response)
+  }
   async keys() { return [...this.names]; }
   async delete(name) {
     this.deleted.push(name);
@@ -21,9 +25,26 @@ export class FakeCacheStorage {
   }
   async open(name) {
     this.names.add(name);
-    return { addAll: async () => {}, put: async () => {}, match: async () => undefined };
+    if (!this.entries.has(name)) this.entries.set(name, new Map());
+    const store = this.entries.get(name);
+    return {
+      addAll: async () => {},
+      put: async (req, res) => { store.set(typeof req === 'string' ? req : req.url, res); },
+      match: async (req) => store.get(typeof req === 'string' ? req : req.url),
+    };
   }
-  async match() { return undefined; }
+  /**
+   * CacheStorage.match — ORIGIN-WIDE, exactly like the real one. An earlier
+   * version returned undefined unconditionally, which made check 5 structurally
+   * incapable of seeing a worker that READS the other deploy path's cache. The
+   * reap being prefix-bounded is worth nothing if the read is not, and a stub that
+   * cannot fail is not a test.
+   */
+  async match(req) {
+    const url = typeof req === 'string' ? req : req.url;
+    for (const [, store] of this.entries) if (store.has(url)) return store.get(url);
+    return undefined;
+  }
 }
 
 /**

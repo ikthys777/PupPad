@@ -10,8 +10,10 @@
 I parked this branch under a flag-and-stop after the first adversarial pass failed
 it. CC-A upheld the stop, verified H1 independently, and ruled: fix all five
 disqualifying findings **plus** check 4's false greens, in this work order, and
-re-run the pass. That is done. **A second adversarial pass has been run against a
-fresh freeze**; its record and disposition are at the end of this file.
+re-run the pass. That is done. **A second adversarial pass was run against a fresh
+freeze and FAILED THE BRANCH AGAIN** — it confirmed 11 of the 18 as fixed and
+found 13 more, four serious. Those are now fixed too. **I am not claiming closure:
+two passes have each found serious defects, and a third has not been run.**
 
 **The first pass's verdict was correct and I do not want it softened by the fact
 that the branch now passes.** Three of my own claims in the first draft were false,
@@ -101,6 +103,87 @@ printed, never asserted. **CC-A ruled the document correction is its own** (ruli
 `PUPPAD_CHROMIUM`, never under CI's pinned Chromium, with no run id cited). It
 needs a real CI run and cannot be closed from here — same gap I closed in
 `PUP-WO-0100` with a run id. **It closes on this branch's first CI run.**
+
+---
+
+
+
+---
+
+# The SECOND pass — 13 more findings, and the deepest one in the project
+
+Verbatim record appended to `docs/findings/PUP-WO-0101-adversarial.md`. It
+confirmed **11 of the previous 18 fixed** and failed the branch again.
+
+## Its F1 is the most important finding this project has produced
+
+`sw.js`'s reap was prefix-bounded. Its offline **read** was not:
+
+```js
+return caches.match(event.request);      // CacheStorage.match — ORIGIN-WIDE
+```
+
+`CacheStorage.match` searches **every cache on the origin**. So the promoted copy,
+offline, would serve the *test* build's bytes — northstar invariant 7 falsified by
+the invariant's own stated falsification test, **with all six checks green.**
+
+Three things make it worth dwelling on:
+
+1. **The line is unchanged since `2952aa1`.** It is not a regression. What made it
+   a violation is *this work order* — putting two caches on one origin is what
+   turned a harmless line into an invariant failure. A change can break an
+   invariant without touching the code that breaks it.
+2. **No check could see it, structurally.** `sw-harness.mjs`'s `match()` returned
+   `undefined` unconditionally. A stub that cannot fail is not a test, and check 5
+   was blind by construction while reporting on cache isolation.
+3. **Two hundred lines of my prose argue no worker may touch what it does not own**
+   — three lines above a read that does exactly that.
+
+Fixed: the fallback is now `caches.open(CACHE_NAME).then(c => c.match(…))`. The
+harness now implements a real origin-wide `match()`, and check 5 asserts the
+invariant's own test — verified red when the origin-wide read is restored.
+
+## The other twelve
+
+| # | Finding | Fix | Proven |
+|---|---|---|---|
+| **F2** | check 6 hardcoded `v17`, so the bump check 3 **mandates** turned check 6 red — the two checks contradicted each other on every app change | cache names are derived from the worker under test | bumped to `v18`: check 6 green, names derived |
+| **F3** | check 3 still evadable — two `var CACHE_VERSION` lines (first match wins), or a block comment starting at column 0 | **check 3 now EVALUATES the worker** instead of scraping text | both evasions RED; a genuine bump still GREEN |
+| **F4** | `git archive` honours `.gitattributes` **from the archived tree** — `export-subst` injects the **commit message** into a published file, `export-ignore` silently drops files, and the Pages artifact tars with `--dereference` so symlinks are followed | publication refuses any tree containing a `.gitattributes` or a mode-`120000` entry | reproduced the commit-message injection myself, then the rejection |
+| **F5** | check 6 was absent from the publish loop — the sandbox hole was open on exactly the path that publishes | check 6 added to the per-copy loop | — |
+| **F6** | `/PupPad/stable` — bare, canonical, unencoded — was served; a host 301s it and a subresource fetch follows | the bare directory is declined too | new check-5 assertion, verified red |
+| **F7** | **regression I introduced**: `/my%20photo.png` and `/café.png` worked online and were silently absent offline | decode **per segment**; decline only a segment that invents a separator | new check-5 assertions, verified red |
+| **F10, F11** | stale citations, a "five checks" that is six, and six claims the code did not deliver — including `demo:3` "not wired into the workflow" when it is check 6 | all corrected | — |
+| **F13** | the stamp step was not fail-closed (a substitution as a `printf` **argument** does not trip `set -e`); `grep -qi`; `setup-node` pinned two ways | fixed | — |
+
+**Its fairness correction, recorded because it went in my favour:** it checked
+`PUP-WO-0100`'s original `cacheName()` and found the same first-match text-scrape,
+so the new check was *strictly stronger* than what it replaced — meaning §0's
+"a check was weakened" condition **does not** still fire. It volunteered that.
+
+## Still open, and I am not closing them from here
+
+- **F8** — nothing runs the two *published* workers together; check 5 loads one
+  `sw.js` at both scopes. Needs a two-tree harness.
+- **F9** — every check is time-bounded (check 5 has no window at all), so a reap
+  delayed past ~8s passes all six. Undocumented until now.
+- **F12** — publication is all-or-nothing, so a rollback of `stable` is blocked by
+  the very copy being rolled back. Fail-closed and defensible; a design consequence
+  CC-A should rule on.
+- **F15** (first pass) — no CI run has ever exercised this. Closes on first push.
+
+**What the second pass confirms about the merge itself, and it is the part that
+matters most:** it simulated the upgrade on a device holding `pup-pad-v16` under
+the currently-live worker — legacy cache reaped by exact literal, new cache built,
+offline cold-load works. **The merge-day path is clean.**
+
+## Where I keep going wrong, stated once
+
+Both passes found the same shape: **I verify the fix against the failure I
+imagined, and stop.** F7 is the cleanest instance — I closed an attack (encodings)
+by declining anything non-canonical, and never asked what legitimate traffic that
+refuses. The reviewer's phrase for it is better than mine: *the allowlist's failure
+mode is not the one the comment claims to have eliminated by construction.*
 
 ---
 

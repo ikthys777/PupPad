@@ -26,11 +26,14 @@
  * stable "puppad|%2FPupPad%2Fstable%2F|v17".
  */
 function cachePrefixFor(scopeUrl) {
-  var path = '/';
+  /* No default. An earlier version fell back to '/', which would hand BOTH deploy
+   * paths the prefix "puppad|%2F|" — a shared prefix, i.e. the mutual deletion
+   * this file exists to prevent. Returning null makes the caller cache nothing. */
+  var path;
   try {
     path = new URL(scopeUrl).pathname;
   } catch (e) {
-    path = '/';
+    return null;
   }
   if (path.charAt(path.length - 1) !== '/') path += '/';
   return 'puppad|' + encodeURIComponent(path) + '|';
@@ -46,10 +49,7 @@ function workerScope() {
   return self.location.href.replace(/[^/]*$/, '');
 }
 
-/* A worker whose own scope cannot be parsed must not guess. An earlier version
- * fell back to '/', which would hand BOTH deploy paths the prefix
- * "puppad|%2F|" — a shared prefix, i.e. exactly the mutual deletion this file
- * exists to prevent. There is no safe default, so there is no default. */
+/* A worker whose own scope cannot be parsed must not guess: it caches nothing. */
 var SCOPE_URL = workerScope();
 var SCOPE_PATH = null;
 try {
@@ -110,19 +110,33 @@ var FOREIGN_SUBTREE = (SCOPE_PATH === null || IS_STABLE_WORKER) ? null : SCOPE_P
  * that are not inside a deeper deploy path — and its safety does not depend on
  * having imagined every encoding. */
 function canonicalPath(pathname) {
-  var decoded;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch (e) {
-    return null;                       /* malformed escape: undecidable */
-  }
-  var collapsed = decoded.replace(/\/{2,}/g, '/');
-  var parts = collapsed.split('/');
+  /* Decode PER SEGMENT, never the whole string at once.
+   *
+   * Whole-string decoding cannot distinguish "%20" in a filename — legitimate, and
+   * the browser sends it for any asset with a space or a non-ASCII character —
+   * from "%2F", which invents a separator the server will honour and this worker
+   * would not. Segment-wise decoding keeps the two apart: a segment whose decoded
+   * form contains a separator, or which decodes to a dot-segment, is a structural
+   * change this worker cannot predict the server's resolution of, so it declines.
+   * Everything else decodes and is compared on its real name.
+   *
+   * An earlier version required the path to have ARRIVED canonical, which declined
+   * "/my%20photo.png" — served fine online, silently absent offline (invariant 3). */
+  var parts = pathname.split('/');
   var out = [];
   for (var i = 0; i < parts.length; i++) {
-    if (parts[i] === '.') continue;
-    if (parts[i] === '..') { out.pop(); continue; }
-    out.push(parts[i]);
+    var seg = parts[i];
+    if (seg === '') { if (i === 0 || i === parts.length - 1) out.push(''); continue; }
+    var d;
+    try {
+      d = decodeURIComponent(seg);
+    } catch (e) {
+      return null;                     /* malformed escape: undecidable */
+    }
+    if (d.indexOf('/') !== -1 || d.indexOf('\\') !== -1) return null;   /* invented separator */
+    if (d === '.') continue;
+    if (d === '..') { if (out.length > 1) out.pop(); continue; }
+    out.push(d);
   }
   return out.join('/');
 }
@@ -139,13 +153,17 @@ function servesRequest(requestUrl) {
   if (u.origin !== self.location.origin) return true;   /* cross-origin: not our subtree question */
 
   var canon = canonicalPath(u.pathname);
-  if (canon === null) return false;
-  /* Arrived non-canonical -> we cannot predict what the server will serve. Decline. */
-  if (canon !== u.pathname) return false;
+  if (canon === null) return false;              /* undecidable: decline */
   /* Outside our own scope entirely. */
   if (canon.indexOf(SCOPE_PATH) !== 0) return false;
-  /* Inside a deeper deploy path that owns itself. */
-  if (FOREIGN_SUBTREE !== null && canon.indexOf(FOREIGN_SUBTREE) === 0) return false;
+  /* Inside a deeper deploy path that owns itself — INCLUDING the directory itself
+   * with no trailing slash. A static host 301s "/stable" to "/stable/", and a
+   * subresource fetch follows redirects, so serving the bare form caches the
+   * promoted copy's bytes under this prefix just as surely as the slashed form. */
+  if (FOREIGN_SUBTREE !== null) {
+    if (canon.indexOf(FOREIGN_SUBTREE) === 0) return false;
+    if (canon === FOREIGN_SUBTREE.slice(0, -1)) return false;
+  }
   return true;
 }
 
@@ -222,7 +240,16 @@ self.addEventListener('fetch', function(event) {
       }).catch(function() {});
       return response;
     }).catch(function() {
-      return caches.match(event.request);
+      /* SCOPED read. `caches.match(request)` is CacheStorage.match, which searches
+       * EVERY cache on the origin — so the offline path would serve the other
+       * deploy path's bytes. That is northstar invariant 7 falsified by its own
+       * stated test ("load the promoted copy after the test copy has been cached;
+       * find any asset served from the other build"), and it would have held while
+       * every check was green. The reap being prefix-bounded is not enough if the
+       * read is not. */
+      return caches.open(CACHE_NAME).then(function(cache) {
+        return cache.match(event.request);
+      });
     })
   );
 });

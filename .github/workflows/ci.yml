@@ -1,4 +1,4 @@
-# PupPad CI — five checks, each of which can go red for exactly one reason —
+# PupPad CI — six checks, each of which can go red for exactly one reason —
 # plus two-path publication (PUP-WO-0101).
 #
 # THIS WORKFLOW PUBLISHES. main goes to the site root, stable to /stable/, and
@@ -9,7 +9,9 @@
 # THE RULE THAT MATTERS MOST: every copy that gets published is CHECKED IN THE RUN
 # THAT PUBLISHES IT. An earlier version checked only the triggering ref, so a push
 # to main published stable's content — to the promoted copy — with stable never
-# checked in that run.
+# checked in that run. The publish job runs checks 1, 2, 5, 6 and the headless load
+# against each copy; check 3 is excluded by nature, being a comparison between two
+# revisions rather than a property of a tree.
 name: CI
 
 on:
@@ -35,7 +37,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Five checks
+    name: Six checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -134,7 +136,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Use Node 24
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -181,15 +183,45 @@ jobs:
               echo "::error::REFUSING TO PUBLISH — northstar invariant 4."; exit 1; }
           done
 
+      - name: "Reject trees that can publish something other than their own bytes"
+        # `git archive` does NOT simply write the commit's tree — it honours
+        # .gitattributes FROM THE TREE IT IS ARCHIVING. Both directions demonstrated:
+        #   export-subst  interpolates the COMMIT MESSAGE into a published file, so
+        #                 arbitrary JS reaches /stable/ while the tree reads clean in
+        #                 review and every check passes. The payload lives in
+        #                 `git log`, which no gate reads.
+        #   export-ignore silently DROPS files from the published copy. Removing
+        #                 manifest.json makes cache.addAll reject, so the promoted
+        #                 copy has no working worker — fail-OPEN, on a green build.
+        # And actions/upload-pages-artifact tars with --dereference, so a committed
+        # symlink is FOLLOWED and its target published off the runner filesystem.
+        # None of it is reachable if a publishable tree may contain neither.
+        run: |
+          set -euo pipefail
+          for ref in main stable; do
+            if git -C "src/$ref" ls-tree -r --name-only HEAD | grep -q '\.gitattributes$'; then
+              echo "::error::$ref carries a .gitattributes. git archive honours it, so the published"
+              echo "::error::bytes need not be the committed bytes. REFUSING TO PUBLISH."
+              exit 1
+            fi
+            if git -C "src/$ref" ls-tree -r HEAD | awk '$1 == "120000" { found=1 } END { exit !found }'; then
+              echo "::error::$ref contains a symlink. The Pages artifact is tarred with --dereference,"
+              echo "::error::so its target would be published from the runner filesystem. REFUSING."
+              exit 1
+            fi
+          done
+          echo "OK: both trees can only publish their own committed bytes."
+
       - name: Build the site from the COMMITS, not the working trees
-        # `git archive HEAD` writes the commit's tree and nothing else, so no
+        # With .gitattributes and symlinks refused above, `git archive HEAD` now does
+        # write the commit's tree and nothing else, so no
         # working-tree edit, stray file, or later step can put unpromoted bytes
         # into a published copy. The previous version copied working trees and
         # merged stable OVER main's, which meant a `stable/` path in main survived
         # into /stable/ — main's content on the promoted copy.
         run: |
           set -euo pipefail
-          if git -C src/main ls-tree -r --name-only HEAD | grep -qi '^stable/'; then
+          if git -C src/main ls-tree -r --name-only HEAD | grep -q '^stable/'; then
             echo "::error::main carries a 'stable/' path, which collides with the promoted copy's mount point."
             echo "::error::REFUSING TO PUBLISH — the two copies would merge."
             exit 1
@@ -215,7 +247,11 @@ jobs:
           fail=0
           for copy in dist dist/stable; do
             echo "::group::checking published copy: /$([ "$copy" = dist ] && echo '' || echo 'stable/')"
-            for chk in check-syntax check-assets check-cache-isolation; do
+            # check 6 (demo-two-path-caches) is in this list deliberately. Check 5's
+            # sandbox can be detected by a one-line `typeof ExtendableEvent` gate, and
+            # check 6 is the only thing that catches that. Omitting it here left the
+            # hole open on exactly the path that publishes.
+            for chk in check-syntax check-assets check-cache-isolation demo-two-path-caches; do
               if node ".github/ci/$chk.mjs" "$copy"; then
                 echo "  ok  $chk"
               else
@@ -246,8 +282,16 @@ jobs:
         run: |
           set -euo pipefail
           stamp() {
+            # The sha is ASSIGNED first. As an argument to printf, a failing
+            # $(git rev-parse) is not a command failure — `set -e` does not fire and
+            # the stamp is written with an empty sha at exit 0. The invariant-4 step
+            # two above looks identical and behaves the opposite way, because there
+            # the substitution IS an assignment.
+            local sha
+            sha=$(git -C "src/$2" rev-parse HEAD)
+            [ -n "$sha" ] || { echo "::error::could not resolve HEAD for src/$2"; exit 1; }
             printf '{"ref":"%s","sha":"%s","path":"%s","built_at":"%s"}\n' \
-              "$2" "$(git -C "src/$2" rev-parse HEAD)" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$1/build-stamp.json"
+              "$2" "$sha" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$1/build-stamp.json"
           }
           stamp dist        main   /
           stamp dist/stable stable /stable/
