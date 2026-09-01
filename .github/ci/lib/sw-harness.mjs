@@ -19,6 +19,10 @@ export class FakeCacheStorage {
     this.entries = new Map();          // cacheName -> Map(url -> response)
     /** Every url a worker ATTEMPTED to write, in order — including refused ones. */
     this.putAttempts = [];
+    /** Every entry a worker DELETED, in order. Final cache state cannot answer
+     *  "was a precache entry deleted?" — addAll re-provisions them immediately, so
+     *  the symptom is erased before any assertion can see it. */
+    this.entryDeletes = [];
     /** When set, the store holds at most this many entries ACROSS ALL CACHES; a
      *  write beyond it throws QuotaExceededError. Capacity rather than a counter,
      *  because the install path under test RECLAIMS and RETRIES — a cumulative
@@ -71,13 +75,17 @@ export class FakeCacheStorage {
        * is about. Real addAll is atomic; this mirrors that by staging first. */
       addAll: async (urls) => {
         const staged = [];
+        let novel = 0;
         for (const u of urls) {
           const url = this._key(u);
           if (this.httpFailFor && (this.httpFailFor.has(url) || this.httpFailFor.has(String(u)))) {
             throw new TypeError("Failed to execute 'addAll' on 'Cache': Request failed");
           }
           this.putAttempts.push(url);
-          this._admit(store, url, staged.length);
+          /* Only keys not already present consume capacity — an overwrite costs
+           * nothing, as in real storage. Counting `staged.length` charged overwrites
+           * too, which made this model reject a precache that a browser accepts. */
+          if (!store.has(url)) { this._admit(store, url, novel); novel++; }
           staged.push(url);
         }
         for (const url of staged) store.set(url, 'PRECACHED');
@@ -104,8 +112,22 @@ export class FakeCacheStorage {
        * `cache.delete is not a function` — a stub that cannot represent the operation
        * at all, which is the same fixture-shape blindness this work order is about.
        * Found by an assertion that needed it, not by an audit. */
-      delete: async (req) => store.delete(this._key(req)),
-      keys: async () => [...store.keys()],
+      delete: async (req) => {
+        const k = this._key(req);
+        this.entryDeletes.push(k);          // see putAttempts: assert the act, not the residue
+        return store.delete(k);
+      },
+      /* REQUEST-LIKE, NOT BARE STRINGS. Real Cache.keys() resolves to Request
+       * objects; this returned strings, so any worker reading `req.url` from them
+       * got `undefined`. PUP-WO-0105's reclaim compares `req.url` against its
+       * keep-list, so in the sandbox THE KEEP-LIST MATCHED NOTHING and the reclaim
+       * deleted every precache entry — while the assertion guarding that bound
+       * still printed ok, because addAll re-provisioned them a moment later.
+       *
+       * The comment above about `_key` claims this defect class was fixed. `_key`
+       * was fixed; `keys()` was not. A comment claiming coverage it does not have,
+       * in the fixture written to stop exactly that. */
+      keys: async () => [...store.keys()].map((url) => ({ url })),
     };
   }
   /** Total entries across every cache — quota is per ORIGIN, not per cache. */

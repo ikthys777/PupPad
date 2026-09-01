@@ -241,10 +241,17 @@ async function install(opts) {
   for (const [url, res] of opts.seed || []) await c.put(url, res);
   if (opts.capacity !== undefined) cs.capacityEntries = opts.capacity;
   if (opts.httpFail) cs.httpFailFor = new Set(opts.httpFail);
+  if (opts.httpFailAfterReclaim) {
+    /* arm the HTTP failure only once a delete has happened, i.e. on the retry */
+    const armed = new Set(opts.httpFailAfterReclaim.map((u) => new URL(u, SCOPE).href));
+    const origDelete = cs.entryDeletes;
+    Object.defineProperty(cs, 'httpFailFor', {
+      get() { return origDelete.length ? armed : null; }, configurable: true });
+  }
   let rejected = null;
   try { await w.dispatch('install', {}); } catch (e) { rejected = e; }
   const keys = await (await cs.open(name)).keys();
-  return { cs, name, rejected, keys, deleted: cs.deleted };
+  return { cs, name, rejected, keys, deleted: cs.deleted, entryDeletes: cs.entryDeletes };
 }
 
 const ABS = (u) => new URL(u, SCOPE).href;
@@ -314,13 +321,42 @@ const RUNTIME = [`${ORIGIN}/cdn/leaflet.js`, `${ORIGIN}/cdn/tile-1.png`, `${ORIG
   } else if (reclaimed.length === 0) {
     bad('NO RECLAIM OCCURRED, so this assertion tested nothing',
         'the quota was not binding or the worker cannot reclaim; "never deleted a precache entry" is vacuous here');
-  } else if (lost.length) {
-    bad('THE RECLAIM DELETED A PRECACHE ENTRY — it freed room by removing what it must provide',
-        JSON.stringify(lost));
-  } else ok(`the reclaim ran (freed ${reclaimed.length}) and never deletes a urlsToCache entry`);
-  if (r.deleted.length) bad('the reclaim deleted a whole CACHE, not entries — that is the origin-wide reap returning',
-                            JSON.stringify(r.deleted));
-  else ok('the reclaim stays inside CACHE_NAME — no cache was deleted');
+  } else {
+    /* ASSERT THE ACT, NOT THE RESIDUE. `lost` reads the FINAL cache, and addAll
+     * re-provisions every precache entry a moment after the reclaim runs — so a
+     * reclaim that deleted all five still leaves `lost` empty. The property is
+     * "no keep-list entry was ever deleted", and only the delete log can say. */
+    const wronglyDeleted = urlsToCacheAbs().filter((u) => r.entryDeletes.includes(u));
+    if (wronglyDeleted.length) {
+      bad('THE RECLAIM DELETED A PRECACHE ENTRY — it freed room by removing what it must provide',
+          JSON.stringify(wronglyDeleted));
+    } else if (lost.length) {
+      bad('a precache entry is missing after install', JSON.stringify(lost));
+    } else ok(`the reclaim ran (freed ${reclaimed.length}) and deleted no urlsToCache entry`);
+    /* F4: this was OUTSIDE the guard above, so it printed ok in the very runs where
+     * the branch above said "this assertion tested nothing". */
+    if (r.deleted.length) bad('the reclaim deleted a whole CACHE, not entries — the origin-wide reap returning',
+                              JSON.stringify(r.deleted));
+    else ok('the reclaim stays inside CACHE_NAME — no cache was deleted');
+  }
+}
+
+/* 5d. quota FIRST, then a bad deploy on the retry — sw.js's second `throw err2`.
+ * Nothing exercised it: 5b and demo scenario B both fail on the FIRST addAll, so
+ * deleting that line was green everywhere. It is reachable in the field as a network
+ * drop mid-install on a squeezed device, and it is the same load-bearing rule as the
+ * first rethrow: quota survivable, a fetch failure never. */
+{
+  const seed = RUNTIME.map((u) => [u, new Response('x', { status: 200 })]);
+  const r = await install({ seed, capacity: 6, httpFailAfterReclaim: ['./icon-512.png'] });
+  if (!r.rejected) {
+    bad('A BAD DEPLOY ON THE RETRY INSTALLED SILENTLY — the second rethrow is missing',
+        'a 404 that appears after the reclaim would activate over an unprovisioned cache');
+  } else if (r.rejected.name === 'TypeError') {
+    ok('a fetch failure on the RETRY still fails install loudly');
+  } else {
+    bad('the retry failed, but not as a fetch failure', `got ${r.rejected.name}: ${r.rejected.message}`);
+  }
 }
 
 console.log('  NOT ASSERTED: whether an opaque 200 and an opaque 404 can be told apart.');
