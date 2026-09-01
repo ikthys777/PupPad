@@ -1,0 +1,1942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1E3A5F">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<title>Pup Pad</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0F1D3A;touch-action:none;user-select:none;-webkit-user-select:none}
+@keyframes sweep{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes pawFlash{0%{opacity:0.9}4%{opacity:0.7}12%{opacity:0.3}20%{opacity:0.08}25%,100%{opacity:0}}
+@keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+@keyframes pfloat{0%,100%{transform:translateY(0) rotate(-10deg)}50%{transform:translateY(-10px) rotate(5deg)}}
+@keyframes pawPop{0%{transform:translate(-50%,-50%) scale(0.1);opacity:0.9}30%{transform:translate(-50%,-50%) scale(1.3);opacity:0.8}50%{transform:translate(-50%,-50%) scale(1.5);opacity:0.5}100%{transform:translate(-50%,-50%) scale(2.2);opacity:0}}
+@keyframes xGrow{0%{transform:translate(-50%,-50%) scale(0.15);opacity:0}5%{transform:translate(-50%,-50%) scale(0.25);opacity:1}90%{transform:translate(-50%,-50%) scale(1.54);opacity:0.9}100%{transform:translate(-50%,-50%) scale(1.54);opacity:0}}
+@keyframes lockPulse{0%,100%{opacity:0.5}50%{opacity:1}}
+#portraitBlock{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(180deg,#1E3A5F,#0F1D3A);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:20px;font-family:Trebuchet MS,sans-serif}
+@media (orientation:portrait){#portraitBlock{display:flex !important}}
+</style>
+</head>
+<body>
+<div id="portraitBlock">
+<div style="animation:pfloat 3s ease-in-out infinite">
+<svg width="60" height="60" viewBox="0 0 100 100" fill="#00ff88"><ellipse cx="50" cy="68" rx="20" ry="18"/><ellipse cx="24" cy="44" rx="9" ry="11" transform="rotate(-20 24 44)"/><ellipse cx="76" cy="44" rx="9" ry="11" transform="rotate(20 76 44)"/><ellipse cx="40" cy="26" rx="8" ry="11" transform="rotate(-8 40 26)"/><ellipse cx="60" cy="26" rx="8" ry="11" transform="rotate(8 60 26)"/></svg>
+</div>
+<div style="color:#93C5FD;font-size:18px;font-weight:700">Rotate Your Device</div>
+<div style="color:rgba(148,197,255,0.4);font-size:12px">Pup Pad works in landscape mode</div>
+<div style="font-size:30px;animation:pfloat 2s ease-in-out infinite">&#x21BB;</div>
+</div>
+<div id="app"></div>
+<script>
+/* === SVG Helpers === */
+function pawSVG(size, color) {
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 100 100" fill="'+color+'"><ellipse cx="50" cy="68" rx="20" ry="18"/><ellipse cx="24" cy="44" rx="9" ry="11" transform="rotate(-20 24 44)"/><ellipse cx="76" cy="44" rx="9" ry="11" transform="rotate(20 76 44)"/><ellipse cx="40" cy="26" rx="8" ry="11" transform="rotate(-8 40 26)"/><ellipse cx="60" cy="26" rx="8" ry="11" transform="rotate(8 60 26)"/></svg>';
+}
+function xSVG(size, color) {
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 100 100" fill="none" stroke="'+color+'" stroke-linecap="round" stroke-linejoin="round"><line x1="15" y1="15" x2="85" y2="85" stroke-width="10"/><line x1="85" y1="15" x2="15" y2="85" stroke-width="10"/></svg>';
+}
+function lockSVG(size, color, locked) {
+  var body = locked ? '<rect x="3" y="11" width="18" height="11" rx="2" fill="'+color+'"/><path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round"/>' : '<rect x="3" y="11" width="18" height="11" rx="2" fill="none" stroke="'+color+'" stroke-width="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round"/>';
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24">'+body+'</svg>';
+}
+
+/* === Audio === */
+var audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx || audioCtx.state === 'closed') audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function doSound(type) {
+  try {
+    var c = getAudioCtx();
+    function mk(freq, dur, wave, delay, vol) {
+      var o = c.createOscillator(), g = c.createGain();
+      o.type = wave; o.frequency.value = freq;
+      var t = c.currentTime + (delay || 0), v = vol || 0.12;
+      g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
+    }
+    function sw(f1, f2, dur, wave, delay, vol) {
+      var o = c.createOscillator(), g = c.createGain();
+      o.type = wave; var t = c.currentTime + (delay || 0), v = vol || 0.12;
+      o.frequency.setValueAtTime(f1, t); o.frequency.linearRampToValueAtTime(f2, t + dur);
+      g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
+    }
+    var S = {
+      ping:function(){mk(880,.08,'sine',0,.15);mk(1320,.12,'sine',.08,.12);mk(1760,.2,'sine',.16,.08)},
+      chime:function(){mk(392,.3,'sine',0,.1);mk(523,.3,'sine',.1,.1);mk(659,.3,'sine',.2,.1);mk(784,.4,'sine',.3,.12)},
+      scan:function(){sw(200,1800,.4,'sawtooth',0,.08);mk(1800,.15,'sine',.35,.06);mk(2200,.1,'sine',.42,.04)},
+      alert:function(){mk(880,.08,'square',0,.1);mk(660,.08,'square',.1,.1);mk(880,.08,'square',.2,.1);mk(660,.08,'square',.3,.1);mk(880,.12,'square',.4,.08)},
+      tap:function(){mk(3000,.02,'square',0,.15);mk(800,.08,'triangle',.02,.1);mk(1200,.15,'sine',.03,.06)},
+      twinkle:function(){mk(1568,.12,'sine',0,.1);mk(1319,.12,'sine',.08,.1);mk(1047,.12,'sine',.16,.1);mk(1319,.12,'sine',.24,.08);mk(1568,.2,'sine',.32,.06)},
+      blip:function(){mk(4000,.015,'square',0,.15);mk(2000,.03,'sine',.02,.1);sw(1500,800,.08,'sine',.05,.08);mk(1000,.06,'triangle',.12,.05)},
+      powerUp:function(){sw(80,400,.3,'sawtooth',0,.08);sw(400,1200,.2,'sine',.2,.1);mk(1200,.15,'sine',.35,.12);mk(1600,.1,'sine',.4,.08);mk(2400,.3,'sine',.45,.06)},
+      lock:function(){mk(600,.06,'sine',0,.1);mk(400,.12,'sine',.06,.1)},
+      unlock:function(){mk(400,.06,'sine',0,.1);mk(600,.12,'sine',.06,.1)},
+      keyTap:function(){mk(1800,.03,'sine',0,.08)},
+      error:function(){mk(300,.08,'square',0,.1);mk(200,.15,'square',.1,.1)}
+    };
+    if(S[type])S[type]();
+  } catch(e){}
+}
+
+/* === Button Data === */
+var BTNS_LEFT=[
+  {id:0,label:'Comms',color:'#3B82F6',glow:'#60A5FA',emoji:'\uD83D\uDCE1',sound:'ping',msg:'Signal locked!',bg:'#1e3a8a'},
+  {id:1,label:'Map',color:'#10B981',glow:'#34D399',emoji:'\uD83D\uDDFA',sound:'chime',msg:'Treasure map loaded!',bg:'#064e3b'},
+  {id:2,label:'Draw',color:'#F59E0B',glow:'#FBBF24',emoji:'\uD83C\uDFA8',sound:'scan',msg:'Canvas open!',bg:'#78350f'},
+  {id:3,label:'Alert',color:'#EF4444',glow:'#F87171',emoji:'\uD83D\uDEA8',sound:'alert',msg:'Alert sent!',bg:'#7f1d1d'}
+];
+var BTNS_RIGHT=[
+  {id:4,label:'Tools',color:'#8B5CF6',glow:'#A78BFA',emoji:'\uD83D\uDD27',sound:'tap',msg:'Toolkit ready!',bg:'#4c1d95'},
+  {id:5,label:'Weather',color:'#06B6D4',glow:'#22D3EE',emoji:'\u26C5',sound:'twinkle',msg:'Clear skies!',bg:'#164e63'},
+  {id:6,label:'Camera',color:'#EC4899',glow:'#F472B6',emoji:'\uD83D\uDCF7',sound:'blip',msg:'Say cheese!',bg:'#831843'},
+  {id:7,label:'Power',color:'#F97316',glow:'#FB923C',emoji:'\u26A1',sound:'powerUp',msg:'Systems charged!',bg:'#7c2d12'}
+];
+
+var BLIPS=[
+  {top:'28%',left:'60%',size:10,delay:4.35},
+  {top:'42%',left:'24%',size:9,delay:2.74},
+  {top:'68%',left:'65%',size:10,delay:0.70},
+  {top:'55%',left:'36%',size:8,delay:2.23}
+];
+
+/* === State === */
+var state = {active:null, pid:-1, pop:'', isLocked:false, storedPin:null};
+var activeTimer = null;
+var tpId = 0, xmId = 0;
+var longPressTimer = null, longPressPos = null, didLongPress = false;
+var LONG_PRESS_MS = 1000;
+var X_MARK_DURATION = 5000;
+
+/* === Alert Flash + Vibrate === */
+var alertInterval = null;
+function triggerAlertEffect() {
+  if (alertInterval) clearInterval(alertInterval);
+  var flash = document.getElementById('alertFlash');
+  var on = true;
+  var count = 0;
+  var totalBlinks = 20;
+  alertInterval = setInterval(function() {
+    if (count >= totalBlinks) {
+      clearInterval(alertInterval);
+      alertInterval = null;
+      if (flash) flash.style.opacity = '0';
+      return;
+    }
+    if (on) {
+      if (flash) flash.style.opacity = '0.35';
+      try { navigator.vibrate(150); } catch(e) {}
+    } else {
+      if (flash) flash.style.opacity = '0';
+    }
+    on = !on;
+    count++;
+  }, 200);
+}
+
+/* === Supabase Sync === */
+var supabaseUrl = '';
+var supabaseKey = '';
+var deviceId = '';
+var pollTimer = null;
+var lastFetchTime = 0;
+
+function loadSupabaseConfig() {
+  try {
+    supabaseUrl = localStorage.getItem('puppad_sb_url') || '';
+    supabaseKey = localStorage.getItem('puppad_sb_key') || '';
+    deviceId = localStorage.getItem('puppad_device_id') || '';
+    if (!deviceId) {
+      deviceId = 'pp_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('puppad_device_id', deviceId);
+    }
+  } catch(e) {}
+}
+
+function saveSupabaseConfig(url, key) {
+  supabaseUrl = url.replace(/\/+$/, '');
+  supabaseKey = key;
+  try {
+    localStorage.setItem('puppad_sb_url', supabaseUrl);
+    localStorage.setItem('puppad_sb_key', supabaseKey);
+  } catch(e) {}
+  startPolling();
+}
+
+function isSupabaseConfigured() {
+  return supabaseUrl && supabaseKey;
+}
+
+function supabaseFetch(path, method, body) {
+  if (!isSupabaseConfigured()) return Promise.resolve(null);
+  var opts = {
+    method: method || 'GET',
+    headers: {
+      'apikey': supabaseKey,
+      'Authorization': 'Bearer ' + supabaseKey,
+      'Content-Type': 'application/json',
+      'Prefer': method === 'POST' ? 'return=minimal' : ''
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  return fetch(supabaseUrl + '/rest/v1/' + path, opts).then(function(r) {
+    if (method === 'POST') return null;
+    return r.json();
+  }).catch(function(e) { return null; });
+}
+
+function pushXMark(xPct, yPct) {
+  if (!isSupabaseConfigured()) return;
+  supabaseFetch('pup_pad_xmarks', 'POST', {
+    x: xPct, y: yPct, device_id: deviceId,
+    created_at: new Date().toISOString()
+  });
+}
+
+function pushAlert() {
+  if (!isSupabaseConfigured()) return;
+  supabaseFetch('pup_pad_alerts', 'POST', {
+    device_id: deviceId,
+    created_at: new Date().toISOString()
+  });
+}
+
+var lastAlertCheck = Date.now();
+function fetchRemoteAlerts() {
+  if (!isSupabaseConfigured()) return;
+  var since = new Date(lastAlertCheck - 500).toISOString();
+  supabaseFetch('pup_pad_alerts?device_id=neq.' + deviceId + '&created_at=gte.' + since + '&order=created_at.desc&limit=5', 'GET')
+    .then(function(data) {
+      lastAlertCheck = Date.now();
+      if (!data || !Array.isArray(data) || data.length === 0) return;
+      triggerAlertEffect();
+      doSound('alert');
+    });
+}
+
+function fetchRemoteXMarks() {
+  if (!isSupabaseConfigured()) return;
+  var since = new Date(Date.now() - X_MARK_DURATION).toISOString();
+  supabaseFetch('pup_pad_xmarks?device_id=neq.' + deviceId + '&created_at=gte.' + since + '&order=created_at.desc&limit=20', 'GET')
+    .then(function(data) {
+      if (!data || !Array.isArray(data)) return;
+      var layer = document.getElementById('xMarkLayer');
+      if (!layer) return;
+      data.forEach(function(row) {
+        var markId = 'remote_' + row.id;
+        if (document.getElementById(markId)) return;
+        var el = document.createElement('div');
+        el.id = markId;
+        el.style.cssText = 'position:absolute;left:'+row.x+'%;top:'+row.y+'%;transform:translate(-50%,-50%);animation:xGrow 5s ease-out forwards;pointer-events:none;filter:drop-shadow(0 0 6px #CC2222) drop-shadow(0 0 12px #AA000088)';
+        el.innerHTML = xSVG(66, '#DD2222');
+        layer.appendChild(el);
+        setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, X_MARK_DURATION + 100);
+      });
+    });
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  if (isSupabaseConfigured()) {
+    pollTimer = setInterval(function() { fetchRemoteXMarks(); fetchRemoteAlerts(); }, 3000);
+    fetchRemoteXMarks();
+    fetchRemoteAlerts();
+  }
+}
+
+/* === Shared Drawing Canvas === */
+var sbClient = null;
+var canvasChannel = null;
+var canvasOpen = false;
+var drawColor = '#FBBF24';
+var drawWidth = 4;
+var isDrawing = false;
+var lastPt = null;
+var drawTool = 'pen';
+var rainbowHue = 0;
+var selectedEmoji = '\uD83D\uDC3E';
+var zoomLevel = 1.0;
+var ZOOM_MIN = 0.5;
+var ZOOM_MAX = 4.0;
+var ZOOM_STEP = 0.25;
+
+var DRAW_COLORS = ['#FBBF24','#F87171','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
+var STAMP_EMOJIS = ['\uD83D\uDC3E','\uD83C\uDF1F','\u2B50','\uD83D\uDC36','\uD83D\uDC31','\uD83E\uDDB4','\uD83C\uDFBE','\u2764\uFE0F','\uD83D\uDD25','\uD83C\uDF08'];
+
+function getSupabaseClient() {
+  if (sbClient) return sbClient;
+  if (!isSupabaseConfigured()) return null;
+  try {
+    sbClient = supabase.createClient(supabaseUrl, supabaseKey);
+    return sbClient;
+  } catch(e) { console.log('SB client error:', e); return null; }
+}
+
+function joinCanvasChannel() {
+  var client = getSupabaseClient();
+  if (!client) return;
+  if (canvasChannel) return;
+  canvasChannel = client.channel('puppad-canvas', {
+    config: { broadcast: { self: false } }
+  });
+  canvasChannel.on('broadcast', { event: 'stroke' }, function(payload) {
+    var d = payload.payload;
+    drawRemoteStroke(d.x1, d.y1, d.x2, d.y2, d.color, d.width, d.eraser);
+  });
+  canvasChannel.on('broadcast', { event: 'stamp' }, function(payload) {
+    var d = payload.payload;
+    drawRemoteStamp(d.emoji, d.vx, d.vy, d.size);
+  });
+  canvasChannel.on('broadcast', { event: 'clear' }, function() {
+    clearLocalCanvas();
+  });
+  canvasChannel.subscribe(function(status) {
+    if (status === 'SUBSCRIBED') console.log('Canvas channel joined');
+  });
+}
+
+function broadcastStroke(x1, y1, x2, y2, color, width, eraser) {
+  if (!canvasChannel) return;
+  canvasChannel.send({
+    type: 'broadcast', event: 'stroke',
+    payload: { x1:x1, y1:y1, x2:x2, y2:y2, color:color, width:width, eraser:!!eraser, did:deviceId }
+  });
+}
+
+function broadcastStamp(emoji, vx, vy, size) {
+  if (!canvasChannel) return;
+  canvasChannel.send({
+    type: 'broadcast', event: 'stamp',
+    payload: { emoji:emoji, vx:vx, vy:vy, size:size, did:deviceId }
+  });
+}
+
+function broadcastClear() {
+  if (!canvasChannel) return;
+  canvasChannel.send({ type: 'broadcast', event: 'clear', payload: { did:deviceId } });
+}
+
+/* === Virtual Canvas Coordinate System === */
+var VCANVAS_W = 1600;
+var VCANVAS_H = 900;
+var canvasMapping = null;
+
+function calcMapping(cvs) {
+  var rect = cvs.getBoundingClientRect();
+  var sw = rect.width, sh = rect.height;
+  var baseScale = Math.min(sw / VCANVAS_W, sh / VCANVAS_H);
+  var scale = baseScale * zoomLevel;
+  var ox = sw / 2 - (VCANVAS_W / 2) * scale;
+  var oy = sh / 2 - (VCANVAS_H / 2) * scale;
+  canvasMapping = { scale:scale, ox:ox, oy:oy, sw:sw, sh:sh };
+  return canvasMapping;
+}
+
+function screenToVirtual(sx, sy) {
+  var m = canvasMapping;
+  if (!m) return {x:0, y:0};
+  return { x:(sx - m.ox) / m.scale, y:(sy - m.oy) / m.scale };
+}
+
+function virtualToScreen(vx, vy) {
+  var m = canvasMapping;
+  if (!m) return {x:0, y:0};
+  return { x: vx * m.scale + m.ox, y: vy * m.scale + m.oy };
+}
+
+function scaledWidth(vw) {
+  return canvasMapping ? vw * canvasMapping.scale : vw;
+}
+
+/* === Drawing Primitives === */
+function drawStrokeOnCanvas(ctx, vx1, vy1, vx2, vy2, color, vwidth, eraser) {
+  var p1 = virtualToScreen(vx1, vy1);
+  var p2 = virtualToScreen(vx2, vy2);
+  ctx.save();
+  if (eraser) {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(255,255,255,1)';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = color;
+  }
+  ctx.lineWidth = scaledWidth(eraser ? vwidth * 3 : vwidth);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawStampOnCanvas(ctx, emoji, vx, vy, vsize) {
+  var p = virtualToScreen(vx, vy);
+  var sz = scaledWidth(vsize);
+  ctx.font = sz + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, p.x, p.y);
+}
+
+function drawRemoteStroke(x1, y1, x2, y2, color, width, eraser) {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs || !canvasMapping) return;
+  drawStrokeOnCanvas(cvs.getContext('2d'), x1, y1, x2, y2, color, width, eraser);
+}
+
+function drawRemoteStamp(emoji, vx, vy, size) {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs || !canvasMapping) return;
+  drawStampOnCanvas(cvs.getContext('2d'), emoji, vx, vy, size);
+}
+
+function clearLocalCanvas() {
+  var cvs = document.getElementById('drawCanvas');
+  if (!cvs) return;
+  cvs.getContext('2d').clearRect(0, 0, cvs.width, cvs.height);
+}
+
+/* === Rainbow Color Helper === */
+function hslToHex(h) {
+  var s = 85, l = 60;
+  var c = (1 - Math.abs(2*l/100 - 1)) * s/100;
+  var x = c * (1 - Math.abs((h/60)%2 - 1));
+  var m = l/100 - c/2;
+  var r=0,g=0,b=0;
+  if(h<60){r=c;g=x}else if(h<120){r=x;g=c}else if(h<180){g=c;b=x}
+  else if(h<240){g=x;b=c}else if(h<300){r=x;b=c}else{r=c;b=x}
+  r=Math.round((r+m)*255);g=Math.round((g+m)*255);b=Math.round((b+m)*255);
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+}
+
+/* === Zoom Helper === */
+function applyZoom(cvs, ctx, strokes) {
+  calcMapping(cvs);
+  ctx.clearRect(0, 0, cvs.width, cvs.height);
+  strokes.forEach(function(s) {
+    if (s.type === 'stroke') drawStrokeOnCanvas(ctx, s.x1, s.y1, s.x2, s.y2, s.color, s.width, s.eraser);
+    else if (s.type === 'stamp') drawStampOnCanvas(ctx, s.emoji, s.vx, s.vy, s.size);
+  });
+}
+
+/* === Canvas UI === */
+function openCanvas() {
+  if (!isSupabaseConfigured()) {
+    state.pop = 'Connect Supabase first!';
+    updateUI(); return;
+  }
+  canvasOpen = true;
+  drawTool = 'pen';
+  zoomLevel = 1.0;
+  rainbowHue = 0;
+  joinCanvasChannel();
+  doSound('scan');
+
+  var strokeHistory = [];
+
+  var overlay = document.createElement('div');
+  overlay.id = 'canvasOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+
+  /* top bar */
+  var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(255,255,255,0.03)">'
+    +'<div style="display:flex;align-items:center;gap:6px">'
+    +pawSVG(16,'#FBBF24')
+    +'<span style="color:#FBBF24;font-size:12px;font-weight:700;letter-spacing:1px">PAW CANVAS</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center">'
+    +'<div id="zoomOutBtn" style="color:#93C5FD;font-size:15px;font-weight:700;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:rgba(96,165,250,0.1);cursor:pointer">\u2212</div>'
+    +'<span id="zoomLabel" style="color:rgba(148,197,255,0.45);font-size:10px;font-weight:700;min-width:32px;text-align:center">1.0x</span>'
+    +'<div id="zoomInBtn" style="color:#93C5FD;font-size:15px;font-weight:700;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:rgba(96,165,250,0.1);cursor:pointer">+</div>'
+    +'<div style="width:1px;height:16px;background:rgba(255,255,255,0.08)"></div>'
+    +'<div id="canvasClearBtn" style="color:#F87171;font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;background:rgba(239,68,68,0.12);cursor:pointer">CLEAR</div>'
+    +'<div id="canvasCloseBtn" style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
+    +'</div></div>';
+
+  /* canvas */
+  var canvasArea = '<div id="canvasWrap" style="flex:1;position:relative;overflow:hidden">'
+    +'<canvas id="drawCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;cursor:crosshair"></canvas>'
+    +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,255,136,0.015) 3px,rgba(0,255,136,0.015) 4px);pointer-events:none"></div>'
+    +'</div>';
+
+  /* bottom toolbar */
+  var toolbar = '<div style="display:flex;align-items:center;padding:5px 10px;background:rgba(255,255,255,0.03);gap:6px;overflow-x:auto">'
+    +'<div style="display:flex;gap:3px;align-items:center;flex-shrink:0">'
+    +'<div class="tool-pick" data-tool="pen" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\u270F\uFE0F</span>Pen</div>'
+    +'<div class="tool-pick" data-tool="eraser" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\uD83E\uDDF9</span>Eraser</div>'
+    +'<div class="tool-pick" data-tool="rainbow" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\uD83C\uDF08</span>Rainbow</div>'
+    +'<div class="tool-pick" data-tool="stamp" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\uD83D\uDCCC</span>Stamp</div>'
+    +'</div>'
+    +'<div style="width:1px;height:20px;background:rgba(255,255,255,0.08);flex-shrink:0"></div>'
+    +'<div id="colorArea" style="display:flex;gap:4px;align-items:center;flex-shrink:0"></div>'
+    +'<div id="emojiArea" style="display:none;gap:4px;align-items:center;flex-shrink:0"></div>'
+    +'<div style="margin-left:auto;display:flex;gap:4px;align-items:center;flex-shrink:0">'
+    +'<div class="size-pick" data-size="3" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:6px;height:6px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="size-pick" data-size="6" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:10px;height:10px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="size-pick" data-size="12" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:14px;height:14px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'</div></div>';
+
+  overlay.innerHTML = topBar + canvasArea + toolbar;
+  document.body.appendChild(overlay);
+
+  /* populate colors */
+  var colorArea = document.getElementById('colorArea');
+  DRAW_COLORS.forEach(function(c) {
+    var el = document.createElement('div');
+    el.className = 'color-pick'; el.dataset.color = c;
+    el.style.cssText = 'width:22px;height:22px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid '+(c===drawColor?'#fff':'rgba(255,255,255,0.1)')+';box-shadow:'+(c===drawColor?'0 0 8px '+c+'77':'none')+';transition:all 0.15s;flex-shrink:0';
+    colorArea.appendChild(el);
+  });
+
+  /* populate emojis */
+  var emojiArea = document.getElementById('emojiArea');
+  STAMP_EMOJIS.forEach(function(em) {
+    var el = document.createElement('div');
+    el.className = 'emoji-pick'; el.dataset.emoji = em; el.textContent = em;
+    el.style.cssText = 'font-size:22px;cursor:pointer;padding:1px 3px;border-radius:6px;background:'+(em===selectedEmoji?'rgba(251,191,36,0.2)':'transparent')+';border:2px solid '+(em===selectedEmoji?'#FBBF24':'transparent')+';flex-shrink:0;transition:all 0.15s';
+    emojiArea.appendChild(el);
+  });
+
+  /* tool UI updater */
+  function updateToolUI() {
+    colorArea.style.display = drawTool === 'pen' ? 'flex' : 'none';
+    emojiArea.style.display = drawTool === 'stamp' ? 'flex' : 'none';
+    document.querySelectorAll('.tool-pick').forEach(function(el) {
+      var on = el.dataset.tool === drawTool;
+      el.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.04)';
+      el.style.color = on ? '#FBBF24' : 'rgba(148,197,255,0.5)';
+    });
+    var cvs = document.getElementById('drawCanvas');
+    if (cvs) cvs.style.cursor = drawTool === 'stamp' ? 'cell' : 'crosshair';
+  }
+
+  /* size canvas */
+  var cvs = document.getElementById('drawCanvas');
+  var rect = cvs.getBoundingClientRect();
+  var dpr = window.devicePixelRatio || 1;
+  cvs.width = rect.width * dpr;
+  cvs.height = rect.height * dpr;
+  var ctx = cvs.getContext('2d');
+  ctx.scale(dpr, dpr);
+  calcMapping(cvs);
+
+  /* drawing events */
+  cvs.addEventListener('pointerdown', function(e) {
+    e.preventDefault();
+    var r = cvs.getBoundingClientRect();
+    var vpt = screenToVirtual(e.clientX - r.left, e.clientY - r.top);
+    if (drawTool === 'stamp') {
+      var sz = drawWidth * 8;
+      drawStampOnCanvas(ctx, selectedEmoji, vpt.x, vpt.y, sz);
+      broadcastStamp(selectedEmoji, vpt.x, vpt.y, sz);
+      strokeHistory.push({type:'stamp', emoji:selectedEmoji, vx:vpt.x, vy:vpt.y, size:sz});
+      doSound('keyTap');
+      return;
+    }
+    isDrawing = true;
+    lastPt = vpt;
+  });
+
+  cvs.addEventListener('pointermove', function(e) {
+    if (!isDrawing || !lastPt) return;
+    e.preventDefault();
+    var r = cvs.getBoundingClientRect();
+    var pt = screenToVirtual(e.clientX - r.left, e.clientY - r.top);
+    var color = drawColor;
+    var isEraser = drawTool === 'eraser';
+    if (drawTool === 'rainbow') {
+      color = hslToHex(rainbowHue % 360);
+      rainbowHue += 5;
+    }
+    drawStrokeOnCanvas(ctx, lastPt.x, lastPt.y, pt.x, pt.y, color, drawWidth, isEraser);
+    broadcastStroke(lastPt.x, lastPt.y, pt.x, pt.y, color, drawWidth, isEraser);
+    strokeHistory.push({type:'stroke', x1:lastPt.x, y1:lastPt.y, x2:pt.x, y2:pt.y, color:color, width:drawWidth, eraser:isEraser});
+    lastPt = pt;
+  });
+  cvs.addEventListener('pointerup', function() { isDrawing = false; lastPt = null; });
+  cvs.addEventListener('pointerleave', function() { isDrawing = false; lastPt = null; });
+
+  /* wrap remote handlers to track history for zoom redraw */
+  var _origRS = drawRemoteStroke;
+  drawRemoteStroke = function(x1,y1,x2,y2,c,w,er) {
+    _origRS(x1,y1,x2,y2,c,w,er);
+    strokeHistory.push({type:'stroke',x1:x1,y1:y1,x2:x2,y2:y2,color:c,width:w,eraser:er});
+  };
+  var _origST = drawRemoteStamp;
+  drawRemoteStamp = function(em,vx,vy,sz) {
+    _origST(em,vx,vy,sz);
+    strokeHistory.push({type:'stamp',emoji:em,vx:vx,vy:vy,size:sz});
+  };
+  var _origCL = clearLocalCanvas;
+  clearLocalCanvas = function() { _origCL(); strokeHistory.length = 0; };
+
+  /* tool selection */
+  document.querySelectorAll('.tool-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      drawTool = el.dataset.tool; doSound('keyTap'); updateToolUI();
+    });
+  });
+
+  /* color selection */
+  colorArea.addEventListener('click', function(e) {
+    var t = e.target.closest('.color-pick');
+    if (!t) return;
+    drawColor = t.dataset.color; doSound('keyTap');
+    document.querySelectorAll('.color-pick').forEach(function(c) {
+      var s = c.dataset.color === drawColor;
+      c.style.border = '2px solid '+(s?'#fff':'rgba(255,255,255,0.1)');
+      c.style.boxShadow = s ? '0 0 8px '+c.dataset.color+'77' : 'none';
+    });
+  });
+
+  /* emoji selection */
+  emojiArea.addEventListener('click', function(e) {
+    var t = e.target.closest('.emoji-pick');
+    if (!t) return;
+    selectedEmoji = t.dataset.emoji; doSound('keyTap');
+    document.querySelectorAll('.emoji-pick').forEach(function(el) {
+      var s = el.dataset.emoji === selectedEmoji;
+      el.style.background = s ? 'rgba(251,191,36,0.2)' : 'transparent';
+      el.style.border = '2px solid '+(s?'#FBBF24':'transparent');
+    });
+  });
+
+  /* size selection */
+  document.querySelectorAll('.size-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      drawWidth = parseInt(el.dataset.size); doSound('keyTap');
+      document.querySelectorAll('.size-pick').forEach(function(s) {
+        s.style.background = parseInt(s.dataset.size) === drawWidth ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)';
+      });
+    });
+  });
+
+  /* zoom */
+  document.getElementById('zoomInBtn').addEventListener('click', function() {
+    if (zoomLevel >= ZOOM_MAX) return;
+    zoomLevel = Math.min(ZOOM_MAX, +(zoomLevel + ZOOM_STEP).toFixed(2));
+    document.getElementById('zoomLabel').textContent = zoomLevel.toFixed(1) + 'x';
+    applyZoom(cvs, ctx, strokeHistory); doSound('keyTap');
+  });
+  document.getElementById('zoomOutBtn').addEventListener('click', function() {
+    if (zoomLevel <= ZOOM_MIN) return;
+    zoomLevel = Math.max(ZOOM_MIN, +(zoomLevel - ZOOM_STEP).toFixed(2));
+    document.getElementById('zoomLabel').textContent = zoomLevel.toFixed(1) + 'x';
+    applyZoom(cvs, ctx, strokeHistory); doSound('keyTap');
+  });
+
+  /* clear & close */
+  document.getElementById('canvasClearBtn').addEventListener('click', function() {
+    clearLocalCanvas(); broadcastClear(); doSound('scan');
+  });
+  document.getElementById('canvasCloseBtn').addEventListener('click', function() {
+    drawRemoteStroke = _origRS;
+    drawRemoteStamp = _origST;
+    clearLocalCanvas = _origCL;
+    closeCanvas();
+  });
+
+  updateToolUI();
+}
+
+function closeCanvas() {
+  canvasOpen = false;
+  isDrawing = false;
+  lastPt = null;
+  canvasMapping = null;
+  var overlay = document.getElementById('canvasOverlay');
+  if (overlay) overlay.parentNode.removeChild(overlay);
+  doSound('blip');
+}
+
+
+/* === Camera System === */
+var cameraChannel = null;
+var cameraStream = null;
+var cameraGallery = [];
+var cameraFilter = 'none';
+var cameraFacing = 'environment';
+var cameraSticker = null;
+var cameraReviewCanvas = null;
+
+var CAMERA_FILTERS = [
+  {name:'Normal',css:'none',icon:'\u25CB'},
+  {name:'B&W',css:'grayscale(100%)',icon:'\u25C9'},
+  {name:'Sepia',css:'sepia(100%)',icon:'\uD83C\uDF3E'},
+  {name:'Invert',css:'invert(100%)',icon:'\uD83D\uDD03'},
+  {name:'Vivid',css:'saturate(300%)',icon:'\uD83C\uDF1F'},
+  {name:'Alien',css:'hue-rotate(90deg)',icon:'\uD83D\uDC7D'},
+  {name:'Purple',css:'hue-rotate(270deg)',icon:'\uD83D\uDC9C'},
+  {name:'Cool',css:'hue-rotate(180deg) saturate(150%)',icon:'\u2744\uFE0F'}
+];
+
+function joinCameraChannel() {
+  var client = getSupabaseClient();
+  if (!client) return;
+  if (cameraChannel) return;
+  cameraChannel = client.channel('puppad-camera', {
+    config: { broadcast: { self: false } }
+  });
+  cameraChannel.on('broadcast', { event: 'photo' }, function(payload) {
+    showRemotePhoto(payload.payload.dataUrl);
+  });
+  cameraChannel.subscribe(function(status) {
+    if (status === 'SUBSCRIBED') console.log('Camera channel joined');
+  });
+}
+
+function broadcastPhoto(dataUrl) {
+  if (!cameraChannel) return;
+  cameraChannel.send({
+    type: 'broadcast', event: 'photo',
+    payload: { dataUrl: dataUrl, did: deviceId }
+  });
+}
+
+function showRemotePhoto(dataUrl) {
+  var popup = document.createElement('div');
+  popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:200;border-radius:16px;overflow:hidden;box-shadow:0 0 30px rgba(236,72,153,0.4),0 0 0 2px rgba(236,72,153,0.3);animation:fadeUp 0.3s ease-out';
+  popup.innerHTML = '<div style="background:#1a1a2e;padding:6px">'
+    +'<div style="display:flex;align-items:center;gap:6px;padding:4px 8px">'
+    +pawSVG(12,'#F472B6')
+    +'<span style="color:#F472B6;font-size:10px;font-weight:700">INCOMING SNAP</span>'
+    +'</div>'
+    +'<img src="'+dataUrl+'" style="display:block;border-radius:10px;max-width:260px;max-height:200px"/>'
+    +'</div>';
+  document.body.appendChild(popup);
+  doSound('ping');
+  setTimeout(function() {
+    popup.style.transition = 'opacity 0.5s';
+    popup.style.opacity = '0';
+    setTimeout(function() { if (popup.parentNode) popup.parentNode.removeChild(popup); }, 600);
+  }, 4000);
+}
+
+function compressForBroadcast(sourceCanvas) {
+  var tmp = document.createElement('canvas');
+  var maxW = 600;
+  var ratio = sourceCanvas.height / sourceCanvas.width;
+  tmp.width = maxW;
+  tmp.height = Math.round(maxW * ratio);
+  tmp.getContext('2d').drawImage(sourceCanvas, 0, 0, tmp.width, tmp.height);
+  return tmp.toDataURL('image/jpeg', 0.7);
+}
+
+function startCameraStream(video, facing) {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(function(t) { t.stop(); });
+  }
+  /* cascading fallback: try max res, then medium, then basic, then bare minimum */
+  var attempts = [
+    { video: { facingMode: facing, width: { ideal: 4032 }, height: { ideal: 3024 } }, audio: false },
+    { video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+    { video: { facingMode: facing }, audio: false },
+    { video: true, audio: false }
+  ];
+  var firstError = null;
+  function tryNext(i) {
+    if (i >= attempts.length) return Promise.reject(firstError || new Error('No camera available'));
+    return navigator.mediaDevices.getUserMedia(attempts[i]).then(function(stream) {
+      cameraStream = stream;
+      video.srcObject = stream;
+      return video.play();
+    }).catch(function(e) {
+      if (!firstError) firstError = e;
+      /* only retry on constraint errors — permission/hardware errors won't improve */
+      if (e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError') {
+        return tryNext(i + 1);
+      }
+      return Promise.reject(e);
+    });
+  }
+  return tryNext(0);
+}
+
+function openCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    state.pop = 'Camera not supported!';
+    updateUI(); return;
+  }
+
+  cameraFilter = 'none';
+  cameraFacing = 'environment';
+  cameraSticker = null;
+  joinCameraChannel();
+  doSound('blip');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'cameraOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+
+  /* top bar */
+  var filterBtns = '';
+  CAMERA_FILTERS.forEach(function(f, i) {
+    filterBtns += '<div class="filter-pick" data-idx="'+i+'" style="display:flex;flex-direction:column;align-items:center;gap:1px;padding:2px 6px;border-radius:6px;cursor:pointer;background:'+(f.css===cameraFilter?'rgba(236,72,153,0.2)':'rgba(255,255,255,0.04)')+';transition:all 0.15s">'
+      +'<span style="font-size:14px">'+f.icon+'</span>'
+      +'<span style="font-size:8px;color:'+(f.css===cameraFilter?'#F472B6':'rgba(148,197,255,0.4)')+';font-weight:700">'+f.name+'</span>'
+      +'</div>';
+  });
+
+  var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 10px;background:rgba(255,255,255,0.03)">'
+    +'<div style="display:flex;align-items:center;gap:6px">'
+    +pawSVG(14,'#F472B6')
+    +'<span style="color:#F472B6;font-size:11px;font-weight:700;letter-spacing:1px">PAW CAM</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:3px;align-items:center;overflow-x:auto;flex:1;margin:0 8px">'+filterBtns+'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+    +'<div id="camFlipBtn" style="font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px;background:rgba(255,255,255,0.06)">\uD83D\uDD04</div>'
+    +'<div id="camCloseBtn" style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
+    +'</div></div>';
+
+  /* viewfinder area */
+  var viewfinder = '<div id="camViewArea" style="flex:1;position:relative;overflow:hidden;background:#000">'
+    +'<video id="camVideo" autoplay playsinline muted style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover"></video>'
+    +'<canvas id="camReviewCanvas" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;touch-action:none"></canvas>'
+    +'<div id="camFlash" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;opacity:0;pointer-events:none;transition:opacity 0.15s;z-index:2"></div>'
+    +'<div id="camStickerLayer" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;z-index:3;touch-action:none"></div>'
+    +'</div>';
+
+  /* bottom bar: gallery + shutter */
+  var bottomBar = '<div style="display:flex;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.03);gap:8px">'
+    +'<div id="camGalleryStrip" style="display:flex;gap:6px;align-items:center;flex:1;overflow-x:auto;min-height:68px"></div>'
+    +'<div id="camStickerBar" style="display:none;gap:4px;align-items:center;flex:1;overflow-x:auto"></div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+    +'<div id="camRetakeBtn" style="display:none;color:#93C5FD;font-size:10px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(96,165,250,0.1);cursor:pointer">RETAKE</div>'
+    +'<div id="camSaveBtn" style="display:none;color:#34D399;font-size:10px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(52,211,153,0.1);cursor:pointer">DONE</div>'
+    +'<div id="camShutterBtn" style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle,#F472B6,#EC4899);box-shadow:0 0 0 3px rgba(236,72,153,0.3),0 4px 12px rgba(0,0,0,0.5);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+    +'<div style="width:38px;height:38px;border-radius:50%;border:2px solid rgba(255,255,255,0.4)"></div>'
+    +'</div>'
+    +'</div></div>';
+
+  overlay.innerHTML = topBar + viewfinder + bottomBar;
+  document.body.appendChild(overlay);
+
+  /* populate sticker bar */
+  var stickerBar = document.getElementById('camStickerBar');
+  STAMP_EMOJIS.forEach(function(em) {
+    var el = document.createElement('div');
+    el.className = 'cam-sticker-pick';
+    el.dataset.emoji = em;
+    el.textContent = em;
+    el.style.cssText = 'font-size:24px;cursor:pointer;padding:2px 4px;border-radius:6px;background:transparent;border:2px solid transparent;flex-shrink:0;transition:all 0.15s';
+    stickerBar.appendChild(el);
+  });
+
+  var video = document.getElementById('camVideo');
+  var reviewCanvas = document.getElementById('camReviewCanvas');
+  var reviewMode = false;
+  var reviewStickers = [];
+
+  /* start camera */
+  startCameraStream(video, cameraFacing).catch(function(e) {
+    console.log('Camera error:', e);
+    /* show diagnostic error on screen */
+    var viewArea = document.getElementById('camViewArea');
+    if (viewArea) {
+      viewArea.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;padding:20px">'
+        +'<div style="font-size:36px">\uD83D\uDCF7</div>'
+        +'<div style="color:#F87171;font-size:14px;font-weight:700">Camera Failed</div>'
+        +'<div style="color:rgba(148,197,255,0.6);font-size:11px;text-align:center;max-width:280px;word-break:break-word">'+e.name+': '+e.message+'</div>'
+        +'<div style="color:rgba(148,197,255,0.35);font-size:10px;text-align:center;max-width:280px">Check: Android Settings → Apps → Chrome → Permissions → Camera → Allow. Then tap Retry.</div>'
+        +'<div id="camRetryBtn2" style="color:#34D399;font-size:12px;font-weight:700;padding:8px 24px;border-radius:10px;background:rgba(52,211,153,0.15);cursor:pointer;margin-top:8px">RETRY</div>'
+        +'</div>';
+      document.getElementById('camRetryBtn2').addEventListener('click', function() {
+        startCameraStream(video, cameraFacing).then(function() {
+          viewArea.innerHTML = '';
+          viewArea.appendChild(video);
+          video.style.display = 'block';
+        }).catch(function(e2) {
+          state.pop = e2.name + ': ' + e2.message;
+          updateUI();
+        });
+      });
+    }
+  });
+
+  /* filter selection */
+  document.querySelectorAll('.filter-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var idx = parseInt(el.dataset.idx);
+      cameraFilter = CAMERA_FILTERS[idx].css;
+      video.style.filter = cameraFilter;
+      doSound('keyTap');
+      document.querySelectorAll('.filter-pick').forEach(function(f, i) {
+        var on = parseInt(f.dataset.idx) === idx;
+        f.style.background = on ? 'rgba(236,72,153,0.2)' : 'rgba(255,255,255,0.04)';
+        f.querySelector('span:last-child').style.color = on ? '#F472B6' : 'rgba(148,197,255,0.4)';
+      });
+    });
+  });
+
+  /* flip camera */
+  document.getElementById('camFlipBtn').addEventListener('click', function() {
+    cameraFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+    startCameraStream(video, cameraFacing).catch(function(){});
+    doSound('keyTap');
+  });
+
+  /* shutter */
+  document.getElementById('camShutterBtn').addEventListener('click', function() {
+    if (reviewMode) return;
+    /* flash */
+    var flash = document.getElementById('camFlash');
+    flash.style.opacity = '0.8';
+    setTimeout(function() { flash.style.opacity = '0'; }, 150);
+    doSound('blip');
+
+    /* capture frame with filter */
+    var w = video.videoWidth, h = video.videoHeight;
+    reviewCanvas.width = w;
+    reviewCanvas.height = h;
+    var ctx = reviewCanvas.getContext('2d');
+    ctx.filter = cameraFilter;
+    if (cameraFacing === 'user') {
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0, w, h);
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.filter = 'none';
+
+    /* enter review mode */
+    reviewMode = true;
+    reviewStickers = [];
+    video.style.display = 'none';
+    reviewCanvas.style.display = 'block';
+    document.getElementById('camShutterBtn').style.display = 'none';
+    document.getElementById('camRetakeBtn').style.display = 'block';
+    document.getElementById('camSaveBtn').style.display = 'block';
+    document.getElementById('camGalleryStrip').style.display = 'none';
+    document.getElementById('camStickerBar').style.display = 'flex';
+    document.getElementById('camStickerLayer').style.display = 'block';
+  });
+
+  /* sticker placement in review */
+  document.getElementById('camStickerLayer').addEventListener('click', function(e) {
+    if (!cameraSticker) return;
+    var rect = this.getBoundingClientRect();
+    var xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    var yPct = ((e.clientY - rect.top) / rect.height) * 100;
+    var el = document.createElement('div');
+    el.textContent = cameraSticker;
+    el.style.cssText = 'position:absolute;left:'+xPct+'%;top:'+yPct+'%;transform:translate(-50%,-50%);font-size:36px;pointer-events:none';
+    this.appendChild(el);
+    reviewStickers.push({emoji:cameraSticker, xPct:xPct, yPct:yPct});
+    doSound('keyTap');
+  });
+
+  /* sticker selection */
+  stickerBar.addEventListener('click', function(e) {
+    var t = e.target.closest('.cam-sticker-pick');
+    if (!t) return;
+    var em = t.dataset.emoji;
+    cameraSticker = (cameraSticker === em) ? null : em;
+    doSound('keyTap');
+    document.querySelectorAll('.cam-sticker-pick').forEach(function(el) {
+      var on = el.dataset.emoji === cameraSticker;
+      el.style.background = on ? 'rgba(251,191,36,0.2)' : 'transparent';
+      el.style.border = '2px solid '+(on?'#FBBF24':'transparent');
+    });
+  });
+
+  /* retake */
+  document.getElementById('camRetakeBtn').addEventListener('click', function() {
+    exitReview();
+    doSound('keyTap');
+  });
+
+  /* save to gallery + broadcast */
+  document.getElementById('camSaveBtn').addEventListener('click', function() {
+    /* burn stickers onto canvas */
+    var ctx = reviewCanvas.getContext('2d');
+    var w = reviewCanvas.width, h = reviewCanvas.height;
+    reviewStickers.forEach(function(s) {
+      var px = s.xPct / 100 * w;
+      var py = s.yPct / 100 * h;
+      var sz = Math.round(w * 0.06);
+      ctx.font = sz + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(s.emoji, px, py);
+    });
+
+    /* save to gallery */
+    var thumbCanvas = document.createElement('canvas');
+    var thumbW = 800;
+    var ratio = h / w;
+    thumbCanvas.width = thumbW;
+    thumbCanvas.height = Math.round(thumbW * ratio);
+    thumbCanvas.getContext('2d').drawImage(reviewCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    var thumbUrl = thumbCanvas.toDataURL('image/jpeg', 0.85);
+    cameraGallery.push(thumbUrl);
+    renderGallery();
+
+    /* broadcast compressed */
+    var compressed = compressForBroadcast(reviewCanvas);
+    broadcastPhoto(compressed);
+
+    doSound('ping');
+    exitReview();
+  });
+
+  function exitReview() {
+    reviewMode = false;
+    cameraSticker = null;
+    video.style.display = 'block';
+    reviewCanvas.style.display = 'none';
+    document.getElementById('camShutterBtn').style.display = 'flex';
+    document.getElementById('camRetakeBtn').style.display = 'none';
+    document.getElementById('camSaveBtn').style.display = 'none';
+    document.getElementById('camGalleryStrip').style.display = 'flex';
+    document.getElementById('camStickerBar').style.display = 'none';
+    document.getElementById('camStickerLayer').style.display = 'none';
+    document.getElementById('camStickerLayer').innerHTML = '';
+    document.querySelectorAll('.cam-sticker-pick').forEach(function(el) {
+      el.style.background = 'transparent';
+      el.style.border = '2px solid transparent';
+    });
+  }
+
+  function renderGallery() {
+    var strip = document.getElementById('camGalleryStrip');
+    if (!strip) return;
+    strip.innerHTML = '';
+    if (cameraGallery.length === 0) {
+      strip.innerHTML = '<span style="color:rgba(148,197,255,0.25);font-size:10px;font-weight:700">No snaps yet</span>';
+      return;
+    }
+    cameraGallery.forEach(function(url, i) {
+      var wrap = document.createElement('div');
+      wrap.dataset.galleryIdx = '' + i;
+      wrap.style.cssText = 'width:64px;height:64px;border-radius:8px;overflow:hidden;border:2px solid rgba(236,72,153,0.2);flex-shrink:0;background:#111';
+      wrap.innerHTML = '<img src="'+url+'" style="width:100%;height:100%;object-fit:cover;display:block"/>';
+      strip.appendChild(wrap);
+    });
+    strip.scrollLeft = strip.scrollWidth;
+  }
+
+  /* gallery tap — event delegation on strip, catches all child taps */
+  (function() {
+    var strip = document.getElementById('camGalleryStrip');
+    strip.addEventListener('click', function(e) {
+      var target = e.target.closest('[data-gallery-idx]');
+      if (!target) return;
+      var idx = parseInt(target.dataset.galleryIdx);
+      if (idx >= 0 && idx < cameraGallery.length) {
+        doSound('ping');
+        showGalleryFull(cameraGallery[idx]);
+      }
+    });
+  })();
+
+  function showGalleryFull(url) {
+    var currentIdx = cameraGallery.indexOf(url);
+    if (currentIdx < 0) currentIdx = 0;
+
+    var full = document.createElement('div');
+    full.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Trebuchet MS,sans-serif';
+
+    var touchStartX = 0, touchDeltaX = 0;
+
+    function renderFullImage() {
+      var total = cameraGallery.length;
+      full.innerHTML = ''
+        +'<div style="position:absolute;top:8px;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:6px;z-index:5">'
+        +'<span style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700">'+(currentIdx+1)+' / '+total+'</span>'
+        +'</div>'
+        +'<img class="gImg" src="'+cameraGallery[currentIdx]+'" style="max-width:95%;max-height:85%;border-radius:12px;box-shadow:0 0 30px rgba(236,72,153,0.3);user-select:none;-webkit-user-drag:none;transition:transform 0.15s ease-out"/>'
+        +'<div style="position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:4px">'
+        +cameraGallery.map(function(u, i) {
+          return '<div style="width:8px;height:8px;border-radius:50%;background:'+(i===currentIdx?'#F472B6':'rgba(148,197,255,0.2)')+'"></div>';
+        }).join('')
+        +'</div>'
+        +(currentIdx > 0 ? '<div class="gPrev" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:12px;z-index:5">\u276E</div>' : '')
+        +(currentIdx < total-1 ? '<div class="gNext" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:12px;z-index:5">\u276F</div>' : '')
+        +'<div class="gClose" style="position:absolute;top:6px;right:10px;color:rgba(148,197,255,0.5);font-size:12px;font-weight:700;padding:6px 14px;border-radius:8px;background:rgba(255,255,255,0.1);cursor:pointer;z-index:5">CLOSE</div>';
+
+      full.querySelector('.gClose').addEventListener('click', function() {
+        if (full.parentNode) full.parentNode.removeChild(full);
+      });
+      var prev = full.querySelector('.gPrev');
+      if (prev) prev.addEventListener('click', function() { currentIdx--; renderFullImage(); });
+      var next = full.querySelector('.gNext');
+      if (next) next.addEventListener('click', function() { currentIdx++; renderFullImage(); });
+    }
+
+    /* swipe via touch events */
+    full.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+    }, {passive: true});
+    full.addEventListener('touchmove', function(e) {
+      if (e.touches.length === 1) {
+        touchDeltaX = e.touches[0].clientX - touchStartX;
+        var img = full.querySelector('.gImg');
+        if (img) img.style.transform = 'translateX('+touchDeltaX+'px)';
+      }
+    }, {passive: true});
+    full.addEventListener('touchend', function() {
+      var threshold = 60;
+      if (touchDeltaX > threshold && currentIdx > 0) {
+        currentIdx--;
+        renderFullImage();
+      } else if (touchDeltaX < -threshold && currentIdx < cameraGallery.length - 1) {
+        currentIdx++;
+        renderFullImage();
+      } else {
+        var img = full.querySelector('.gImg');
+        if (img) img.style.transform = 'translateX(0)';
+      }
+      touchDeltaX = 0;
+    });
+
+    document.body.appendChild(full);
+    renderFullImage();
+  }
+
+  renderGallery();
+
+  /* close */
+  document.getElementById('camCloseBtn').addEventListener('click', function() {
+    closeCamera();
+  });
+}
+
+function closeCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(function(t) { t.stop(); });
+    cameraStream = null;
+  }
+  cameraGallery = [];
+  var overlay = document.getElementById('cameraOverlay');
+  if (overlay) overlay.parentNode.removeChild(overlay);
+  doSound('blip');
+}
+
+/* === Treasure Map System === */
+var mapChannel = null;
+var treasureMap = null;
+var mapOverlayCanvas = null;
+var mapIsDrawMode = false;
+var mapStrokes = [];
+var mapStamps = [];
+var mapDrawTool = 'pen';
+var mapDrawColor = '#FF4444';
+var mapDrawWidth = 4;
+var mapRainbowHue = 0;
+var mapSelectedEmoji = '\uD83D\uDC3E';
+var mapLocationMarker = null;
+var mapWatchId = null;
+var mapIsDrawing = false;
+var mapLastPt = null;
+var mapCurrentStroke = null;
+
+var MAP_COLORS = ['#FF4444','#FBBF24','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
+
+function joinMapChannel() {
+  var client = getSupabaseClient();
+  if (!client) return;
+  if (mapChannel) return;
+  mapChannel = client.channel('puppad-treasuremap', {
+    config: { broadcast: { self: false } }
+  });
+  mapChannel.on('broadcast', { event: 'map-stroke' }, function(payload) {
+    var d = payload.payload;
+    mapStrokes.push({type:'stroke', points:d.points, color:d.color, width:d.width, eraser:d.eraser});
+    redrawMapCanvas();
+  });
+  mapChannel.on('broadcast', { event: 'map-stamp' }, function(payload) {
+    var d = payload.payload;
+    mapStamps.push({lat:d.lat, lng:d.lng, emoji:d.emoji, size:d.size});
+    redrawMapCanvas();
+  });
+  mapChannel.on('broadcast', { event: 'map-clear' }, function() {
+    mapStrokes = []; mapStamps = [];
+    redrawMapCanvas();
+  });
+  mapChannel.subscribe(function(status) {
+    if (status === 'SUBSCRIBED') console.log('Map channel joined');
+  });
+}
+
+function broadcastMapStroke(stroke) {
+  if (!mapChannel) return;
+  mapChannel.send({
+    type:'broadcast', event:'map-stroke',
+    payload: { points:stroke.points, color:stroke.color, width:stroke.width, eraser:stroke.eraser, did:deviceId }
+  });
+}
+
+function broadcastMapStamp(stamp) {
+  if (!mapChannel) return;
+  mapChannel.send({
+    type:'broadcast', event:'map-stamp',
+    payload: { lat:stamp.lat, lng:stamp.lng, emoji:stamp.emoji, size:stamp.size, did:deviceId }
+  });
+}
+
+function broadcastMapClear() {
+  if (!mapChannel) return;
+  mapChannel.send({ type:'broadcast', event:'map-clear', payload:{did:deviceId} });
+}
+
+/* convert lat/lng to canvas pixel via Leaflet */
+function latLngToPixel(lat, lng) {
+  if (!treasureMap) return {x:0,y:0};
+  var pt = treasureMap.latLngToContainerPoint(L.latLng(lat, lng));
+  return {x:pt.x, y:pt.y};
+}
+
+function pixelToLatLng(x, y) {
+  if (!treasureMap) return {lat:0,lng:0};
+  var ll = treasureMap.containerPointToLatLng(L.point(x, y));
+  return {lat:ll.lat, lng:ll.lng};
+}
+
+function redrawMapCanvas() {
+  if (!mapOverlayCanvas || !treasureMap) return;
+  var ctx = mapOverlayCanvas.getContext('2d');
+  var w = mapOverlayCanvas.width, h = mapOverlayCanvas.height;
+  var dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, w, h);
+
+  /* draw strokes */
+  mapStrokes.forEach(function(s) {
+    if (!s.points || s.points.length < 2) return;
+    ctx.save();
+    if (s.eraser) {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(255,255,255,1)';
+      ctx.lineWidth = s.width * 3 * dpr;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.width * dpr;
+    }
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    var p0 = latLngToPixel(s.points[0].lat, s.points[0].lng);
+    ctx.moveTo(p0.x * dpr, p0.y * dpr);
+    for (var i = 1; i < s.points.length; i++) {
+      var p = latLngToPixel(s.points[i].lat, s.points[i].lng);
+      ctx.lineTo(p.x * dpr, p.y * dpr);
+    }
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  /* draw stamps */
+  mapStamps.forEach(function(s) {
+    var p = latLngToPixel(s.lat, s.lng);
+    var sz = s.size * dpr;
+    ctx.font = sz + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s.emoji, p.x * dpr, p.y * dpr);
+  });
+}
+
+function resizeMapCanvas() {
+  if (!mapOverlayCanvas) return;
+  var container = mapOverlayCanvas.parentElement;
+  if (!container) return;
+  var rect = container.getBoundingClientRect();
+  var dpr = window.devicePixelRatio || 1;
+  mapOverlayCanvas.width = rect.width * dpr;
+  mapOverlayCanvas.height = rect.height * dpr;
+  mapOverlayCanvas.style.width = rect.width + 'px';
+  mapOverlayCanvas.style.height = rect.height + 'px';
+  redrawMapCanvas();
+}
+
+function setMapDrawMode(enabled) {
+  mapIsDrawMode = enabled;
+  if (!treasureMap) return;
+  if (enabled) {
+    treasureMap.dragging.disable();
+    treasureMap.touchZoom.disable();
+    treasureMap.doubleClickZoom.disable();
+    treasureMap.scrollWheelZoom.disable();
+    if (mapOverlayCanvas) mapOverlayCanvas.style.pointerEvents = 'auto';
+  } else {
+    treasureMap.dragging.enable();
+    treasureMap.touchZoom.enable();
+    treasureMap.doubleClickZoom.enable();
+    treasureMap.scrollWheelZoom.enable();
+    if (mapOverlayCanvas) mapOverlayCanvas.style.pointerEvents = 'none';
+  }
+  /* update mode button */
+  var modeBtn = document.getElementById('mapModeBtn');
+  if (modeBtn) {
+    modeBtn.textContent = enabled ? '\uD83D\uDD12 Draw' : '\uD83D\uDD13 Explore';
+    modeBtn.style.background = enabled ? 'rgba(251,191,36,0.2)' : 'rgba(96,165,250,0.1)';
+    modeBtn.style.color = enabled ? '#FBBF24' : '#93C5FD';
+  }
+  var toolStrip = document.getElementById('mapToolStrip');
+  if (toolStrip) toolStrip.style.display = enabled ? 'flex' : 'none';
+}
+
+function openTreasureMap() {
+  if (!navigator.geolocation) {
+    state.pop = 'Location not supported!';
+    updateUI(); return;
+  }
+
+  mapStrokes = [];
+  mapStamps = [];
+  mapDrawTool = 'pen';
+  mapDrawColor = '#FF4444';
+  mapDrawWidth = 4;
+  mapRainbowHue = 0;
+  mapIsDrawMode = false;
+  joinMapChannel();
+  doSound('chime');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'mapOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+
+  /* top bar */
+  var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 10px;background:rgba(255,255,255,0.03);z-index:10">'
+    +'<div style="display:flex;align-items:center;gap:6px">'
+    +pawSVG(14,'#34D399')
+    +'<span style="color:#34D399;font-size:11px;font-weight:700;letter-spacing:1px">TREASURE MAP</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:5px;align-items:center">'
+    +'<div id="mapCenterBtn" style="font-size:12px;padding:3px 8px;border-radius:6px;background:rgba(52,211,153,0.1);color:#34D399;cursor:pointer;font-weight:700">\uD83D\uDCCD Center</div>'
+    +'<div id="mapModeBtn" style="font-size:11px;padding:3px 8px;border-radius:6px;background:rgba(96,165,250,0.1);color:#93C5FD;cursor:pointer;font-weight:700">\uD83D\uDD13 Explore</div>'
+    +'<div id="mapClearBtn" style="color:#F87171;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:rgba(239,68,68,0.1);cursor:pointer">CLEAR</div>'
+    +'<div id="mapCloseBtn" style="color:rgba(148,197,255,0.5);font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
+    +'</div></div>';
+
+  /* map container */
+  var mapArea = '<div style="flex:1;position:relative">'
+    +'<div id="mapContainer" style="position:absolute;top:0;left:0;right:0;bottom:0;z-index:1"></div>'
+    +'<canvas id="mapDrawCanvas" style="position:absolute;top:0;left:0;right:0;bottom:0;z-index:2;pointer-events:none;touch-action:none;cursor:crosshair"></canvas>'
+    +'</div>';
+
+  /* tool strip (shown in draw mode) */
+  var toolBtns = '';
+  ['pen','eraser','rainbow','stamp'].forEach(function(t) {
+    var icons = {pen:'\u270F\uFE0F',eraser:'\uD83E\uDDF9',rainbow:'\uD83C\uDF08',stamp:'\uD83D\uDCCC'};
+    var names = {pen:'Pen',eraser:'Eraser',rainbow:'Rainbow',stamp:'Stamp'};
+    toolBtns += '<div class="map-tool-pick" data-tool="'+t+'" style="display:flex;align-items:center;gap:2px;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:10px;font-weight:700"><span style="font-size:13px">'+icons[t]+'</span>'+names[t]+'</div>';
+  });
+
+  var colorBtns = '';
+  MAP_COLORS.forEach(function(c) {
+    colorBtns += '<div class="map-color-pick" data-color="'+c+'" style="width:20px;height:20px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid '+(c===mapDrawColor?'#fff':'rgba(255,255,255,0.1)')+';flex-shrink:0"></div>';
+  });
+
+  var emojiBtns = '';
+  STAMP_EMOJIS.forEach(function(em) {
+    emojiBtns += '<div class="map-emoji-pick" data-emoji="'+em+'" style="font-size:20px;cursor:pointer;padding:1px 2px;border-radius:4px;flex-shrink:0">'+em+'</div>';
+  });
+
+  var toolStrip = '<div id="mapToolStrip" style="display:none;align-items:center;padding:4px 10px;background:rgba(255,255,255,0.03);gap:5px;overflow-x:auto;z-index:10">'
+    +'<div style="display:flex;gap:3px;align-items:center;flex-shrink:0">'+toolBtns+'</div>'
+    +'<div style="width:1px;height:18px;background:rgba(255,255,255,0.08);flex-shrink:0"></div>'
+    +'<div id="mapColorArea" style="display:flex;gap:3px;align-items:center;flex-shrink:0">'+colorBtns+'</div>'
+    +'<div id="mapEmojiArea" style="display:none;gap:3px;align-items:center;flex-shrink:0">'+emojiBtns+'</div>'
+    +'<div style="margin-left:auto;display:flex;gap:3px;align-items:center;flex-shrink:0">'
+    +'<div class="map-size-pick" data-size="3" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:5px;height:5px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="map-size-pick" data-size="6" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:9px;height:9px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'<div class="map-size-pick" data-size="12" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer"><div style="width:13px;height:13px;border-radius:50%;background:#CBD5E1"></div></div>'
+    +'</div></div>';
+
+  overlay.innerHTML = topBar + mapArea + toolStrip;
+  document.body.appendChild(overlay);
+
+  /* init canvas */
+  mapOverlayCanvas = document.getElementById('mapDrawCanvas');
+  resizeMapCanvas();
+
+  /* init Leaflet map */
+  treasureMap = L.map('mapContainer', {
+    zoomControl: false,
+    attributionControl: false
+  }).setView([35.82, -78.32], 15);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19
+  }).addTo(treasureMap);
+
+  /* paw icon for location marker */
+  var pawIcon = L.divIcon({
+    html: pawSVG(28, '#34D399'),
+    className: '',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+
+  /* get location */
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    var lat = pos.coords.latitude, lng = pos.coords.longitude;
+    treasureMap.setView([lat, lng], 16);
+    mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);
+  }, function() {
+    /* fallback: use default position */
+  }, {enableHighAccuracy: true});
+
+  /* watch location */
+  mapWatchId = navigator.geolocation.watchPosition(function(pos) {
+    var lat = pos.coords.latitude, lng = pos.coords.longitude;
+    if (mapLocationMarker) mapLocationMarker.setLatLng([lat, lng]);
+    else mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);
+  }, function(){}, {enableHighAccuracy: true});
+
+  /* redraw canvas on map move/zoom */
+  treasureMap.on('moveend zoomend', function() {
+    redrawMapCanvas();
+  });
+
+  /* drawing events on canvas */
+  mapOverlayCanvas.addEventListener('pointerdown', function(e) {
+    if (!mapIsDrawMode) return;
+    e.preventDefault();
+    var rect = mapOverlayCanvas.getBoundingClientRect();
+    var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    var ll = pixelToLatLng(sx, sy);
+
+    if (mapDrawTool === 'stamp') {
+      var stamp = {lat:ll.lat, lng:ll.lng, emoji:mapSelectedEmoji, size:mapDrawWidth * 6};
+      mapStamps.push(stamp);
+      broadcastMapStamp(stamp);
+      redrawMapCanvas();
+      doSound('keyTap');
+      return;
+    }
+
+    mapIsDrawing = true;
+    var color = mapDrawColor;
+    if (mapDrawTool === 'rainbow') {
+      color = hslToHex(mapRainbowHue % 360);
+    }
+    mapCurrentStroke = {
+      type:'stroke',
+      points:[{lat:ll.lat, lng:ll.lng}],
+      color: color,
+      width: mapDrawWidth,
+      eraser: mapDrawTool === 'eraser'
+    };
+    mapLastPt = ll;
+  });
+
+  mapOverlayCanvas.addEventListener('pointermove', function(e) {
+    if (!mapIsDrawing || !mapCurrentStroke) return;
+    e.preventDefault();
+    var rect = mapOverlayCanvas.getBoundingClientRect();
+    var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    var ll = pixelToLatLng(sx, sy);
+
+    if (mapDrawTool === 'rainbow') {
+      mapCurrentStroke.color = hslToHex(mapRainbowHue % 360);
+      mapRainbowHue += 5;
+      /* for rainbow, push each segment as separate stroke for color variation */
+      var seg = {type:'stroke', points:[{lat:mapLastPt.lat,lng:mapLastPt.lng},{lat:ll.lat,lng:ll.lng}], color:mapCurrentStroke.color, width:mapDrawWidth, eraser:false};
+      mapStrokes.push(seg);
+      broadcastMapStroke(seg);
+    } else {
+      mapCurrentStroke.points.push({lat:ll.lat, lng:ll.lng});
+    }
+    mapLastPt = ll;
+    redrawMapCanvas();
+  });
+
+  mapOverlayCanvas.addEventListener('pointerup', function() {
+    if (mapCurrentStroke && mapDrawTool !== 'rainbow') {
+      mapStrokes.push(mapCurrentStroke);
+      broadcastMapStroke(mapCurrentStroke);
+    }
+    mapIsDrawing = false;
+    mapCurrentStroke = null;
+    mapLastPt = null;
+  });
+
+  mapOverlayCanvas.addEventListener('pointerleave', function() {
+    if (mapCurrentStroke && mapDrawTool !== 'rainbow') {
+      mapStrokes.push(mapCurrentStroke);
+      broadcastMapStroke(mapCurrentStroke);
+    }
+    mapIsDrawing = false;
+    mapCurrentStroke = null;
+    mapLastPt = null;
+  });
+
+  /* update tool strip UI */
+  function updateMapToolUI() {
+    document.getElementById('mapColorArea').style.display = mapDrawTool === 'pen' ? 'flex' : 'none';
+    document.getElementById('mapEmojiArea').style.display = mapDrawTool === 'stamp' ? 'flex' : 'none';
+    document.querySelectorAll('.map-tool-pick').forEach(function(el) {
+      var on = el.dataset.tool === mapDrawTool;
+      el.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.04)';
+      el.style.color = on ? '#FBBF24' : 'rgba(148,197,255,0.5)';
+    });
+    document.querySelectorAll('.map-size-pick').forEach(function(el) {
+      el.style.background = parseInt(el.dataset.size) === mapDrawWidth ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)';
+    });
+  }
+  updateMapToolUI();
+
+  /* tool events */
+  document.querySelectorAll('.map-tool-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapDrawTool = el.dataset.tool; doSound('keyTap'); updateMapToolUI();
+    });
+  });
+
+  document.querySelectorAll('.map-color-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapDrawColor = el.dataset.color; doSound('keyTap');
+      document.querySelectorAll('.map-color-pick').forEach(function(c) {
+        var on = c.dataset.color === mapDrawColor;
+        c.style.border = '2px solid '+(on?'#fff':'rgba(255,255,255,0.1)');
+      });
+    });
+  });
+
+  document.querySelectorAll('.map-emoji-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapSelectedEmoji = el.dataset.emoji; doSound('keyTap');
+      document.querySelectorAll('.map-emoji-pick').forEach(function(e) {
+        var on = e.dataset.emoji === mapSelectedEmoji;
+        e.style.background = on ? 'rgba(251,191,36,0.2)' : 'transparent';
+      });
+    });
+  });
+
+  document.querySelectorAll('.map-size-pick').forEach(function(el) {
+    el.addEventListener('click', function() {
+      mapDrawWidth = parseInt(el.dataset.size); doSound('keyTap'); updateMapToolUI();
+    });
+  });
+
+  /* mode toggle */
+  document.getElementById('mapModeBtn').addEventListener('click', function() {
+    setMapDrawMode(!mapIsDrawMode);
+    doSound('keyTap');
+  });
+
+  /* center on location */
+  document.getElementById('mapCenterBtn').addEventListener('click', function() {
+    if (mapLocationMarker) {
+      treasureMap.setView(mapLocationMarker.getLatLng(), 16);
+    }
+    doSound('chime');
+  });
+
+  /* clear */
+  document.getElementById('mapClearBtn').addEventListener('click', function() {
+    mapStrokes = []; mapStamps = [];
+    redrawMapCanvas();
+    broadcastMapClear();
+    doSound('scan');
+  });
+
+  /* close */
+  document.getElementById('mapCloseBtn').addEventListener('click', function() {
+    closeTreasureMap();
+  });
+}
+
+function closeTreasureMap() {
+  if (mapWatchId !== null) {
+    navigator.geolocation.clearWatch(mapWatchId);
+    mapWatchId = null;
+  }
+  if (treasureMap) {
+    treasureMap.remove();
+    treasureMap = null;
+  }
+  mapOverlayCanvas = null;
+  mapLocationMarker = null;
+  mapStrokes = [];
+  mapStamps = [];
+  var overlay = document.getElementById('mapOverlay');
+  if (overlay) overlay.parentNode.removeChild(overlay);
+  doSound('blip');
+}
+
+/* === Sweep Lines === */
+function buildSweepLines() {
+  var h = '';
+  for (var i = 0; i < 50; i++) {
+    var angle = -(i + 1) * 1.5;
+    var opacity = (0.3 * Math.pow(1 - (i / 50), 1.8)).toFixed(4);
+    h += '<div style="position:absolute;top:50%;left:50%;width:70%;height:6px;margin-top:-3px;transform-origin:left center;transform:rotate('+angle+'deg);background:var(--sc);opacity:'+opacity+'"></div>';
+  }
+  return h;
+}
+
+/* === Button HTML === */
+function btnHTML(btn) {
+  var isOn = state.pid === btn.id;
+  return '<div class="pad-btn" data-id="'+btn.id+'" style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 8px 8px;border-radius:14px;cursor:pointer;background:'+(isOn?'rgba(255,255,255,0.08)':'rgba(255,255,255,0.03)')+';box-shadow:'+(isOn?'0 0 12px '+btn.glow+'44,inset 0 0 8px '+btn.glow+'22':'inset 0 1px 0 rgba(255,255,255,0.05),0 2px 4px rgba(0,0,0,0.25)')+';position:relative;overflow:hidden;min-width:100px;transition:all 0.15s">'
+    +'<div style="position:absolute;bottom:-4px;right:-5px;opacity:'+(isOn?0.12:0.03)+';transition:opacity 0.3s;pointer-events:none">'+pawSVG(20,btn.glow)+'</div>'
+    +'<div style="width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;background:linear-gradient(145deg,'+btn.color+','+btn.color+'bb);box-shadow:'+(isOn?'0 0 16px '+btn.glow+'77,0 3px 8px '+btn.color+'55':'0 3px 8px '+btn.color+'44,inset 0 1px 0 rgba(255,255,255,0.2)')+';transition:box-shadow 0.2s">'+btn.emoji+'</div>'
+    +'<span style="color:'+(isOn?btn.glow:'rgba(178,210,255,0.6)')+';font-size:10px;font-weight:700;letter-spacing:0.3px;transition:color 0.2s">'+btn.label+'</span>'
+    +'</div>';
+}
+
+/* === Main Render === */
+function render() {
+  var gc = state.active ? state.active.glow : '#00ff88';
+  var bc = state.active ? state.active.bg : '#0a1628';
+  var blipsHTML = '';
+  BLIPS.forEach(function(b) {
+    blipsHTML += '<div style="position:absolute;top:'+b.top+';left:'+b.left+';animation:pawFlash 5s '+b.delay+'s linear infinite;opacity:0">'+pawSVG(b.size, 'var(--sc)')+'</div>';
+  });
+  var leftBtns = '', rightBtns = '';
+  BTNS_LEFT.forEach(function(b){ leftBtns += btnHTML(b); });
+  BTNS_RIGHT.forEach(function(b){ rightBtns += btnHTML(b); });
+  var lockColor = state.isLocked ? '#F87171' : 'rgba(148,197,255,0.3)';
+  var syncDot = isSupabaseConfigured() ? '#34D399' : 'rgba(148,197,255,0.15)';
+
+  document.getElementById('app').innerHTML = ''
+    +'<div id="root" style="--sc:'+gc+';--bc:'+bc+';position:fixed;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#1E3A5F,#172554 50%,#0F1D3A);font-family:Trebuchet MS,sans-serif;overflow:hidden;padding:8px">'
+    +'<div style="position:absolute;top:6%;left:3%;opacity:0.04;animation:pfloat 6s ease-in-out infinite;pointer-events:none">'+pawSVG(45,'#8899bb')+'</div>'
+    +'<div style="position:absolute;bottom:6%;right:3%;opacity:0.03;animation:pfloat 8s 2s ease-in-out infinite;pointer-events:none">'+pawSVG(35,'#8899bb')+'</div>'
+    +'<div style="position:absolute;top:8%;right:8%;opacity:0.05;pointer-events:none">'+pawSVG(32,'#93C5FD')+'</div>'
+    +'<div style="position:absolute;bottom:10%;left:6%;opacity:0.04;pointer-events:none;transform:rotate(-20deg)">'+pawSVG(28,'#93C5FD')+'</div>'
+    +'<div style="position:absolute;top:8px;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:6px">'
+    +'<div style="width:3px;height:3px;border-radius:50%;background:rgba(100,160,255,0.2)"></div>'
+    +'<div style="width:3px;height:3px;border-radius:50%;background:rgba(100,160,255,0.2)"></div>'
+    +'<div style="width:3px;height:3px;border-radius:50%;background:rgba(100,160,255,0.2)"></div>'
+    +pawSVG(14,'rgba(147,197,253,0.3)')
+    +'<div style="width:3px;height:3px;border-radius:50%;background:rgba(100,160,255,0.2)"></div>'
+    +'<div style="width:3px;height:3px;border-radius:50%;background:rgba(100,160,255,0.2)"></div>'
+    +'<div style="width:3px;height:3px;border-radius:50%;background:rgba(100,160,255,0.2)"></div>'
+    +'</div>'
+    +'<div id="lockBtn" style="position:absolute;top:6px;right:10px;z-index:50;padding:6px;cursor:pointer;border-radius:8px;background:'+(state.isLocked?'rgba(239,68,68,0.15)':'rgba(255,255,255,0.04)')+';animation:'+(state.isLocked?'lockPulse 2s ease-in-out infinite':'none')+'">'+lockSVG(16,lockColor,state.isLocked)+'</div>'
+    +'<div id="settingsBtn" style="position:absolute;top:6px;left:10px;z-index:50;padding:6px;cursor:pointer;border-radius:8px;background:rgba(255,255,255,0.04);display:flex;align-items:center;gap:4px">'
+    +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(148,197,255,0.3)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
+    +'<div style="width:6px;height:6px;border-radius:50%;background:'+syncDot+'"></div>'
+    +'</div>'
+    +'<div style="display:flex;align-items:center;gap:10px;width:100%;max-width:700px;padding:0 4px">'
+    +'<div style="display:flex;flex-direction:column;gap:8px;justify-content:space-evenly;height:100%">'+leftBtns+'</div>'
+    +'<div style="flex:1;display:flex;flex-direction:column;gap:6px">'
+    +'<div style="background:#070D18;border-radius:16px;padding:4px;box-shadow:inset 0 2px 6px rgba(0,0,0,0.7)">'
+    +'<div id="radarArea" style="width:100%;padding-bottom:75%;position:relative;border-radius:12px;overflow:hidden;cursor:pointer;touch-action:none">'
+    +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;border-radius:14px;overflow:hidden;background:var(--bc);transition:background 0.4s">'
+    +'<div style="position:absolute;top:50%;left:50%;width:25%;height:25%;transform:translate(-50%,-50%);border:1px solid rgba(0,255,136,0.12);border-radius:50%"></div>'
+    +'<div style="position:absolute;top:50%;left:50%;width:50%;height:50%;transform:translate(-50%,-50%);border:1px solid rgba(0,255,136,0.12);border-radius:50%"></div>'
+    +'<div style="position:absolute;top:50%;left:50%;width:75%;height:75%;transform:translate(-50%,-50%);border:1px solid rgba(0,255,136,0.12);border-radius:50%"></div>'
+    +'<div style="position:absolute;top:50%;left:50%;width:98%;height:98%;transform:translate(-50%,-50%);border:1px solid rgba(0,255,136,0.12);border-radius:50%"></div>'
+    +'<div style="position:absolute;top:50%;left:2%;right:2%;height:1px;background:rgba(0,255,136,0.08)"></div>'
+    +'<div style="position:absolute;left:50%;top:2%;bottom:2%;width:1px;background:rgba(0,255,136,0.08)"></div>'
+    +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;animation:sweep 5s linear infinite">'
+    +'<div style="position:absolute;top:50%;left:50%;width:70%;height:2px;margin-top:-1px;transform-origin:left center;background:var(--sc);box-shadow:0 0 10px var(--sc);z-index:2;transition:all 0.3s"></div>'
+    +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;filter:blur(4px)">'+buildSweepLines()+'</div>'
+    +'</div>'
+    +blipsHTML
+    +'<div id="touchLayer" style="position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:3"></div>'
+    +'<div id="xMarkLayer" style="position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:4"></div>'
+    +'<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:var(--sc);box-shadow:0 0 8px var(--sc);transition:all 0.3s"></div>'
+    +'<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);opacity:0.035">'+pawSVG(120,'var(--sc)')+'</div>'
+    +'<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.04) 3px,rgba(0,0,0,0.04) 4px);pointer-events:none"></div>'
+    +'</div>'
+    +'<div id="popup" style="display:none;position:absolute;bottom:15%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.82);color:#fff;padding:5px 12px;border-radius:12px;font-size:11px;font-weight:700;white-space:nowrap;align-items:center;gap:4px;border:1px solid '+gc+'55;animation:fadeUp 0.25s ease-out;z-index:5"></div>'
+    +'</div></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:0 4px">'
+    +'<div style="display:flex;align-items:center;gap:4px">'
+    +'<div style="width:6px;height:6px;border-radius:50%;background:'+gc+';box-shadow:0 0 6px '+gc+';transition:all 0.3s"></div>'
+    +'<span style="color:rgba(148,197,255,0.55);font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">'+(state.active?state.active.label:'Ready')+'</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:2px;align-items:flex-end">'
+    +'<div style="width:3px;height:6px;border-radius:1.5px;background:rgba(0,255,136,0.45)"></div>'
+    +'<div style="width:3px;height:9px;border-radius:1.5px;background:rgba(0,255,136,0.45)"></div>'
+    +'<div style="width:3px;height:12px;border-radius:1.5px;background:rgba(0,255,136,0.45)"></div>'
+    +'<div style="width:3px;height:15px;border-radius:1.5px;background:rgba(100,160,255,0.12)"></div>'
+    +'</div></div>'
+    +'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;justify-content:space-evenly;height:100%">'+rightBtns+'</div>'
+    +'</div>'
+    +'<div style="position:absolute;bottom:6px;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:6px">'
+    +'<div style="width:24px;height:2px;border-radius:1px;background:linear-gradient(90deg,transparent,rgba(56,189,248,0.25))"></div>'
+    +pawSVG(11,'rgba(56,189,248,0.2)')
+    +'<div style="width:24px;height:2px;border-radius:1px;background:linear-gradient(90deg,rgba(56,189,248,0.25),transparent)"></div>'
+    +'</div>'
+    +'<div id="alertFlash" style="position:fixed;top:0;left:0;right:0;bottom:0;background:radial-gradient(circle,#FF4444,#CC0000);opacity:0;pointer-events:none;z-index:90;transition:opacity 0.05s"></div>'
+    +'</div>';
+
+  attachEvents();
+}
+
+/* === Event Binding === */
+function attachEvents() {
+  document.querySelectorAll('.pad-btn').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var id = parseInt(el.dataset.id);
+      var btn = BTNS_LEFT.concat(BTNS_RIGHT).find(function(b){return b.id===id});
+      if (!btn) return;
+      doSound(btn.sound);
+      if (btn.id === 3) { triggerAlertEffect(); pushAlert(); }
+      if (btn.id === 1) { openTreasureMap(); return; }
+      if (btn.id === 2) { openCanvas(); return; }
+      if (btn.id === 6) { openCamera(); return; }
+      state.pid = btn.id;
+      state.active = btn;
+      state.pop = btn.msg;
+      updateUI();
+      clearTimeout(activeTimer);
+      activeTimer = setTimeout(function() {
+        state.active = null; state.pop = ''; state.pid = -1;
+        updateUI();
+      }, btn.id === 3 ? 4500 : 2500);
+    });
+  });
+
+  var radar = document.getElementById('radarArea');
+  if (radar) {
+    radar.addEventListener('pointerdown', function(e) {
+      var rect = radar.getBoundingClientRect();
+      var xPct = ((e.clientX - rect.left) / rect.width) * 100;
+      var yPct = ((e.clientY - rect.top) / rect.height) * 100;
+      longPressPos = {x: xPct, y: yPct};
+      didLongPress = false;
+      longPressTimer = setTimeout(function() {
+        didLongPress = true;
+        spawnX(longPressPos.x, longPressPos.y);
+        pushXMark(longPressPos.x, longPressPos.y);
+      }, LONG_PRESS_MS);
+    });
+    radar.addEventListener('pointerup', function(e) {
+      clearTimeout(longPressTimer);
+      if (!didLongPress) {
+        var rect = radar.getBoundingClientRect();
+        var xPct = ((e.clientX - rect.left) / rect.width) * 100;
+        var yPct = ((e.clientY - rect.top) / rect.height) * 100;
+        spawnPaw(xPct, yPct);
+      }
+    });
+    radar.addEventListener('pointerleave', function() {
+      clearTimeout(longPressTimer);
+    });
+  }
+
+  var lockBtn = document.getElementById('lockBtn');
+  if (lockBtn) lockBtn.addEventListener('click', function() {
+    if (state.isLocked) showPinOverlay('unlock');
+    else showPinOverlay('set');
+  });
+
+  var settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn) settingsBtn.addEventListener('click', showSettings);
+}
+
+/* === Lightweight UI Update === */
+function updateUI() {
+  var gc = state.active ? state.active.glow : '#00ff88';
+  var bc = state.active ? state.active.bg : '#0a1628';
+  var root = document.getElementById('root');
+  if (root) { root.style.setProperty('--sc', gc); root.style.setProperty('--bc', bc); }
+  document.querySelectorAll('.pad-btn').forEach(function(el) {
+    var id = parseInt(el.dataset.id);
+    var btn = BTNS_LEFT.concat(BTNS_RIGHT).find(function(b){return b.id===id});
+    var isOn = state.pid === id;
+    el.style.background = isOn ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)';
+    el.style.boxShadow = isOn ? '0 0 12px '+btn.glow+'44,inset 0 0 8px '+btn.glow+'22' : 'inset 0 1px 0 rgba(255,255,255,0.05),0 2px 4px rgba(0,0,0,0.25)';
+  });
+  var popup = document.getElementById('popup');
+  if (popup) {
+    if (state.pop) {
+      popup.style.display = 'flex';
+      popup.style.borderColor = gc + '55';
+      popup.innerHTML = pawSVG(9, gc) + '<span>' + state.pop + '</span>';
+    } else { popup.style.display = 'none'; }
+  }
+}
+
+/* === Spawn Touch Paw === */
+function spawnPaw(x, y) {
+  var layer = document.getElementById('touchLayer');
+  if (!layer) return;
+  var gc = state.active ? state.active.glow : '#00ff88';
+  var el = document.createElement('div');
+  el.style.cssText = 'position:absolute;left:'+x+'%;top:'+y+'%;transform:translate(-50%,-50%);animation:pawPop 2s ease-out forwards;pointer-events:none';
+  el.innerHTML = pawSVG(40, gc);
+  layer.appendChild(el);
+  setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 2100);
+}
+
+/* === Spawn X Mark === */
+function spawnX(x, y) {
+  var layer = document.getElementById('xMarkLayer');
+  if (!layer) return;
+  var el = document.createElement('div');
+  el.style.cssText = 'position:absolute;left:'+x+'%;top:'+y+'%;transform:translate(-50%,-50%);animation:xGrow 5s ease-out forwards;pointer-events:none;filter:drop-shadow(0 0 6px #CC2222) drop-shadow(0 0 12px #AA000088)';
+  el.innerHTML = xSVG(66, '#DD2222');
+  layer.appendChild(el);
+  setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, X_MARK_DURATION + 100);
+}
+
+/* === Fullscreen === */
+function goFullscreen() {
+  var el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen();
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+}
+function exitFullscreen() {
+  if (document.exitFullscreen) document.exitFullscreen();
+  else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+}
+
+/* === Settings Panel === */
+function showSettings() {
+  var overlay = document.createElement('div');
+  overlay.id = 'settingsOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;z-index:100;font-family:Trebuchet MS,sans-serif';
+
+  var urlVal = supabaseUrl;
+  var keyVal = supabaseKey;
+
+  overlay.innerHTML = '<div style="background:linear-gradient(180deg,#1a2a4a,#0f1d3a);border-radius:24px;padding:24px 28px;width:340px;max-width:90vw;box-shadow:0 0 0 2px rgba(37,99,235,0.2),0 20px 40px rgba(0,0,0,0.6);display:flex;flex-direction:column;gap:14px">'
+    +'<div style="display:flex;align-items:center;gap:8px;justify-content:center">'
+    +'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
+    +'<span style="color:#93C5FD;font-size:14px;font-weight:700">Pup Pad Sync Settings</span>'
+    +'</div>'
+    +'<div style="color:rgba(148,197,255,0.5);font-size:10px;text-align:center">Connect multiple Pup Pads so X marks appear on all devices</div>'
+    +'<div style="display:flex;flex-direction:column;gap:4px">'
+    +'<label style="color:#93C5FD;font-size:10px;font-weight:700">Supabase URL</label>'
+    +'<input id="sbUrlInput" type="text" placeholder="https://xxxxx.supabase.co" value="'+urlVal+'" style="background:rgba(255,255,255,0.06);border:1px solid rgba(148,197,255,0.15);border-radius:8px;padding:10px 12px;color:#CBD5E1;font-size:13px;outline:none;font-family:monospace;width:100%"/>'
+    +'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:4px">'
+    +'<label style="color:#93C5FD;font-size:10px;font-weight:700">Supabase Anon Key</label>'
+    +'<input id="sbKeyInput" type="text" placeholder="eyJhbGci..." value="'+keyVal+'" style="background:rgba(255,255,255,0.06);border:1px solid rgba(148,197,255,0.15);border-radius:8px;padding:10px 12px;color:#CBD5E1;font-size:13px;outline:none;font-family:monospace;width:100%"/>'
+    +'</div>'
+    +'<div style="color:rgba(148,197,255,0.35);font-size:9px;text-align:center">Device ID: '+deviceId+'</div>'
+    +'<div style="display:flex;gap:8px;justify-content:center">'
+    +'<div id="sbSaveBtn" style="background:rgba(52,211,153,0.15);color:#34D399;padding:8px 24px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer">Save</div>'
+    +'<div id="sbCloseBtn" style="background:rgba(255,255,255,0.06);color:rgba(148,197,255,0.5);padding:8px 24px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer">Close</div>'
+    +'</div>'
+    +'</div>';
+
+  document.body.appendChild(overlay);
+
+  document.getElementById('sbSaveBtn').addEventListener('click', function() {
+    var u = document.getElementById('sbUrlInput').value.trim();
+    var k = document.getElementById('sbKeyInput').value.trim();
+    saveSupabaseConfig(u, k);
+    doSound('unlock');
+    document.body.removeChild(overlay);
+    render();
+  });
+  document.getElementById('sbCloseBtn').addEventListener('click', function() {
+    document.body.removeChild(overlay);
+  });
+}
+
+/* === PIN Overlay === */
+function showPinOverlay(mode) {
+  var entry = '', confirm = '', step = 'enter', error = '';
+  function getTitle() {
+    if (mode === 'set') return step === 'enter' ? 'Set a 4-digit PIN' : 'Confirm your PIN';
+    return 'Enter PIN to unlock';
+  }
+  function renderDots(val) {
+    var h = '';
+    for (var i = 0; i < 4; i++) {
+      var filled = i < val.length;
+      h += '<div style="width:16px;height:16px;border-radius:50%;background:'+(filled?'#60A5FA':'transparent')+';border:2px solid '+(filled?'#60A5FA':'rgba(148,197,255,0.3)')+';box-shadow:'+(filled?'0 0 8px #60A5FA66':'none')+';transition:all 0.15s"></div>';
+    }
+    return h;
+  }
+  function buildOverlay() {
+    var currentVal = step === 'confirm' ? confirm : entry;
+    var overlay = document.getElementById('pinOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'pinOverlay';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;z-index:100;font-family:Trebuchet MS,sans-serif';
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = '<div style="background:linear-gradient(180deg,#1a2a4a,#0f1d3a);border-radius:24px;padding:24px 28px;width:280px;box-shadow:0 0 0 2px rgba(37,99,235,0.2),0 20px 40px rgba(0,0,0,0.6);display:flex;flex-direction:column;align-items:center;gap:16px">'
+      +'<div style="display:flex;align-items:center;gap:8px">'+lockSVG(20,'#60A5FA',mode==='unlock')+'<span style="color:#93C5FD;font-size:14px;font-weight:700">'+getTitle()+'</span></div>'
+      +(error ? '<span style="color:#F87171;font-size:11px;font-weight:600">'+error+'</span>' : '')
+      +'<div style="display:flex;gap:12px">'+renderDots(currentVal)+'</div>'
+      +'<div id="pinPad" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%"></div>'
+      +'<div id="pinCancel" style="color:rgba(148,197,255,0.45);font-size:11px;font-weight:600;cursor:pointer;padding:4px 12px">Cancel</div>'
+      +'</div>';
+    var pad = document.getElementById('pinPad');
+    ['1','2','3','4','5','6','7','8','9','','0','del'].forEach(function(k) {
+      if (k === '') { var sp = document.createElement('div'); pad.appendChild(sp); return; }
+      var isDel = k === 'del';
+      var btn = document.createElement('div');
+      btn.textContent = isDel ? 'DEL' : k;
+      btn.style.cssText = 'display:flex;align-items:center;justify-content:center;height:44px;border-radius:10px;cursor:pointer;background:'+(isDel?'rgba(239,68,68,0.15)':'rgba(255,255,255,0.06)')+';color:'+(isDel?'#F87171':'#CBD5E1')+';font-size:'+(isDel?'12':'18')+'px;font-weight:700;box-shadow:inset 0 1px 0 rgba(255,255,255,0.05),0 2px 4px rgba(0,0,0,0.3)';
+      btn.addEventListener('click', function() {
+        doSound('keyTap');
+        if (isDel) {
+          if (step === 'confirm') confirm = confirm.slice(0,-1);
+          else entry = entry.slice(0,-1);
+          error = '';
+          buildOverlay();
+          return;
+        }
+        if (step === 'confirm') {
+          if (confirm.length >= 4) return;
+          confirm += k;
+          if (confirm.length === 4) {
+            if (confirm === entry) { closePinOverlay(); onPinComplete(confirm); }
+            else { doSound('error'); error = "PINs don't match. Try again."; entry = ''; confirm = ''; step = 'enter'; }
+          }
+        } else {
+          if (entry.length >= 4) return;
+          entry += k;
+          if (entry.length === 4) {
+            if (mode === 'set') { step = 'confirm'; }
+            else { closePinOverlay(); onPinComplete(entry); }
+          }
+        }
+        buildOverlay();
+      });
+      pad.appendChild(btn);
+    });
+    document.getElementById('pinCancel').addEventListener('click', closePinOverlay);
+  }
+  function onPinComplete(pin) {
+    if (mode === 'set') {
+      state.storedPin = pin; state.isLocked = true;
+      doSound('lock'); goFullscreen(); render();
+    } else {
+      if (pin === state.storedPin) {
+        state.isLocked = false; state.storedPin = null;
+        doSound('unlock'); exitFullscreen(); render();
+      } else { doSound('error'); render(); }
+    }
+  }
+  buildOverlay();
+}
+function closePinOverlay() {
+  var overlay = document.getElementById('pinOverlay');
+  if (overlay) overlay.parentNode.removeChild(overlay);
+}
+
+/* === Init === */
+loadSupabaseConfig();
+render();
+startPolling();
+
+/* === Service Worker === */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(function(e) { console.log('SW:', e); });
+}
+
+/* === Lock to Landscape === */
+try { screen.orientation.lock('landscape').catch(function(){}); } catch(e) {}
+</script>
+</body>
+</html>
