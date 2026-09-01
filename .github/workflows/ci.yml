@@ -1,4 +1,4 @@
-# PupPad CI — seven checks, each of which can go red for exactly one reason.
+# PupPad CI — ten checks, each of which can go red for exactly one reason.
 #
 # THIS WORKFLOW PUBLISHES (PUP-WO-0103). main goes to the site root, stable to
 # /stable/, and Buddy's tablet points at /stable/. Northstar invariant 4 — the copy
@@ -71,7 +71,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Seven checks
+    name: Ten checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -157,6 +157,60 @@ jobs:
         # text, so a legitimate edit to sw.js breaks an anchor and turns this red
         # rather than letting the mutation set rot unnoticed.
         run: node .github/ci/check-mutations.mjs .
+
+
+      - name: "Check 8 — an HTTP error never replaces a cached entry"
+        # PUP-WO-0105. Architecture §6.4 lets that work order go BEFORE the
+        # PUP-WO-0104 cache gate on the condition that a worker change is gated by a
+        # check for the class it changes — 0105 brings its own, and this is it.
+        # Without this step that ordering ruling is false and the flip rests on a
+        # premise that is not true.
+        #
+        # Two classes, and the second is why round 3 existed:
+        #   the WRITE  — fetch() resolves on 4xx/5xx, so an unguarded worker stores
+        #                the error body over the app shell. Asserts the response
+        #                REACHED the worker, the fixture SERVED the status under
+        #                test, and the worker made ZERO write attempts — not merely
+        #                that a seeded entry survived, which is equally true when
+        #                nothing was ever fetched.
+        #   the INSTALL — a bad deploy (404 on a precached URL) must still fail
+        #                install loudly, so the old worker keeps serving rather than
+        #                activating over a cache it never provisioned. The QUOTA half
+        #                is CHARACTERISED, not asserted: a squeezed device does not
+        #                receive the fix, that is an open defect (PUP-WO-0108), and a
+        #                round-3 attempt to fix it here was reverted for leaving the
+        #                device with an activated worker and no app shell at all.
+        run: node .github/ci/check-error-caching.mjs .
+
+      - name: "Check 9 — the poisoning, and the repair, in a real browser"
+        # Anchors check 8's sandbox model to something observed: serves the app,
+        # installs the worker, makes the origin return an error while ONLINE, then
+        # closes the listener and destroys its keep-alive sockets — because
+        # context.setOffline() does not stop a service worker's fetch to loopback.
+        # Asserts the served shell IS PupPad by identity rather than by shape: an
+        # earlier version checked for "<!DOCTYPE html>", which every error page also
+        # satisfies, and printed GREEN over a poisoned shell.
+        # No env: like checks 4 and 6, it resolves Chromium through playwright's own
+        # `channel: 'chromium'`, installed by the step above. An earlier draft of this
+        # step referenced ${{ steps.pw.outputs.chromium-path }} and NO STEP `pw`
+        # EXISTS — a dangling reference authored while wiring a check whose purpose is
+        # to stop exactly that kind of unverified claim reaching the gate.
+        run: node .github/ci/demo-error-poisoning.mjs .
+
+      - name: "Check 10 — a bad deploy cannot install, and no device is left with a worker but no shell"
+        # PUP-WO-0105 §0a. Check 8 asserts this class in a Node sandbox; only a
+        # browser has the SERVICE WORKER LIFECYCLE, and the lifecycle is the whole
+        # finding: `installed` means the update arrived, `redundant` means it was
+        # discarded and the OLD unguarded worker is still serving the child.
+        #
+        # Caps the origin quota over CDP AFTER seeding runtime entries — capping
+        # before the app is cached squeezes the wrong thing and the scenario tests
+        # nothing — then ships the new worker and watches which way it goes.
+        #
+        # It CHARACTERISES the squeezed case (the update does not arrive; PUP-WO-0108)
+        # and ASSERTS the harm boundary: never an activated worker with no app shell,
+        # which is the state the reverted round-3 fix produced.
+        run: node .github/ci/demo-quota-install.mjs .
 
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
@@ -647,3 +701,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+

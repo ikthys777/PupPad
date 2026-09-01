@@ -281,13 +281,118 @@ never been the fix for any of them.
 
 **Member 4 is one line, and being mechanisable makes it a rule rather than advice**
 (§5): before dispatching a pass, resolve every path and every section the prompt
-cites **against the frozen tree, not against `main`**. *Not assigned to a work order
+cites **against the frozen tree, not against `main`** — and **when the resolver
+reports a miss, print the surrounding lines of the cited file, never the count.**
+
+**Two more clauses, both earned on the rule's next two uses:**
+
+- **The resolver must FAIL CLOSED — an unresolvable check is a MISS, never a PASS.**
+  *(`PUP-WO-0105`'s builder, on its own resolver.)* It printed `ALL POINTERS RESOLVE`
+  while one of its probes had **crashed**: the probe was `node -e ... | tail -1`,
+  which **discards exit status**, and the line handed back was `Node.js v24.16.0` —
+  which reads exactly like a version report. The claim happened to be true; the
+  resolver had not established it. **The print-the-lines clause addresses false
+  REDS; this addresses false GREENS**, and the same tool produced one of each a
+  single work order apart. The mechanism is the wrong-process `$?` trap this project
+  has now recorded three times.
+- **Not every path-shaped string in a prompt is a pointer.** *(CC-A, resolving
+  `PUP-WO-0105`'s prompt.)* A resolver flagged `.github/ci/node_modules` as missing;
+  it is **gitignored and cited as environment advice about where to place a script**,
+  not as a file to read. Distinguish a citation-to-read from an environment
+  reference, or the resolver produces false reds on deliberately-absent paths and
+  gets muted — which is the failure the rule exists to prevent.
+
+That second clause is not decoration. **Member 4's enforcement is itself subject to
+member 3, and not incidentally: a pointer resolver's entire job is to turn absence
+into red, so every bug in it presents as a dangle.** It is the one check on this list
+whose false positives are indistinguishable from its true positives without opening
+the file. *(Demonstrated within a minute of member 4 being ratified: a case-sensitive
+grep for a quoted invariant reported zero matches, and the invariant was present and
+materially identical at `docs/northstar.md:62` — the prompt embeds the quote
+mid-sentence with a lowercase article. A dangling pointer was nearly reported that
+had never dangled.)* Printing the lines rather than the count is what makes the
+tool built to enforce *read what produced the verdict* obey it. *Not assigned to a work order
 here — it belongs wherever CI is next opened, and this project has learned what
 happens when scope is added to a work order already in flight.*
 
 **A freeze verifies that the artifact stopped moving. It does not verify that the
 artifact was correct when it stopped**, and a stale baseline passes every freeze
 check there is.
+
+**A PER-CHANGE SAFETY ARGUMENT DOES NOT COMPOSE ACROSS CHANGES IN ONE COMMIT.**
+*(`PUP-WO-0105`'s builder, against its own accepted decision.)* Two individually-safe
+changes in one commit are not a safe commit, **and the per-change analysis is what
+makes that invisible.**
+
+Concretely: a four-class response matrix measured a cache-write guard and showed
+exactly one cell moving — sound, and the basis on which a UI test was waived. The
+same commit also bumped `CACHE_VERSION`. The matrix **varied the response and
+nothing else**, so it could not see that the bump discarded every runtime-cached
+asset; invariant 3's own falsification test then rendered **0 of 24 map tiles**
+against 24 of 24. **The argument offered for not running the UI test is what
+concealed the defect the UI test finds.**
+
+Two rules follow, and the second is the cheaper one:
+
+- **Ask of every claim what was actually VARIED to produce it.** A measurement's
+  scope is a property of the fixture, not of the confidence in the sentence.
+- **The author of a claim can check its scope by opening the file; a reviewer can
+  only infer it.** Those are different duties and the record should say so rather
+  than split fault evenly — but the reviewer's share is real whenever a waiver was
+  granted on the claim's strength.
+**A SCHEDULING DECISION IS ONLY AS GOOD AS THE TRIGGER LIST IT WAS MADE AGAINST,
+AND A NEW TRIGGER FOR A KNOWN DEFECT IS A NEW DECISION, NOT A DUPLICATE FINDING.**
+*(`PUP-WO-0105`'s builder.)* The un-closable Map overlay was found in `PUP-WO-0000`
+§1.6 and scheduled into `PUP-WO-0600` at phase P6 — defensible, because the only
+known trigger was a blocked CDN: rare, external, self-healing. Then quota eviction
+was measured (~25 MB on a plain load, ~8 MB per opaque entry, no `storage.persist`),
+which turns that rare external trigger into **an ordinary internal one**, and the
+next offline cold start becomes the trap. **Nothing in either record joined them.**
+What nearly buried it is that it *looked like a re-find of something already
+scheduled* — and a re-find is exactly what gets closed as "known."
+
+**Both of this project's near-misses are failures of DISPOSITION, not of
+discovery.** Here, and the round-1 recommendation ("give the fake cache a `puts`
+counter and assert zero write attempts") that was written into the findings file
+under *Recommendation* and never applied, whose exact predicted vacuity round 2 then
+found. **The pass worked, the record worked, and the loop did not close** — because
+every control this project has built checks whether a finding was *written down*,
+and none checks whether it was *acted on*. Two instances is a pattern and it wants a
+control; **none is proposed here**, deliberately, by both parties who have each
+shipped a mechanism today for a problem that turned out not to exist.
+**Nothing ever asks whether a recommendation became a commit.** *(`PUP-WO-0105`'s
+builder, correcting CC-A's account of the same gap.)* Two accepted dispositions were
+recorded and not applied — the `puts` counter, and "say the opacity deferral is a
+choice rather than a law of physics" — and the next pass found both again. **The
+rows were accurate: both said *Recommendation* and neither claimed to be done.** So
+the missing control is not better recording. It is that no step in this process ever
+reads a recommendation and asks whether it turned into a diff. Named; still not
+designed.
+
+### 6.5 The quota path, and why the tiles question has no home yet
+
+*Measured 2026-09-01 across three passes.*
+
+An **opaque** cache entry costs **~7 MB regardless of body size** — a failed 200-byte
+tile costs the same as a real one. The padding is **randomised per entry** (~6.3–8.5
+MB observed, ~4,250× a same-origin entry), so **it must not be quoted as a
+constant**; the load-bearing fact is its **independence from body size**. Three
+opaque tiles exhausted a 40 MB budget, after which 57 of 60 subsequent puts failed
+silently. There is no `storage.persist()` anywhere, so the origin is evictable.
+
+**This chains into two live failures.** Eviction removes leaflet, and the next
+offline cold start hits the un-closable Map overlay (§6.1's trigger-list entry;
+`PUP-WO-0106`). And a device already at quota **cannot install a worker at all**:
+`addAll` rejects with `QuotaExceededError`, install fails, the new worker is
+discarded, **the old one stays activated**, and any poison it holds is permanent.
+**The devices most likely to be poisoned are the most-used, and use is what
+accumulates opaque entries** — so the fix cannot reach the devices that most need it.
+
+**`PUP-WO-0600` does not dissolve this.** Its scope is `index.html:11-13`, the two
+CDN `<script>`/`<link>` tags. **The OpenStreetMap tiles at `index.html:1373` are map
+data fetched per coordinate and cannot be vendored at all** — and tiles are the bulk
+of the opaque entries and the whole of the quota path. **The tiles question needs its
+own work order and does not have one.**
 
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
@@ -385,6 +490,42 @@ introduced a branch-push deploy path — **a second route to publication that by
 every gate `PUP-WO-0103` builds**, including the invariant-4 byte check and the
 prefix-bounded worker refusal. The question would be who created it and what
 publishes from it, not what ruleset to apply.
+
+### 6.4 The order: `PUP-WO-0105`, then the flip, then `PUP-WO-0104`
+
+*Ruled 2026-09-01, and it corrects a constraint CC-A wrote that cut both ways.*
+
+The earlier form was *"`PUP-WO-0104` must land before any future `sw.js` change reaches
+publication."* Applied literally it **gates `PUP-WO-0105`'s own fix** — the one-line
+guard for a defect that is live on the child's tablet — behind the gate that exists
+to catch bad worker changes. That is a rule protecting against unnoticed harm,
+delaying the most-scrutinised change in the project.
+
+**The constraint restated, which resolves it without weakening it: a worker change
+must be gated by a check for the class it changes.** `PUP-WO-0105` §3.5 *requires*
+building the fixture and assertion that catch its own defect class. So it does not
+bypass the gate — **it brings the gate for what it touches.** The classes it does not
+touch (M9, M7, G4) are unchanged by it, so the gate's weakness there is no worse
+after 0105 than before.
+
+**The order, and the reason for each step:**
+
+1. **`PUP-WO-0105`.** The live worker poisons its own app shell on any non-200
+   received while online. Everything else waits on this.
+2. **Fast-forward `stable`, add `stable` to the `github-pages` environment policy,
+   tablet offline across the window, then flip.** Flipping before 0105 adds a second
+   path caching from the same origin and **doubles the exposure of an active
+   defect**. After 0105 both copies carry a reviewed, known-good worker, so the cache
+   gate has nothing to catch at flip time — its weakness is not what the flip rests on.
+3. **`PUP-WO-0104`.** From the flip until 0104 merges, **`sw.js` does not change.**
+   That is the residual constraint, and it is now a short, bounded freeze rather than
+   an open-ended one.
+
+**P1 closes on its own gate, not on 0104.** Gate items 1 and 2 are met. Items 3 and 4
+are **live verifications a human runs** against the published site — 0104 automates
+that class of check in CI but is not what makes items 3 and 4 answerable. So
+`PUP-WO-0103` merged, plus the flip, plus items 3 and 4, closes P1 — with **0104
+recorded as P1 work carried past the phase gate**, not as a gate item quietly waived.
 
 ## 7. Deferred with intent — realtime co-op
 
@@ -535,6 +676,12 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.2 records the `stable` ruleset verified in **both** directions and removes `PUP-WO-0103`'s rollback lever and its whole dispatch surface; §6.3 rules that no `github-pages` branch exists or should, and that its appearance is an alarm. | The ruleset permits repository admin and refuses installation tokens, both now proven — the second by a real push returning `GH013` with `stable` unmoved. The authority the lever was built to provide already existed structurally, so the lever is removed rather than hardened, taking F1 and F2 with it. **Ordering matters: the dispatch surface could only be removed once the publish job gained a `pull_request` path, or the archive refusals would have become undemonstrable.** **The reusable finding is an instrument that cannot return a negative:** a shim response omitting `bypass_actors` was read as an empty list, and a `--dry-run` push was read as a verdict though it never reaches the server. Both could only produce the answer they produced. |
 | 2026-09-01 | §5 gains: red is not a demonstration — assert the commit that ran and the failing step's name, never the conclusion alone. | Four times in `PUP-WO-0103` a red run was read as a successful refusal demonstration, each red for the wrong reason, the last of them a stale run for a superseded commit. The builder named it as one missing habit rather than four mistakes and observed it was mechanisable, which is what makes it a ruling. It completes a pair with §6.1: a green run certifying nothing and a red run proving nothing are the same defect — the verdict read instead of what produced it. |
 | 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
+| 2026-09-01 | §6.1: member 4's rule gains its second clause — print the cited file's surrounding lines on a miss, never the count — because **member 4's enforcement is itself subject to member 3**. | The builder's, found while running member 4's first real enforcement, about a minute after it was ratified: a case-sensitive grep reported a quoted invariant as missing when it was present and materially identical. A pointer resolver exists to turn absence into red, so every bug in it presents as a dangle — making it the one check whose false positives are indistinguishable from its true positives without opening the file. The tool built to enforce *read what produced the verdict* did not obey it. |
+| 2026-09-01 | §6.4 added: the order is `PUP-WO-0105` → flip → `PUP-WO-0104`, and the "0104 before any `sw.js` change" constraint is restated as **a worker change must be gated by a check for the class it changes**. P1 closes on its own gate, with 0104 carried past it. | The constraint as written cut both ways — the co-architect spotted that it would gate 0105's own one-line fix for a defect live on the tablet. Restating it by *class* rather than by *file* resolves that without weakening it: 0105's acceptance requires building the check for its own defect class, so it brings the gate rather than bypassing it. |
+| 2026-09-01 | §6.1 member 4 gains two more clauses: the resolver must **fail closed**, and **not every path-shaped string is a pointer**. | Both from the rule's next two uses. The builder's resolver printed `ALL POINTERS RESOLVE` while a probe had crashed — `\| tail` discarded the exit status and returned a line that read like a version report; the claim was true and unestablished. CC-A's resolver then flagged a gitignored path cited as environment advice. **One false green and one false red from the same rule, one work order apart** — the print-the-lines clause covers only the red half. |
+| 2026-09-01 | §6.1 gains: **a per-change safety argument does not compose across changes in one commit**, with the varied-what rule and the author/reviewer scope asymmetry. | `PUP-WO-0105`'s builder, against a decision CC-A had already accepted. A response matrix measured the guard, CC-A extended it to the whole commit, and a `CACHE_VERSION` bump in the same commit discarded every runtime-cached asset — 0 of 24 map tiles under invariant 3's own falsification test. The waiver of the UI test rested on the argument that concealed what the UI test finds. |
+| 2026-09-01 | §6.1 gains the trigger-list rule and the disposition gap: a new trigger for a known defect is a new decision, and this project's near-misses are failures of disposition rather than discovery. | The builder's, stating properly why CC-A's P6 scheduling of the Map trap was defensible when made and wrong once quota eviction was measured. Paired with the round-1 `puts`-counter recommendation that was recorded and not applied — every control here checks that a finding was written down, none checks that it was acted on. Named as wanting a control; none proposed, by two parties who each shipped an unnecessary mechanism today. |
+| 2026-09-01 | §6.1: *nothing ever asks whether a recommendation became a commit*. §6.5 added: the quota path, and that `PUP-WO-0600` cannot receive the tiles question. | Both the builder's. The disposition rows were accurate — they said *Recommendation* — so the gap is not recording but that nothing reads one and asks whether it became a diff. And the tiles are map data fetched per coordinate: unvendorable, the bulk of the opaque entries, and the whole of the quota path, pointed by a deferral at a work order that provably cannot receive it. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance

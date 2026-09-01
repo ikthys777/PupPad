@@ -59,7 +59,51 @@ try {
 }
 var CACHE_PREFIX = SCOPE_PATH === null ? null : cachePrefixFor(SCOPE_URL);
 
-/* Bump when any cached asset changes. CI asserts this (check 3). */
+/* Bump when any cached asset changes. CI asserts this (check 3).
+ *
+ * PUP-WO-0105 BUMPED THIS TO v18 AND THE ADVERSARIAL PASS REVERSED IT. Kept as a
+ * comment because the reasoning is the useful part.
+ *
+ * The bump was meant to recover devices that had already cached a 404 over the app
+ * shell, on the belief that an unchanged CACHE_NAME means the poisoned entry is
+ * inherited. TWO MEASUREMENTS KILLED IT:
+ *   - THE BUMP WAS NEVER NEEDED. `install` is
+ *     `caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))`. With CACHE_NAME
+ *     unchanged that opens the EXISTING cache and puts fresh copies over all five
+ *     precached URLs, including the poisoned ones. Shipping a byte-different sw.js
+ *     IS the re-fetch — ON A DEVICE WITH QUOTA HEADROOM, and that precondition
+ *     turns out to be load-bearing. With headroom, verified: poisoned
+ *     /PupPad/index.html at 404, guard shipped with the version left alone, entry
+ *     back to 200 and the runtime cache intact.
+ *
+ *     ON A QUOTA-EXHAUSTED DEVICE THE FIX DOES NOT ARRIVE AT ALL. addAll rejects
+ *     with QuotaExceededError, install fails, the new worker goes `redundant`, and
+ *     the OLD unguarded worker stays activated — so the poisoned shell is never
+ *     repaired and the child keeps getting the error page. Measured A/B varying
+ *     only remaining quota: with headroom `statechange -> installed` and the shell
+ *     returns to 200; squeezed, `statechange -> redundant` and it stays 404.
+ *     AND THE DEVICES MOST LIKELY TO BE IN THAT STATE ARE THE ONES THAT MOST NEED
+ *     THIS FIX, because a poisoned device is one that has been USED, and use is
+ *     what accumulates opaque entries at ~8 MB each (see the cross-origin note).
+ *     Both facts were already in this file and were not composed — which is this
+ *     work order's own finding recurring inside the comment that records it.
+ *     Found by the round-2 pass, not by me.
+ *     It repairs the five urlsToCache keys and nothing else: a poisoned same-origin
+ *     RUNTIME entry would survive, and no production URL is one today only because
+ *     index.html has no relative `./` subresources. That is a fact about today's
+ *     index.html, not a property of the design — see WHAT THIS GUARD
+ *     DOES NOT COVER, at the guard itself.
+ *   - THE BUMP COST THE MAP PANEL ITS OFFLINE ASSETS. Everything cross-origin is
+ *     runtime-cached into THIS SAME cache — leaflet, supabase, and every OSM tile —
+ *     and the activate reap deletes the old cache whole, after which addAll restores
+ *     five entries and nothing else. Measured by the falsification test northstar
+ *     invariant 3 actually specifies, cold-start in airplane mode: 24 of 24 tiles
+ *     rendered on v17, 0 of 24 on v18. A treasure map with no map.
+ *
+ * So the bump traded invariant 3 against invariant 3 — the exact trade §1.2 of the
+ * work order exists to prevent, and which the guard below was carefully written to
+ * avoid. The guard alone. Do not reintroduce a bump for this defect, and do not add
+ * an activate-time addAll either: install already does it. */
 var CACHE_VERSION = 'v17';
 /* Guarded, because `null + 'v17'` is the STRING "nullv17" — a perfectly plausible
  * cache identity that no browser will ever create. It is unreachable today (install
@@ -223,12 +267,34 @@ function servesRequest(requestUrl) {
   }
   /* Cross-origin. Not a subtree question — but saying only that understates what
    * happens next: the fetch handler CACHES what it serves, so third-party bytes land
-   * in the child's cache keyed by URL, with no allowlist. That is deliberate for the
-   * Map panel (leaflet must work offline; invariant 3), and it sits awkwardly beside
+   * in the child's cache keyed by URL, with no allowlist. It sits awkwardly beside
    * northstar §5's third non-goal. The three CDN loads themselves are PUP-WO-0600's
    * to remove; whether a worker should cache cross-origin responses AT ALL is an
    * architect's call, raised in docs/feedback/PUP-WO-0102.md. Recorded here so the
-   * behaviour is a decision rather than a side effect of a comment about scoping. */
+   * behaviour is a decision rather than a side effect of a comment about scoping.
+   *
+   * THIS LINE DOES NOT MAKE LEAFLET WORK OFFLINE, AND AN EARLIER VERSION OF THIS
+   * COMMENT SAID IT DID — "deliberate for the Map panel (leaflet must work offline;
+   * invariant 3)". That was a guarantee stated at the line that would have to provide
+   * it, and the line does not provide it. What happens here is OPPORTUNISTIC: a
+   * cross-origin asset is cached only if some earlier ONLINE load happened to fetch
+   * it successfully. It is not precached, not asserted by any check, and has no
+   * fallback. urlsToCache is same-origin only.
+   *
+   * WHAT THAT COSTS THE CHILD, measured rather than supposed: with leaflet absent,
+   * index.html:1361 appends a full-screen overlay and index.html:1368 then throws
+   * `ReferenceError: L is not defined` — 182 lines before its CLOSE button is wired
+   * at :1550. The overlay stays up with no listeners, CLOSE is inert, and Draw and
+   * Camera stop responding because it swallows every tap. Northstar invariant 5,
+   * word for word: a state that ends play with no one-tap way back.
+   *
+   * And the route there is ordinary rather than exotic: Chrome charges ~8 MB of quota
+   * per OPAQUE entry regardless of body size, so a plain load with the map never
+   * opened already costs ~25 MB, opening it once costs ~178 MB, nothing calls
+   * navigator.storage.persist(), and an eviction is followed by exactly this. The
+   * quota cost and the trap are one failure. PUP-WO-0106 guards the panel;
+   * PUP-WO-0600 vendoring leaflet into urlsToCache dissolves it, because install
+   * would then fail loudly instead of half-provisioning the device. */
   if (u.origin !== self.location.origin) return true;
 
   var canon = canonicalPath(u.pathname);
@@ -265,6 +331,33 @@ self.addEventListener('install', function(event) {
   );
   self.skipWaiting();
 });
+
+/* THE FIX CANNOT REACH A DEVICE WITH NO QUOTA HEADROOM, AND THAT IS A KNOWN OPEN
+ * DEFECT RATHER THAN AN OVERSIGHT — PUP-WO-0108.
+ *
+ * `addAll` rejects with QuotaExceededError, `waitUntil` rejects, install fails, the
+ * new worker goes `redundant`, and the OLD worker keeps serving. So the guard above
+ * does not arrive on a squeezed device — and the devices most likely to be squeezed
+ * are the most-used, because Chrome charges ~7 MB of quota per OPAQUE cross-origin
+ * entry regardless of body size.
+ *
+ * PUP-WO-0105 ROUND 3 TRIED TO FIX THIS HERE AND THE FIX WAS REVERTED. It discriminated
+ * quota from a fetch failure, reclaimed this worker's runtime entries, retried once,
+ * and on a second quota failure resolved anyway so the worker would activate. Measured
+ * consequences, all in a real browser:
+ *   - the reclaim was TOTAL, not sufficient: ~18.8 MB deleted to write a ~200 KB
+ *     precache, taking leaflet and supabase with it — the same loss that got the v18
+ *     CACHE_VERSION bump reversed earlier the same day;
+ *   - and resolving on the second failure let the worker ACTIVATE, at which point the
+ *     activate handler's legacy deletion removed the only cache still holding a good
+ *     shell. Measured: shell NULL, versus a working app under both predecessors.
+ *
+ * FAILING TO INSTALL IS A REACH LIMITATION. ACTIVATING OVER AN UNPROVISIONED CACHE IS
+ * A HARM. Between the two, the reach limitation is correct here, and it is why this
+ * handler is deliberately left as it was.
+ *
+ * `.github/ci/demo-quota-install.mjs` reproduces the squeeze; it characterises this
+ * defect rather than demonstrating a fix. */
 
 self.addEventListener('activate', function(event) {
   /* A worker registered at a NON-CANONICAL scope — e.g. the "//stable/" a single
@@ -328,14 +421,87 @@ self.addEventListener('fetch', function(event) {
 
   event.respondWith(
     fetch(event.request).then(function(response) {
-      var clone = response.clone();
-      /* cache.put rejects on a non-GET request, a 206, or an opaque redirect. The
-       * response has already been returned, so there is nothing to recover — but
-       * an unhandled rejection in a worker is now a CI failure, and an unguarded
-       * one here would make routine traffic look like a defect. */
-      caches.open(CACHE_NAME).then(function(cache) {
-        return cache.put(event.request, clone);
-      }).catch(function() {});
+      /* STORE ONLY WHAT SHOULD BE STORED — PUP-WO-0105.
+       *
+       * fetch() RESOLVES on 4xx and 5xx; it rejects only on a network-layer
+       * failure. So without this guard an HTTP error received WHILE ONLINE is
+       * written over the good copy, and the offline .catch below never runs
+       * because nothing rejected. './' is in urlsToCache, so the poisoned entry
+       * is the app shell: one 404 reload replaced /PupPad/, and the device then
+       * served the error page OFFLINE. Northstar invariants 3 and 5.
+       *
+       * WHY NOT `response.ok` ALONE, which is the obvious predicate — measured in
+       * Chromium against this worker, not reasoned (docs/feedback/PUP-WO-0105.md):
+       *     same-origin 200          ok=true   status=200  type=basic
+       *     same-origin 404          ok=false  status=404  type=basic   <- the defect
+       *     cross-origin opaque 200  ok=false  status=0    type=opaque  <- the Map panel
+       *     cross-origin opaque 404  ok=false  status=0    type=opaque
+       * `ok` is FALSE for opaque, so `ok` alone would stop caching leaflet,
+       * supabase and every OpenStreetMap tile (index.html:1373) — and the Map
+       * panel would lose its offline assets. That is invariant 3 traded against
+       * invariant 3, which §7 makes a ruling rather than a build step.
+       *
+       * WHAT THIS DOES NOT FIX, stated rather than glossed: an opaque 200 and an
+       * opaque 404 are INDISTINGUISHABLE — both status 0, both type opaque, both
+       * with an unreadable body. Two passes attacked that across thirteen
+       * observables, a cache round trip and a quota side channel, and it held: no
+       * predicate on an OPAQUE RESPONSE can separate them.
+       *
+       * BUT THE OPACITY IS A CHOICE, NOT A LAW. This worker forwards
+       * `event.request`, inheriting the no-cors mode the browser picked for a
+       * <script>/<link>/<img>. All three third parties send
+       * `access-control-allow-origin: *` (verified live), so a cors-mode request
+       * would make the status readable, and the guard already refuses a cors 404
+       * correctly. Not done here because a naive always-cors REGRESSES any host
+       * that omits ACAO on a 200; it needs try-cors-then-fall-back. That is a
+       * deferral, and an earlier version of this comment stated it as a limit.
+       *
+       * AND IT DOES NOT GO TO PUP-WO-0600, which an earlier version also claimed.
+       * 0600's scope is index.html:11-13, the two CDNs. The OpenStreetMap tiles at
+       * index.html:1373 are not in it and CANNOT be vendored — they are map data
+       * fetched per coordinate. Tiles are the bulk of the opaque entries and the
+       * whole of the quota path, so this question survives 0600 and needs a home.
+       *
+       * Do not read this guard as covering the cross-origin case.
+       *
+       * cache.put still rejects on a non-GET request or a 206, and `ok` is true
+       * for a 206 — so the .catch stays. (It does NOT reject an opaque redirect:
+       * measured, `put` ACCEPTED one. That clause was inherited from the previous
+       * comment and restated here while editing the very lines it describes,
+       * which is architecture §5's "a wrong comment is a claim" — and the same
+       * shape as sw.js's own note about a comment surviving the fix that
+       * falsified it. The guard below now refuses opaqueredirect anyway, since
+       * its type is 'opaqueredirect' and its `ok` is false.) The response
+       * has already been returned, so there is nothing to recover, but an
+       * unhandled rejection in a worker is a CI failure and an unguarded one here
+       * would make routine traffic look like a defect. */
+      /* WHAT THIS GUARD DOES NOT COVER — written here because the next person to
+       * read it will otherwise assume it covers more, which is how the defect it
+       * fixes survived a rewrite of this very handler.
+       *
+       * IT REFUSES AN EXPLICIT 4xx OR 5xx. That is all it can do.
+       *
+       * A 200 WHOSE BODY IS AN ERROR PAGE IS NOT COVERED, AND CANNOT BE BY ANY
+       * STATUS TEST — it is 2xx, so `ok` is true and it is stored. A soft-404 host,
+       * an SPA catch-all, an ISP interception page: all indistinguishable here from
+       * the real app. Catching that class needs CONTENT validation, which is a
+       * different mechanism and a different work order.
+       *
+       * AND `install` IS A SECOND WRITE PATH INTO THIS SAME CACHE THAT THIS GUARD
+       * DOES NOT SEE. `cache.addAll(urlsToCache)` accepts any 2xx, so a soft-404
+       * received during install writes the error body over the app shell through a
+       * SUCCESSFUL update. Measured. It is not permanent — this handler caches any
+       * `ok` response, so one healthy online load overwrites it, and recovery is no
+       * worse than before this guard existed — but the guard does not stop it, and
+       * an earlier draft of this comment claimed there was no residual case at all.
+       *
+       * The opaque arm below is a third gap and is stated at its own line. */
+      if (response.ok || response.type === 'opaque') {
+        var clone = response.clone();
+        caches.open(CACHE_NAME).then(function(cache) {
+          return cache.put(event.request, clone);
+        }).catch(function() {});
+      }
       return response;
     }).catch(function() {
       /* SCOPED read. `caches.match(request)` is CacheStorage.match, which searches

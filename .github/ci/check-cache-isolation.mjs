@@ -391,7 +391,14 @@ const preStore = new FakeCacheStorage();
 const installing = loadWorker(SW, scopeUrl, preStore);
 await installing.dispatch('install');
 const ownCache = await preStore.open(installing.get('CACHE_NAME'));
-const precached = await ownCache.keys();
+/* cache.keys() yields Request-LIKE objects, as the real Cache API does. It used to
+ * yield bare strings; PUP-WO-0105 corrected the fixture and this call site had to
+ * follow, which check 7 caught by mispredicting A14 — the precache-escape defect went
+ * GREEN because every key had become an object and the scope test silently passed.
+ * That is what check 7 is for. The normalisation below is therefore load-bearing for
+ * the scope test that follows, not cosmetic: without it every `new URL(u, scopeUrl)`
+ * stringifies an object and no path can ever start with scopePath. */
+const precached = (await ownCache.keys()).map((k) => (typeof k === 'string' ? k : k.url));
 if (precached.length) ok(`[${scopeLabel}] install precached ${precached.length} entr(ies) into its own cache`);
 else bad(`[${scopeLabel}] install precached NOTHING — no offline capability at all (invariant 3)`, 'urlsToCache is empty or addAll never ran');
 

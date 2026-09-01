@@ -336,7 +336,17 @@ run('B6  cache handle put/match made inert, WITH the origin-wide read', {
   sw: [[`      return caches.open(CACHE_NAME).then(function(cache) {
         return cache.match(event.request);
       }).then(function(hit) {`, `      return caches.match(event.request).then(function(hit) {`]],
-  harness: [[`      put: async (req, res) => { store.set(typeof req === 'string' ? req : req.url, res); },`,
+  /* Anchor updated by PUP-WO-0105 round 3, which gave put() a write-attempt counter
+   * and a simulated-quota throw. THE MUTATION IS UNCHANGED — an inert put, with the
+   * origin-wide read present. Updating the anchor is the maintenance this check's own
+   * error message asks for; deleting the mutation would remove the only evidence that
+   * the cache handle is load-bearing. */
+  harness: [[`      put: async (req, res) => {
+        const url = this._key(req);
+        this.putAttempts.push(url);
+        this._admit(store, url);
+        store.set(url, res);
+      },`,
              `      put: async () => {},`]],
 });
 
