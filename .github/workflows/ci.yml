@@ -73,7 +73,21 @@ concurrency:
   # This does NOT let two publications race: the publish job below carries its own
   # `pages-publish` group with cancel-in-progress false, so deployments serialise
   # even though their runs no longer share a group.
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # THREE EVENT KINDS, THREE ANSWERS — and the third was missed on the first attempt.
+  #   pull_request      -> by ref. A newer push to a PR supersedes the older run; that
+  #                        is the one case where cancelling is what you want.
+  #   push              -> by COMMIT. Every commit that lands gets its own verdict.
+  #   workflow_dispatch -> by RUN. Each dispatch is a deliberate act and none may
+  #                        evict another.
+  #
+  # The dispatch case is a correction to this fix, found by it happening again.
+  # Keying pushes by github.sha looked like it covered everything — but for a
+  # workflow_dispatch github.sha is the SHA OF THE BRANCH HEAD, identical across
+  # every dispatch on that branch. Three refusal demonstrations were dispatched
+  # seconds apart against one branch; they shared a group, and the middle one was
+  # cancelled while pending. Same mechanism, same silent outcome, one event kind
+  # over: a run that is neither green nor red and reads as "not finished yet".
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'workflow_dispatch' && github.run_id || github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
