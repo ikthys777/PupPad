@@ -355,3 +355,103 @@ where that has been true.
 **Three false greens from me in one day** — a pointer resolver that reported success on
 a crashed check, this demonstration, and the acceptance-6 claim. All three had the same
 shape: a verdict read instead of what produced it.
+
+---
+
+# ROUND 3 — the fix must be able to ARRIVE (§0a)
+
+The guard is unchanged and was not reopened. Round 3 is the install path.
+
+## §0a.2 — the discrimination, measured
+
+Driven through `cache.addAll` in Chromium with the origin quota capped over CDP:
+
+| failure | ctor / name | `isDOMException` | `isTypeError` |
+|---|---|---|---|
+| 404 on a `urlsToCache` entry | `TypeError` | false | **true** |
+| quota exhausted | `QuotaExceededError` | **true** | false |
+
+**Cleanly separable through `addAll`**, so the per-URL `fetch`+`put` fallback the work
+order allowed for is not needed. Predicate is `err.name === 'QuotaExceededError'` —
+`name` rather than `instanceof DOMException`, because it survives a cross-realm
+rejection and the numeric `code` is deprecated.
+
+A first attempt at this measurement was **inconclusive and I did not report it as
+conclusive**: the filler stopped 600 KB short, so `addAll` resolved and I had observed
+`put` throwing quota, not `addAll`. Tightening the fill produced the row above.
+
+## §0a.3 — what reclaiming refuses, and the ranking
+
+**It refuses the Map panel its offline tiles.** The reclaim deletes this worker's own
+runtime entries, which are exactly leaflet, supabase and every cached tile.
+
+**CC-A's ranking — shell over map — I could not falsify, and I tried.** The argument
+that holds: a shell that will not load has no tap out of it, so invariant 5 is
+violated with no recovery; a map that will not load leaves the console working and
+every other panel reachable. Invariant 3 for the shell is the precondition for
+invariant 3 anywhere else. And the trade is only ever taken on a device that is
+*already* out of room, where the alternative is not "keep the tiles" but "the old
+unguarded worker stays and the shell stays poisoned".
+
+Two things that would have flipped it, neither of which holds:
+- if the reclaim ran on healthy devices — it does not; it is reachable only after a
+  `QuotaExceededError`;
+- if the tiles were unrecoverable — they are re-fetched on the next online map use,
+  whereas a poisoned shell needs an adult to open the app online, which §0 records a
+  three-year-old cannot produce.
+
+**Not a flag-and-stop.** Recorded as an answered question rather than an assumed one.
+
+## §0a.4 — the checks, recovered and wired
+
+Recovered from `d53dfbc^`, not rewritten. `ci.yml` now runs **ten** checks; the job was
+named "Seven checks" and the file header said "seven" — both corrected.
+
+| # | file | class |
+|---|---|---|
+| 8 | `check-error-caching.mjs` | the write, and the install, in a sandbox |
+| 9 | `demo-error-poisoning.mjs` | the poisoning and repair, real browser |
+| 10 | `demo-quota-install.mjs` | the install lifecycle, real browser |
+
+Both round-2 defects in them are fixed and each fix was verified against the mutant
+that previously passed: the demo's `<!DOCTYPE html>` control (satisfied by every error
+page) is now an identity assertion, and the check's assertion 3 now requires the
+fixture to have **served the status under test** and the worker to have made **zero
+write attempts** — the `puts` counter round 1 recommended, which I recorded and did
+not apply.
+
+**Red first, and the discrimination is narrow:** against `b87fd8c` — the guard with no
+reclaim — check 8 fails **only** its two install assertions and every guard assertion
+passes. Against `origin/main` it fails seven. A check that went red at any change
+would prove nothing.
+
+## Acceptance 7, one run
+
+    A squeezed   updatefound:installing -> installed -> activating -> activated
+                 shell {"status":200,"isApp":true}
+    B bad deploy updatefound:installing -> redundant (x2); old worker keeps control
+
+## What this round found in my own fixtures — four, all one shape
+
+1. **`FakeCacheStorage` had no `Cache.delete`.** A method the real API has. No check
+   could ever exercise a worker that deletes an entry, and every such worker died on
+   `cache.delete is not a function`.
+2. **Its `addAll` stored the raw relative key** (`./index.html`) where the real API
+   stores the resolved absolute URL. A worker matching its own precache by absolute
+   URL saw those entries as foreign — so my reclaim deleted what it was provisioning,
+   a defect that existed **only in the fixture**.
+3. **My 5c assertion passed against `origin/main`**, whose install cannot reclaim at
+   all: *"never deleted a precache entry"* is trivially true when nothing was deleted.
+   It now requires a reclaim to have occurred.
+4. **`demo-quota-install` printed three `ok`s over `lifecycle []`** — no update had
+   been offered. And `reg.active.state === 'activated'` is **true of the old worker**,
+   so that assertion passed in the red run too.
+
+**Same shape every time: I assert the absence of a symptom rather than the presence of
+the property.** Each was caught by running the assertion against something that should
+fail it — never by reading it.
+
+Also removed: a `${{ steps.pw.outputs… }}` reference to a step that does not exist,
+authored while wiring a check whose purpose is to stop unverified claims reaching the
+gate; and the demo's dependence on an unguarded predecessor, a premise that would have
+**evaporated the moment this merged**, silently turning the check into a no-op.
