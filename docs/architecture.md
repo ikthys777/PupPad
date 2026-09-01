@@ -264,6 +264,91 @@ Deleting it is how the gate goes quiet again.
 *(Found by `PUP-WO-0101`'s adversarial pass; confirmed at source by CC-A. All three
 points are the builder's, ratified here substantially as written.)*
 
+### 6.2 The `stable` ruleset — verified in both directions
+
+*Added 2026-09-01. Read from the ruleset API and re-proven with a real push; an
+earlier draft of this section asserted the opposite and was wrong, see below.*
+
+`Protect-stable` on `refs/heads/stable` carries **deletion**, **non_fast_forward**
+and **update**, and its `bypass_actors` carries **`RepositoryRole` id 5 —
+repository admin — at `bypass_mode: always`**, plus an `Integration` bypass that is
+**not** the App that mints this project's tokens.
+
+Both directions are established, which is the part that matters:
+
+- **It permits the human.** Repository admin bypasses `update` and
+  `non_fast_forward`, so Scotty can fast-forward-promote *and* force-push `stable`
+  backward. This was true from the day the ruleset was created.
+- **It refuses the token.** A minted installation token pushing to
+  `refs/heads/stable` returns `GH013 Cannot update this protected ref`, and `stable`
+  did not move — `2952aa1` before and after. **An installation token is not a
+  repository admin**, and that asymmetry is the firebreak.
+
+**Consequence for `PUP-WO-0103` §1.7: the rollback lever is removed, not hardened.**
+The human's promotion and rollback authority already exists structurally, verified in
+both directions. A workflow lever is a second and weaker mechanism for an authority
+already correctly implemented — and the pass showed it never moves the ref, so the
+next push to `main` silently republishes the tip. The **entire `workflow_dispatch`
+input surface** goes with it — but **only because the publish job gains a
+`pull_request` path first**, and that ordering is load-bearing.
+
+A bespoke verification mode that exists only to test is itself a second path to
+publication, needs its own gate, and that is exactly where `PUP-WO-0103`'s F2 lived.
+But the publish job's gate was `(push && (main || stable)) || workflow_dispatch`,
+with **no `pull_request` at all** — so the `demo/refuse-*` branches could not
+demonstrate anything through a PR, and all three archive refusals had in fact been
+exercised by dispatch. **Deleting the surface without adding the PR path would have
+made the archive refusals undemonstrable** — shipping the three steps between a
+poisoned tree and the child's tablet untested, permanently, which is the very
+failure a check-that-can-go-red exists to prevent.
+
+So the publish job runs on `pull_request` **without** the upload and deploy steps.
+It already needs nothing beyond `contents: read`; `pages: write` and `id-token:
+write` live on the `deploy` job alone, which stays gated to a push. The refusals are
+then demonstrated on **the path that actually publishes** — better evidence than a
+path built for demonstrating — and the dispatch surface is genuinely unnecessary
+rather than merely unwanted. *(CC-A's original ruling asserted the PR path already
+existed; the builder read the trigger and showed it did not, then proposed this.)*
+
+**The finding worth more than the fix: an instrument that cannot return a negative
+is not a test.** Two readings produced the wrong answer here, both incapable of the
+answer that would have corrected them:
+
+1. The read-only `gh` shim returned a ruleset response **with no `bypass_actors`
+   field at all**. A `KeyError` was read as *the list is empty* — **absence of the
+   field reported as absence of a value.** A response that omits a field cannot
+   distinguish "none" from "not shown."
+2. `git push --dry-run` printed `2952aa1..c0f3693 stable -> stable`, taken as proof
+   the token could reach `stable`. **`--dry-run` never sends the update, so the
+   server never evaluates the ruleset.** That line is git's *local prediction of what
+   it would attempt*, not a verdict. A dry run cannot fail the way a real push fails.
+
+This sharpens §8's rule rather than repeating it. It is not enough to ask the
+question — **the instrument must be capable of returning the answer you would need to
+hear.** Both of these could only ever produce the answer they produced. The
+correction came from a real push and a field-presence check, both of which could have
+come back the other way.
+
+**And P1 was never blocked by this.** An earlier draft of this section claimed
+`stable` was frozen against its owner and that P1 could not complete. That was
+false. P1 gate 3 is unsatisfiable today only because `PUP-WO-0103` has not merged and
+Pages has not been flipped — expected sequencing, not a defect.
+
+### 6.3 There is no `github-pages` branch, and there must not be one
+
+*Ruled 2026-09-01. Verified first: `git ls-remote --heads` shows no such ref.*
+
+Under the Actions build type Pages publishes by **artifact upload**, not by pushing a
+branch, so no `github-pages` ref is created and none is needed. Writing protection
+policy for it would protect nothing.
+
+**The policy is the inverse of the obvious one: the appearance of a `github-pages`
+branch is an alarm, not a thing to protect.** Its existence would mean someone
+introduced a branch-push deploy path — **a second route to publication that bypasses
+every gate `PUP-WO-0103` builds**, including the invariant-4 byte check and the
+prefix-bounded worker refusal. The question would be who created it and what
+publishes from it, not what ruleset to apply.
+
 ## 7. Deferred with intent — realtime co-op
 
 Not in scope, and deliberately not left to be bolted on. Phase 1 shapes itself so
@@ -410,6 +495,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.1 point 2 gains three refinements (a stub that cannot *pose* the question; the dangerous value can be ordinary success, so the assertion passes by not running; proving a detector is load-bearing needs a *sole* detector removed) plus the anchor-break-is-not-flakiness rule. §5 gains map-before-dispatch and search-for-the-belief. §8 gains the heartbeat ambiguity. | All from `PUP-WO-0102`, and all but one are the builder's, including a correction to a rule the builder itself wrote and CC-A had ratified. The two §5 entries are CC-A's own defects: a work order whose §2 forbade what its §3 required, and one wrong belief surviving two corrections because the search matched its wording rather than its meaning. |
 | 2026-09-01 | §8 gains four entries on liveness: ending a turn is not stalling; turn-boundary sampling cannot see between turns; busy/idle cannot answer *was this already underway* — only a start time can; and retract the false claim rather than everything attached to it. **No cadence change was made**; §5's pass-dispatch step stands as ratified. | A watchdog false positive was reported as a second stall, CC-A drafted a process redesign on it before confirming the session had stopped, and then **the correction repeated the error one level up** — asserting the builder had been running all along, on a signal that could not distinguish that from *started because it was told to*. The builder produced the timings that settled it. Recorded because the recurrence inside the correction is the reusable part, not the original alarm. |
 | 2026-09-01 | §8 gains the checkpoint-commit rule, in the form that survives an unexpected stop. | A builder stalled mid-fix holding 172 uncommitted lines that existed nowhere else. The instinct — *commit before you stop* — is right and unenforceable, because the stop was not chosen; stated as *commit each coherent unit as it is completed*, it fires during the work rather than at an end nobody can predict. Recorded with the asymmetry that prompted it: the architect's own tree happened to be clean, which was luck rather than discipline, and is the argument for the rule rather than against needing one. |
+| 2026-09-01 | §6.2 records the `stable` ruleset verified in **both** directions and removes `PUP-WO-0103`'s rollback lever and its whole dispatch surface; §6.3 rules that no `github-pages` branch exists or should, and that its appearance is an alarm. | The ruleset permits repository admin and refuses installation tokens, both now proven — the second by a real push returning `GH013` with `stable` unmoved. The authority the lever was built to provide already existed structurally, so the lever is removed rather than hardened, taking F1 and F2 with it. **Ordering matters: the dispatch surface could only be removed once the publish job gained a `pull_request` path, or the archive refusals would have become undemonstrable.** **The reusable finding is an instrument that cannot return a negative:** a shim response omitting `bypass_actors` was read as an empty list, and a `--dry-run` push was read as a verdict though it never reaches the server. Both could only produce the answer they produced. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance

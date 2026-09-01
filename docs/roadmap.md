@@ -63,7 +63,16 @@ stares at code:**
 - **Scotty flips Pages from `legacy` to GitHub Actions build type**, and later
   points Pages at the workflow. The Precision's `gh` is read-only and cannot
   (architecture §3). **P1 cannot complete without this.**
-- **Scotty creates the `stable` branch** and performs every promotion to it.
+- **Scotty creates the `stable` branch** and performs every promotion to it —
+  **verified possible**, not assumed: `Protect-stable` bypasses repository admin at
+  `bypass_mode: always` while refusing installation tokens (`GH013`, `stable`
+  unmoved). Rollback is the same authority in reverse, which is why
+  `PUP-WO-0103`'s workflow lever was removed rather than hardened. See
+  `docs/architecture.md` §6.2.
+- **Every human-track item above is an instruction, and gets the same
+  satisfiability test a work order gets** before it is relied on (architecture §5).
+  Test it with an instrument that could return the *other* answer: a dry run and a
+  response missing a field can each only confirm what you already believed.
 - **Scotty subscribes both ntfy topics** and confirms the decision tier is audibly
   distinct from the info tier.
 - **Scotty installs the `/stable/` copy** on Buddy's tablet as the home-screen icon
