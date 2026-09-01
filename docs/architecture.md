@@ -284,6 +284,24 @@ never been the fix for any of them.
 cites **against the frozen tree, not against `main`** — and **when the resolver
 reports a miss, print the surrounding lines of the cited file, never the count.**
 
+**Two more clauses, both earned on the rule's next two uses:**
+
+- **The resolver must FAIL CLOSED — an unresolvable check is a MISS, never a PASS.**
+  *(`PUP-WO-0105`'s builder, on its own resolver.)* It printed `ALL POINTERS RESOLVE`
+  while one of its probes had **crashed**: the probe was `node -e ... | tail -1`,
+  which **discards exit status**, and the line handed back was `Node.js v24.16.0` —
+  which reads exactly like a version report. The claim happened to be true; the
+  resolver had not established it. **The print-the-lines clause addresses false
+  REDS; this addresses false GREENS**, and the same tool produced one of each a
+  single work order apart. The mechanism is the wrong-process `$?` trap this project
+  has now recorded three times.
+- **Not every path-shaped string in a prompt is a pointer.** *(CC-A, resolving
+  `PUP-WO-0105`'s prompt.)* A resolver flagged `.github/ci/node_modules` as missing;
+  it is **gitignored and cited as environment advice about where to place a script**,
+  not as a file to read. Distinguish a citation-to-read from an environment
+  reference, or the resolver produces false reds on deliberately-absent paths and
+  gets muted — which is the failure the rule exists to prevent.
+
 That second clause is not decoration. **Member 4's enforcement is itself subject to
 member 3, and not incidentally: a pointer resolver's entire job is to turn absence
 into red, so every bug in it presents as a dangle.** It is the one check on this list
@@ -585,6 +603,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
 | 2026-09-01 | §6.1: member 4's rule gains its second clause — print the cited file's surrounding lines on a miss, never the count — because **member 4's enforcement is itself subject to member 3**. | The builder's, found while running member 4's first real enforcement, about a minute after it was ratified: a case-sensitive grep reported a quoted invariant as missing when it was present and materially identical. A pointer resolver exists to turn absence into red, so every bug in it presents as a dangle — making it the one check whose false positives are indistinguishable from its true positives without opening the file. The tool built to enforce *read what produced the verdict* did not obey it. |
 | 2026-09-01 | §6.4 added: the order is `PUP-WO-0105` → flip → `PUP-WO-0104`, and the "0104 before any `sw.js` change" constraint is restated as **a worker change must be gated by a check for the class it changes**. P1 closes on its own gate, with 0104 carried past it. | The constraint as written cut both ways — the co-architect spotted that it would gate 0105's own one-line fix for a defect live on the tablet. Restating it by *class* rather than by *file* resolves that without weakening it: 0105's acceptance requires building the check for its own defect class, so it brings the gate rather than bypassing it. |
+| 2026-09-01 | §6.1 member 4 gains two more clauses: the resolver must **fail closed**, and **not every path-shaped string is a pointer**. | Both from the rule's next two uses. The builder's resolver printed `ALL POINTERS RESOLVE` while a probe had crashed — `\| tail` discarded the exit status and returned a line that read like a version report; the claim was true and unestablished. CC-A's resolver then flagged a gitignored path cited as environment advice. **One false green and one false red from the same rule, one work order apart** — the print-the-lines clause covers only the red half. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
