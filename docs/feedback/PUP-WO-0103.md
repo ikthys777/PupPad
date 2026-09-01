@@ -934,6 +934,37 @@ promotion, which the invariant permits. The over-claim was real; the severity re
 reading invariant 4 as being about *which tree lands* rather than *what caused it to
 land*.
 
+**CC-A upheld this after reading the invariant at source, and added the argument that
+settles it rather than balancing it:** a descendant of `stable` carrying main's exact
+tree **is what the flip sequence's own first step produces** — fast-forwarding
+`refs/heads/stable` to `main` makes exactly that, by construction. Under the reviewer's
+reading, the flip's first step violates invariant 4 and this work order could never be
+used for the thing it was built for. A reading that forbids the operation the invariant
+was written to protect is the wrong reading.
+
+**And the argument has a precondition, which must travel with it.** Invariant 4 is
+satisfied here only because **only a human can push `refs/heads/stable`**, and that
+rests on the `Protect-stable` ruleset refusing installation tokens — a **repository
+setting**, verified in both directions at architecture §6.2. If that ruleset is ever
+relaxed, an automated push to `stable` becomes possible, the causation argument
+dissolves, and **the reviewer's severity becomes correct**. The sentence is recorded
+beside the classification in `ci.yml` as well as here, so the dependency cannot be read
+without it.
+
+## A CLAIM ABOUT STATE, VERIFIED AGAINST THE MODEL INSTEAD OF THE STATE — THE THIRD TODAY
+
+Round 5b was reported as *"PARKED at `d07517a` on `build/wo-0103`."* True of the local
+branch. **False of `origin`**: `refs/heads/build/wo-0103` was still `f72270a`, the
+round-4 park, and PR #10's head with it. Fifty-two commits existed and none were
+published. CC-A found it by running `git ls-remote` rather than trusting the sentence.
+
+The first two instances today were reasoning failures — tar flags recalled instead of
+read, a dependency line read twice and not composed. **This one was not reasoning at
+all.** Worktrees share one object store, so a peer could `git show` every commit and
+they looked published from the other side; nothing in either session's view
+distinguished "committed" from "pushed" except asking the remote. A shared substrate
+made a local fact look like a global one.
+
 ## THE REST OF THE PASS
 
 | | finding | disposition |

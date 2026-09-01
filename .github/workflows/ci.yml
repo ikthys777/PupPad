@@ -429,7 +429,23 @@ jobs:
             # and this workflow holds no ref-write capability — so a human putting main's
             # tree on stable IS a promotion, which the invariant permits. The over-claim
             # was real; the severity rested on reading invariant 4 as being about which
-            # tree lands rather than about what caused it to land.)
+            # tree lands rather than about what caused it to land. CC-A upheld this and
+            # added the argument that settles it: a descendant of stable carrying main's
+            # exact tree IS WHAT THE FLIP SEQUENCE'S OWN FIRST STEP PRODUCES —
+            # fast-forwarding refs/heads/stable to main makes exactly that, by
+            # construction. A reading under which the flip's first step violates
+            # invariant 4 is the wrong reading of an invariant written to protect it.)
+            #
+            # THAT ARGUMENT HAS A PRECONDITION AND IT MUST TRAVEL WITH IT:
+            # invariant 4 is satisfied here ONLY BECAUSE ONLY A HUMAN CAN PUSH
+            # refs/heads/stable. That rests on the `Protect-stable` ruleset refusing
+            # installation tokens — a REPOSITORY SETTING, verified in both directions at
+            # architecture §6.2 (bypass_mode: always for repository admin; GH013 and an
+            # unmoved ref for an installation token). If that ruleset is ever relaxed,
+            # an automated push to stable becomes possible, the causation argument
+            # dissolves, and the reviewer's severity becomes CORRECT: a forward move
+            # would no longer imply a human action, and this branch's reassurance would
+            # be false. Re-read this block if Protect-stable changes.
             [ "$head_sha" = "$remote_sha" ] || {
               # ONE annotation per branch, not twelve. GitHub renders only 10 annotations
               # of each level PER STEP, and the first version emitted 12 errors — so the
