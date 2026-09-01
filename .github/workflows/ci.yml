@@ -410,6 +410,51 @@ jobs:
           [ "$fail" = 0 ] || exit 1
           echo "OK: both published copies are byte-for-byte their own commit's tree."
 
+      - name: Install the browser
+        # BEFORE the per-copy checks, not after — found by a real run.
+        # Check 6 (demo-two-path-caches) drives Chromium, and it sits inside the
+        # per-copy loop below. With this step after that loop, check 6 failed for
+        # BOTH copies with "Executable doesn't exist at .../chrome-linux/chrome" and
+        # the publish job went red for a reason that had nothing to do with the
+        # copies it was judging. That ordering came forward from PUP-WO-0101, where
+        # the publish job had never once executed, so nothing could have caught it.
+        working-directory: .github/ci
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: "Check 5 against the /stable/ copy specifically — invariant 4's call site"
+        # PUP-WO-0103 §1.3, ruled from PUP-WO-0102's F1. This runs BEFORE the general
+        # per-copy loop, and the ordering is load-bearing rather than cosmetic.
+        #
+        # It was originally placed after the loop, and the first real run showed why
+        # that is wrong: the loop failed, so this step was SKIPPED, and the named call
+        # site that acceptance item 5a exists to demonstrate never executed at all. A
+        # call site that only runs when nothing else has gone wrong is not a call
+        # site — it is the H1 defect again, one layer up: the principle was written
+        # down and the thing that invokes it was unreachable.
+        #
+        # First, so its precise diagnostic is what a human reads. The loop below is
+        # the general backstop, and if someone later narrows the loop this step still
+        # fails and still says why.
+        #
+        # THE LIVE CASE: refs/heads/stable is 2952aa1, whose sw.js is
+        # `var CACHE_NAME = 'pup-pad-v16'` with `names.filter(n => n !== CACHE_NAME)`
+        # and `caches.match(event.request)` — origin-wide on BOTH the reap and the
+        # read. Published at /stable/ alongside a v17 root, it would delete the root
+        # cache on every activation, and the root worker's legacy exception would
+        # delete pup-pad-v16 — which IS stable's live cache — on every activation of
+        # its own. Mutual destruction, forever, not once.
+        run: |
+          set -euo pipefail
+          if node .github/ci/check-cache-isolation.mjs dist/stable; then
+            echo "the promoted copy's worker touches only what it owns."
+          else
+            echo "::error::THE /stable/ COPY'S WORKER IS NOT PREFIX-BOUNDED."
+            echo "::error::Publishing it would destroy the root copy's cache on every activation,"
+            echo "::error::and the root worker would destroy this one's. REFUSING TO PUBLISH."
+            echo "::error::If refs/heads/stable is still behind PUP-WO-0102, fast-forward it."
+            exit 1
+          fi
+
       - name: "Check EVERY published copy, in the run that publishes it"
         # PUP-WO-0103 §1.3. The rule an earlier version got wrong: the checks job only
         # ever examines the TRIGGERING ref, so a push to main would publish stable's
@@ -454,36 +499,6 @@ jobs:
             echo "::endgroup::"
           done
           [ "$fail" = 0 ] || exit 1
-
-      - name: "Check 5 against the /stable/ copy specifically — invariant 4's call site"
-        # PUP-WO-0103 §1.3, ruled from PUP-WO-0102's F1. The loop above already runs
-        # check 5 on both copies; this exists as a SEPARATE, NAMED step because a
-        # principle buried inside a loop is a principle nobody can point at, and
-        # because acceptance item 5a names it by step. If someone later narrows that
-        # loop, this step still fails and the failure says why.
-        #
-        # THE LIVE CASE: refs/heads/stable is 2952aa1, whose sw.js is
-        # `var CACHE_NAME = 'pup-pad-v16'` with `names.filter(n => n !== CACHE_NAME)`
-        # and `caches.match(event.request)` — origin-wide on BOTH the reap and the
-        # read. Published at /stable/ alongside a v17 root, it would delete the root
-        # cache on every activation, and the root worker's legacy exception would
-        # delete pup-pad-v16 — which IS stable's live cache — on every activation of
-        # its own. Mutual destruction, forever, not once.
-        run: |
-          set -euo pipefail
-          if node .github/ci/check-cache-isolation.mjs dist/stable; then
-            echo "the promoted copy's worker touches only what it owns."
-          else
-            echo "::error::THE /stable/ COPY'S WORKER IS NOT PREFIX-BOUNDED."
-            echo "::error::Publishing it would destroy the root copy's cache on every activation,"
-            echo "::error::and the root worker would destroy this one's. REFUSING TO PUBLISH."
-            echo "::error::If refs/heads/stable is still behind PUP-WO-0102, fast-forward it."
-            exit 1
-          fi
-
-      - name: Install the browser
-        working-directory: .github/ci
-        run: npx --no-install playwright install --with-deps chromium
 
       - name: "Load every published copy in a real browser"
         run: |
