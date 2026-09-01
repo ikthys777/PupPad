@@ -77,6 +77,25 @@ var CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
  * both deploy paths have been live long enough that any install has activated at
  * least once. Deleting it early costs one cache refill; keeping it forever costs
  * a standing exception to the rule the rest of this file exists to enforce.
+ *
+ * WHAT THIS EXCEPTION KNOWINGLY DOES NOT COVER, stated so the choice is visible.
+ * Sixteen cache names have existed on main: pup-pad-v1, v3, and v4 through v16
+ * (there was never a v2). Only v16 is listed here, so a device that last loaded
+ * PupPad at v1-v15 and has not loaded since keeps that cache FOREVER — a bounded
+ * reap cannot reach it, and no later worker will either.
+ *
+ * That is a leak, not a violation: such a cache is never read (the offline read is
+ * scoped to CACHE_NAME) and never served, so invariants 3 and 7 hold regardless. It
+ * is also self-limiting — the currently-live v16 worker reaps origin-wide, so every
+ * device that has loaded since 2026-07-12 holds v16 and nothing older.
+ *
+ * It was left at ONE literal deliberately. ikthys777.github.io is a SHARED ORIGIN
+ * across every one of this account's Pages repositories, so each name listed here
+ * is another unconditional origin-wide deletion — and this exception is the single
+ * place where that rule is broken. Trading a permanent, invisible, shrinking leak
+ * for fifteen more origin-wide deletions is a widening of the one thing this file
+ * warns returns "disguised as cleanup", and it is the architect's call, not the
+ * builder's. Raised as decision-needed in docs/feedback/PUP-WO-0102.md.
  */
 var LEGACY_CACHE_EXACT = 'pup-pad-v16';
 
@@ -103,12 +122,22 @@ var FOREIGN_SUBTREE = (SCOPE_PATH === null || IS_STABLE_WORKER) ? null : SCOPE_P
  * encodings is unbounded — %73, %2F, //, dot segments, unicode, and whatever is
  * not yet thought of.
  *
- * So: canonicalise once, and require the request to have ARRIVED canonical. A
- * path that is not already in canonical form is one this worker cannot predict
- * the server's resolution of, so it is declined rather than guessed at. That
- * makes the rule an allowlist — serve only canonical paths inside my own scope
- * that are not inside a deeper deploy path — and its safety does not depend on
- * having imagined every encoding. */
+ * So: RESOLVE the path the way the server will, then compare the result. The
+ * comparison happens on the decoded, normalised form, which is what makes the rule
+ * an allowlist — serve only paths that resolve INSIDE my own scope and NOT inside a
+ * deeper deploy path — rather than a list of spellings to reject. Its safety does
+ * not depend on having imagined every encoding, because every encoding of the same
+ * file resolves to the same string.
+ *
+ * ONLY genuinely undecidable input is declined: a malformed escape, or a segment
+ * that decodes to a separator and so invents structure the server would honour and
+ * this worker would not. Ordinary encoding is decoded and compared on its real
+ * name. THIS PARAGRAPH USED TO SAY THE OPPOSITE — that a path must have ARRIVED
+ * canonical or be declined — and that is exactly the rule that refused
+ * "/my%20photo.png": served online, silently absent offline, northstar invariant 3
+ * (PUP-WO-0101 F7). The code was corrected and this comment was not, which is its
+ * own lesson: the comment survived the fix that falsified it, three lines above the
+ * function that no longer behaves that way. */
 function canonicalPath(pathname) {
   /* Decode PER SEGMENT, never the whole string at once.
    *

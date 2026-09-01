@@ -71,6 +71,16 @@ export function loadWorker(swPath, scope, cacheStorage) {
     self, caches: cacheStorage, URL, console,
     fetch: async () => { throw new Error('network disabled in harness'); },
     Promise, Response: globalThis.Response, Request: globalThis.Request,
+    /* TIMERS ARE PRESENT ON PURPOSE, and their absence was a hole.
+     *
+     * A real ServiceWorkerGlobalScope has them, so a worker may schedule a reap on
+     * a timer — outside waitUntil, where the browser does not guarantee it stays
+     * alive to finish (finding F9). Without setTimeout in this sandbox such a
+     * worker dies on a ReferenceError instead of being EVALUATED, which means the
+     * check could not have observed the defect it screens for: the same shape as
+     * the stub that returned undefined unconditionally (architecture §6.1). A
+     * sandbox that cannot host the defect is not a sandbox for it. */
+    setTimeout, clearTimeout, setInterval, clearInterval,
   };
   sandbox.self.self = sandbox.self;
   vm.createContext(sandbox);

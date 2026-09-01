@@ -102,6 +102,33 @@ for (const [name, why] of Object.entries(expectKept)) {
   else bad(`reap DELETED ${why} — this is the origin-wide reap (architecture §6)`, name);
 }
 
+/* ---- 2b. F9: nothing may touch a cache AFTER activate's waitUntil settles ----
+ *
+ * `dispatch()` awaits every promise the handler passed to waitUntil, so a reap
+ * inside it is fully observed HOWEVER SLOW it is — that half needs no window. The
+ * hole is a deletion scheduled outside the event: `setTimeout(function(){
+ * caches.delete(x); }, 5000)` mutates the origin while every assertion above has
+ * already measured, and passes. It is also genuinely broken, not merely invisible —
+ * the browser only guarantees the worker stays alive for the duration of waitUntil,
+ * so a deferred reap may be killed halfway through.
+ *
+ * So rather than sleeping and re-reading — which only catches timers shorter than
+ * whatever sleep is chosen — a TRAP is installed on the store: from here to the end
+ * of the run, any deletion at all is recorded and fails the check. The bounded wait
+ * below only exists to give a short timer its chance to fire; a timer longer than
+ * the remaining process lifetime still escapes, and that limit is stated rather
+ * than papered over. (Finding F9, PUP-WO-0101 — undocumented before that pass.) */
+const afterSettle = [];
+const realDelete = store.delete.bind(store);
+store.delete = async (name) => { afterSettle.push(name); return realDelete(name); };
+await new Promise((r) => setTimeout(r, 250));
+if (afterSettle.length === 0)
+  ok("no cache was touched after activate's waitUntil settled (the reap lives inside the event)");
+else
+  bad('a cache was deleted AFTER activate settled — the reap runs outside waitUntil',
+      `${afterSettle.join(', ')} — the browser may kill the worker mid-deletion, and every ` +
+      'assertion above has already measured');
+
 /* ---- 3. The legacy exception matches nothing but the exact literal ---- */
 const nearMisses = ['pup-pad-v16x', 'xpup-pad-v16', 'pup-pad-v1', 'pup-pad-v17', 'PUP-PAD-V16'];
 const store2 = new FakeCacheStorage([rootName, ...nearMisses]);
@@ -177,6 +204,27 @@ const crossStore = new FakeCacheStorage();
 const stableSeed = loadWorker(SW, STABLE_SCOPE, crossStore);
 const stableCache = await crossStore.open(stableSeed.get('CACHE_NAME'));
 await stableCache.put(shared, 'BYTES FROM THE OTHER DEPLOY PATH');
+
+/* POSITIVE CONTROL — prove the FIXTURE before trusting the assertion.
+ *
+ * This assertion is the only one in this file that rests entirely on stubs whose
+ * degenerate value is also a LEGITIMATE one. An inert `put()` and a blind
+ * origin-wide `match()` both mean "cache miss" — and a cache miss is exactly what a
+ * PASS looks like here, so neither would contradict anything. That is the precise
+ * shape of the architecture §6.1 blindness: not "a stub was wrong" but "a stub's
+ * broken answer was indistinguishable from its correct one".
+ *
+ * Elsewhere the check is self-defending by symmetry — it asserts what must go as
+ * well as what must stay, what must be served as well as what must be declined —
+ * so a neutered stub contradicts some other assertion and fails loudly. Here there
+ * is no such counterweight, so the seed is proven REACHABLE before its absence is
+ * accepted as evidence of correctness. */
+const seedReadback = await crossStore.match(shared);
+if (seedReadback === 'BYTES FROM THE OTHER DEPLOY PATH')
+  ok('cross-path seed is reachable through the store (the next assertion is not vacuous)');
+else
+  bad('the cross-path seed did not take — the offline-read assertion below would pass VACUOUSLY',
+      'FakeCacheStorage.put or its origin-wide match is inert, and a cache miss is what a PASS looks like here');
 
 const rootOffline = loadWorker(SW, ROOT_SCOPE, crossStore);
 let servedOffline;

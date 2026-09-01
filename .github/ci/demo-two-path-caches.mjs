@@ -161,6 +161,51 @@ else bad('root worker CACHED a /stable/ asset under the root prefix — invarian
 if ((await keys(root)).length === before.length) ok('no new cache was created by that request');
 else bad('a new cache appeared during the /stable/ probe', (await keys(root)).join(', '));
 
-await context.close(); await browser.close(); server.close();
+/* ---- item 5, SECOND HALF: offline cold-load after the legacy migration ----
+ *
+ * §3.5 does not stop at "legacy reaped, new cache built" — it ends "offline
+ * cold-load succeeds", and that is the half Buddy actually experiences. A migration
+ * that deletes the old cache and then cannot serve from the new one is STRICTLY
+ * WORSE than no migration at all: it converts a stale-but-working tablet into a
+ * blank one, offline, with no adult able to tell why (northstar invariant 3).
+ *
+ * The expected title is taken from the ONLINE load rather than written here as a
+ * literal. Hardcoding it would reproduce finding F2 exactly — check 6 pinned 'v17'
+ * once already and went red the moment check 3 MANDATED a bump, so the two checks
+ * contradicted each other on every app change. A check that cannot survive a
+ * legitimate edit to the app is a check that gets deleted. */
+const onlineTitle = await root.title();
+
+/* OFFLINE IS THE SERVER BEING GONE, not context.setOffline(true).
+ *
+ * setOffline was tried first and DID NOT WORK: a mutant whose offline fallback
+ * returns undefined — serving nothing at all — passed this assertion green. The
+ * flag does not stop a service worker's own fetch reaching a loopback server, so
+ * the worker kept being handed live bytes and "offline" tested nothing. That is a
+ * stub that cannot fail, found in the assertion added to prove the merge-day path,
+ * inside the work order whose §3.7 is about exactly this.
+ *
+ * Closing the listener and its keep-alive sockets is unambiguous: nothing can
+ * answer on that port, so anything served now came out of the Cache API. */
+server.closeAllConnections?.();
+await new Promise((r) => server.close(r));
+
+const cold = await context.newPage();
+let coldTitle = null, coldControlled = false, coldErr = null;
+try {
+  await cold.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
+  coldTitle = await cold.title();
+  coldControlled = await cold.evaluate(() => !!navigator.serviceWorker.controller);
+} catch (e) { coldErr = e.message; }
+
+if (coldTitle && coldTitle === onlineTitle)
+  ok(`offline cold-load served the console from cache after the legacy migration (item 5): ${JSON.stringify(coldTitle)}`);
+else
+  bad('offline cold-load FAILED after the legacy migration — the tablet is blank with no network',
+      coldErr || `expected ${JSON.stringify(onlineTitle)}, got ${JSON.stringify(coldTitle)}`);
+if (coldControlled) ok('the offline page is controlled by the worker that served it');
+else bad('the offline page loaded but is NOT worker-controlled', 'it was served by the HTTP cache, so this proved nothing about sw.js');
+
+await context.close(); await browser.close();   /* the server is already closed, above */
 if (fails.length) { console.error(`\nCHECK 6 FAILED — ${fails.length}:`); for (const f of fails) console.error('  ' + f); process.exit(1); }
-console.log('\nCHECK 6 PASSED — acceptance items 4, 5 and 6 hold in a real browser across both paths.');
+console.log('\nCHECK 6 PASSED — acceptance items 4, 5 (including offline cold-load) and 6 hold in a real browser.');
