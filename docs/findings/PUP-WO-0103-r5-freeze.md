@@ -62,3 +62,63 @@ working around it, because a reader trusts a field.
 | `1b708c57a1a8a759a6c87165e50efb95f714dd97d34e2cb060fb87b327b5adf0` | `docs/findings/PUP-WO-0103-adversarial.md` |
 | `22c385eaf30865f11930b2050e715053bb30ce616567ec4f50d7c8ce7c498948` | `index.html` |
 | `d9a1c3b3d30d992212799dec017299253c557b77319cdf3f8a39c1c074919130` | `sw.js` |
+
+---
+
+## DISPOSITION RE-VERIFY — the other half of the procedure
+
+Re-verified after the pass and after the fixes, from the repo root:
+
+```sh
+sha256sum -c docs/findings/PUP-WO-0103-r5-freeze.sums
+```
+
+**16 of 21 unchanged. Exactly five moved, and all five are the fixes the pass
+required:**
+
+| file | why it moved |
+|---|---|
+| `.github/workflows/ci.yml` | the three-exclude model, `LC_ALL=C`, the anchored pattern, the post-stamp step, `grep -zqE`, corrected citations |
+| `.github/ci/check-cache-isolation.mjs` | null/undefined guard on all four values, fabricated-evidence fix, empty-rejection message |
+| `.github/ci/check-mutations.mjs` | tmpdir leak on anchor failure |
+| `.github/ci/check-error-caching.mjs` | the `PUP-WO-0600` misattribution |
+| `docs/feedback/PUP-WO-0103.md` | the ROUND 5 disposition |
+
+**`sw.js` is byte-identical to the freeze**, which is the claim that matters most:
+round 5 touched no worker code.
+
+## DISPOSITION FREEZE — 22 deliverables, at `df7a58a72cd2bcacd69e11018306b88cd30f1f23`
+
+This one **includes `.github/ci/package-lock.json`**, whose omission from the pass
+freeze the audit caught: it pins Playwright, Playwright is what checks 4, 6, 9 and 10
+actually do, and it was therefore the one tracked file that could change a verdict
+without changing a hash.
+
+```sh
+sha256sum -c docs/findings/PUP-WO-0103-r5-disposition.sums
+```
+
+| sha256 | file |
+|---|---|
+| `02be166f87dc5c24fc2f14ac486b59737cc8a5b6c3ae5af40924bd98e252b03e` | `.github/ci/lib/inline-script.mjs` |
+| `0ae90bebe45c986764f992b7ec473ecfbf7a53a98938b70cd4fa9b26d4df2e25` | `.github/ci/check-assets.mjs` |
+| `136050bf555527c2fd4c9bce6e0a5f336bd971e5437325e93e7b4586d7b5814d` | `.github/ci/check-load.mjs` |
+| `1b708c57a1a8a759a6c87165e50efb95f714dd97d34e2cb060fb87b327b5adf0` | `docs/findings/PUP-WO-0103-adversarial.md` |
+| `22c385eaf30865f11930b2050e715053bb30ce616567ec4f50d7c8ce7c498948` | `index.html` |
+| `44ee253963d2ed4fafaecb24bd6c48ff264b129c759f82dcec875a76176616e6` | `.github/ci/lib/sw-harness.mjs` |
+| `4d56952b0fb13bf8f9b6c13a6d4c34a075bac3af447636a1df4335d7576e2f97` | `.github/ci/.gitignore` |
+| `59d64710116450c178c624f4328ab7134089a096177a3cda91118cf481681cd0` | `.github/ci/demo-error-poisoning.mjs` |
+| `8fa34aad69c9010895e50db3ea77d716d3018493446708aa266a0ca56cde8b28` | `.github/ci/lib/sw-cdp.mjs` |
+| `a0eda4aea17c9d35fad5bbfd4792ea6581cfeebdbb8ead24c060165b2dc52014` | `.github/ci/demo-quota-install.mjs` |
+| `a9ad152a4200d561b0d2740ba34cfff0c811cdd14e17012a3d3e7aeecb9bdddb` | `.github/ci/check-syntax.mjs` |
+| `b17e50cf065e2666d4184cd8306589194049acef84a6a921dc4d95a06bd44325` | `.github/ci/check-two-trees.mjs` |
+| `b50bfeaf378f9366706502644b76af9a57cb18c9005d70b437443f938c66f982` | `docs/feedback/PUP-WO-0103.md` |
+| `c923e4a07d625078df83958f21232d0466fc351c47965956713c47fd0a917feb` | `.github/ci/demo-two-path-caches.mjs` |
+| `d14cd658278d27670f0cb5b30c4435d12e0071908826b2a9ddc235e6a2a7ee05` | `.github/ci/package-lock.json` |
+| `d9a1c3b3d30d992212799dec017299253c557b77319cdf3f8a39c1c074919130` | `sw.js` |
+| `dc0c191445034e64d22c3d443ee41e8970f8819e2cb19e0e5b30a0615bc7cf7a` | `.github/workflows/ci.yml` |
+| `dd1b0f948ce4e85d1fc9bb00bb6d9a2e0b2444908c81ddaba82548a99a851426` | `.github/ci/package.json` |
+| `e345507526bba7f53dcc9866ab90f19e1d276958d8f3fa73ec7274afebaeccbd` | `.github/ci/check-error-caching.mjs` |
+| `ede023abd50bf579717315117a7e077c3aa64bba1068ff04444839bc711a268e` | `.github/ci/check-mutations.mjs` |
+| `eef22d18977c1cf6f30d8c7913d80b7e9cc8839e6b1ef594044bab8e9b188fe2` | `.github/ci/check-cache-isolation.mjs` |
+| `fd97af461d6dc65010870cc6a06a604b89b3ea8f63fe4d0795b6d3f5b5e45dcb` | `.github/ci/check-cache-name.mjs` |

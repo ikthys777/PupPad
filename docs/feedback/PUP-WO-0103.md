@@ -657,3 +657,197 @@ cancelled or absent run does not publish, demonstrated, not reasoned"* — is ne
 demonstrated, flagged, nor waived.
 
 **Parked for review. Not merging.**
+
+---
+
+# ROUND 5 — the dispatched fixes, and the pass that found two fail-opens in them
+
+Subject frozen at `9e44be4`, 21 deliverables hashed
+(`docs/findings/PUP-WO-0103-r5-freeze.md`). Four independent lenses. Every claim
+below was reproduced by me against the artifact before being written down — two
+lenses contradicted each other on one finding and one lens overturned a round-5
+correction of mine, so this was not a formality.
+
+## HOW TO READ THIS FILE'S OWN CITATIONS — the same treatment the findings file got
+
+The `ROUND 4` section above was written against `246c5f7`. **Its seven line citations
+no longer resolve**, and they now land on unrelated text rather than failing:
+`ci.yml:471`, `ci.yml:578`, `sw.js:337`, `sw-harness.mjs:130`,
+`check-mutations.mjs:349`, `check-cache-isolation.mjs:299` and `:346`. Each was
+correct at `246c5f7` and is verifiable there with
+`git show 246c5f7:<path> | sed -n '<N>p'`. They are **not re-anchored**, for the
+reason the findings file gives: a record edited to stay convenient is not evidence.
+Round 5's citation-marking block was applied to `PUP-WO-0103-adversarial.md` and NOT
+to this file, which was itself an instance of the defect it was fixing. This
+paragraph is the correction.
+
+**Round-4 statements that are FALSE NOW, left standing above with the measurement here:**
+
+| statement | measured 2026-09-01 |
+|---|---|
+| *"`refs/heads/stable` … is 43 commits behind"* (§ROUND 4) | **82** (`git rev-list --count 2952aa1..origin/main`). True when written. S1 itself still holds — `origin/stable` is still `2952aa1`. |
+| **G6**: *"Architecture §6 requires CI to assert it [non-nesting]"* | `architecture.md:189` requires only *"that the two prefixes differ and that the reap is prefix-bounded."* **Non-nesting appears nowhere** — the sole `nest` substring in the file is inside `unestablished`. The finding may be sound; the authority cited is stronger than the authority. |
+| `:498` — recommends a §6.1 addition *"beside the existing family. It is a distinct member"* | It is already **member 3**, verbatim: *"A failure whose cause is not the one under test."* Reads as an open recommendation for settled text. |
+
+## THE HEADLINE: I OVERRULED A CORRECT ROUND-4 FINDING, AND ROUND 4 WAS RIGHT
+
+Round 4 said a future `.well-known/assetlinks.json` would be silently dropped from
+publication. Round 5 "corrected" that — *"It would NOT … run it and they are there"*.
+**False.** `actions/upload-pages-artifact@v4` passes **three** excludes:
+`--exclude=.git --exclude=.github --exclude=".[^/]*"`. The step is `shell: sh`, the
+quotes strip, tar receives the glob, and **every dotfile at any depth is dropped**.
+
+| invocation | assetlinks | `_headers` | `.gitkeep` |
+|---|---|---|---|
+| two excludes, as round 5 claimed | 1 | 1 | 1 |
+| three excludes, as the action actually passes | **0** | 1 | **0** |
+
+`_headers` has no leading dot and survives either way, so it **discriminates nothing**
+— and round 5 cited it as corroboration. The discriminating file is a dotfile.
+
+**How the wrong answer was reached, which is the part worth keeping:** the flags were
+reasoned from memory and the "verification" then ran against the imagined flag list.
+That is [ask what the fix refuses] failing in its purest form — I verified against the
+failure I had invented. And the answer was already in this repository:
+`PUP-WO-0103-adversarial.md:1512` states all three flags, notes the third is v4-only,
+and records that a lens resolved that exact disagreement **by fetching the action**. I
+contradicted evidence sitting in the file I was annotating.
+
+**Live on this tree**, not hypothetical: `docs/findings/.gitkeep` and
+`docs/work-orders/.gitkeep` are hashed, declared published, and never published.
+
+Two further round-5 corrections were also false and are corrected in place: the
+`-z --format` quoting claim (on git 2.43.0 `-z --format='%(path)'` and `-z --name-only`
+are byte-identical and raw — the code is right and round 4's *"-z fixes it"* was right;
+what is true is that a RICHER format quotes, and the claim recorded no git version),
+and the count *"52 files, 18 under .github/, 34 published"* (published was **32** when
+written; the tree is now 54/18/36).
+
+## TWO FAIL-OPENS, BOTH IN CODE I WROTE THIS ROUND
+
+| | mechanism | evidence |
+|---|---|---|
+| **LOCALE** | GNU grep in a UTF-8 locale (runners set `LANG=C.UTF-8`) treats a record containing an invalid byte as **binary**: warns to stderr, exits 0, and **omits the record**. Both manifests lost it identically, so `cmp` passed and a tampered Latin-1 `café.png` published under a green gate. | 1 of 2 records survived under `C.UTF-8`, 2 of 2 under `LC_ALL=C` |
+| **UNANCHORED TAB** | `EX_REC`'s leading `\t` matched an embedded TAB **inside a filename**, so `logo<TAB>.git` read as separator + path `.git`, was dropped from both sides, and is **not** excluded by tar. | differential oracle: `PUBLISHED BUT UNVERIFIED: logo\t.git` |
+
+Both closed: `export LC_ALL=C`, and the pattern anchored to the 40-hex oid.
+
+## THE GATE WAS NOT THE LAST WORD ON THE ARTIFACT
+
+The byte assertion is step 9; the upload is step 19. The stamp step writes **three
+uncommitted files** in between — including one **into the promoted copy**, a file under
+`/stable/` that no human promoted. Any step in that window could add arbitrary bytes
+and nothing would notice. A new step 17 re-derives the published set from the directory
+actually uploaded and requires it to equal *(verified set) + (exactly those three
+declared paths)*. It runs on **every** trigger including pull requests, deliberately: a
+step behind `DRY_RUN` is a step nobody has watched work, which is how two false greens
+in this same job survived three rounds.
+
+## VERIFIED AGAINST THE TOOL, NOT AGAINST MY MODEL OF IT
+
+The exclusion model was checked with a differential oracle: run the action's own tar
+line, extract it, walk raw bytes, compare to what the step says it verified. Fixture:
+`mamá.png`, `-x.png`, `' lead.png'`, newline-in-name, `logo<TAB>.git`, Latin-1
+`café.png`, `.well-known/assetlinks.json`, `_headers`, `.hidden`,
+`deep/nested/.git/f`, plus the repo's 18 `.github` files and 2 `.gitkeep`.
+
+```
+real tar publishes: 41   step verified: 41
+fail-open: none | over-claim: none
+```
+
+RED on every tamper: Latin-1 name, tab name, newline name, `_headers`, fifo, symlink,
+file added after the gate, file added into the promoted copy after the gate, verified
+file removed after the gate. GREEN on a stray dotfile, which is **correct** — the
+uploader drops it, so it never reaches the site.
+
+**And a hang I introduced and caught:** switching to `! -type d` to catch fifos made
+`git hash-object` block forever on one — a 20-minute job timeout with no diagnostic,
+strictly worse than the silent publish it fixed. Non-regular entries are refused
+*before* hashing now.
+
+## DISPOSITION OF THE DISPATCHED ITEMS
+
+All thirteen fixed, each proven by execution. **B1** paths from `--name-only`;
+**B2** NUL throughout with `--` and explicit status (four ordinary filenames each
+wedged publication permanently under an invariant-4 message, and none tripped
+`set -euo pipefail`, because a failing `$(…)` inside a `printf` argument is not a
+command failure); **B3** `--no-filters`; **B4** submodules refused by name with a
+remedy; **B5** above; **B6** capture-then-trim. **M1** the call site no longer
+prescribes fast-forwarding `stable` for a crash — and **check 7 asserts** the exit-code
+split rather than trusting a comment (PART A must exit 1, never 3; observed `{1}`).
+**M2** annotations added, emitted unconditionally so check 7 exercises them; check 7's
+anchor error now names a file in the repo instead of a deleted tmpdir. **M3** remedies,
+now with *"and N more"* rather than a silent truncation under *"replace EACH"*.
+**O1/O2** simulated across five event/ref/sha combinations. **O3** stamp is a pure
+function of its commit, proven byte-identical across two runs a second apart.
+**Acceptance 8a** left the third state: reasoned half labelled as reasoning, *"say so"*
+half built, demonstration explicitly **waived** with the reason (cancelling is a
+write-scoped call; `git`/`gh` here are read-only by design). **The stale adversarial
+record** corrected by marking, citations deliberately not re-anchored.
+
+## THREE CITATIONS I CREATED IN THE ACT OF CITING THEM
+
+`PUP-WO-0109`, `PUP-WO-0600` and *"architecture §6.1 member 5"* each occurred **exactly
+once in the repository** — in the sentence that invented it. All three corrected in
+place and left unnumbered, because **a number reads as a reference**: it makes a reader
+believe something tracks the defect when nothing does, which is strictly worse than
+prose. `architecture.md:391` rebuts the `PUP-WO-0600` attribution *by name*, and the
+freeze idea is real but **unnumbered** at `architecture.md:318`. Whether it becomes
+member 5 is CC-A's call, not mine.
+
+## A CROSS-LENS DISAGREEMENT, SURFACED RATHER THAN AVERAGED
+
+One lens reported a SIGPIPE fail-open in the `.gitattributes` and `stable/` refusals —
+`tr` dying of 141 under `pipefail` when `grep -q` exits early, skipping the refusal
+silently — with a claimed 4–8 KB threshold. A second lens tested the same code and
+found no fail-open. **I could not reproduce it at any size**: `PIPESTATUS` was `0 0 0`
+at 16 KB, 82 KB and 166 KB, while a read-once consumer on the same pipeline gave
+`141 141 0`. The mechanism is real; `grep -q` is empirically not such a consumer.
+**Recorded as not-reproducible rather than quietly fixed.**
+
+It pointed at a real defect anyway, from the other lens: `| tr '\0' '\n' |` undoes the
+framing `-z` exists to provide. A tree containing `photo<NEWLINE>.gitattributes` and
+`art<NEWLINE>stable` — and **neither** a real `.gitattributes` **nor** a real `stable/`
+path — was refused by both steps, with remedies naming files that do not exist.
+Reproduced, then fixed with `grep -zqE` on the raw stream; both false refusals gone,
+both true refusals still fire. With `tr` gone the SIGPIPE question cannot be asked.
+
+## §7 — FLAG AND STOP, FOR CC-A
+
+**These are not builder calls and I have not attempted them.**
+
+1. **`pages-publish-push` is one slot for every push, and GitHub's pending queue has
+   depth 1.** O1 fixed the PR/push sharing it named and left the push/push sharing,
+   which is the same slot. A promotion's publish job pending behind a running one is
+   **evicted** by any third push. Usually the evicting run rescues it, because publish
+   checks out live refs — but only if *that* run's publish succeeds, and publish
+   carries refusals `checks` does not. Checks-green/publish-red on the evictor
+   **destroys the promotion**, and it cannot be re-pushed because it is already at that
+   SHA. **Not fixable by renaming the group:** serialising publications and never
+   dropping one are not both obtainable from `concurrency:`.
+2. **The `if: cancelled()` step cannot fire on the eviction in (1)** — a job evicted
+   while pending never gets a runner. The one path O1/O2 exist to eliminate is the one
+   path with no sentence in the log. Acceptance 8a's waived demonstration exercises the
+   *manual* cancel and would pass without touching this.
+3. **`pages-deploy` inherits the same depth-1 rule** and `deploy` has no
+   `if: cancelled()` step at all — silent by construction, not by accident.
+4. **The `ls-remote` race is now *more* reachable because of my O2 fix.** Under the old
+   `ci-<sha>` key a merge and a promotion of that commit evicted each other; now they
+   run in parallel, so `stable` moving between checkout and verification prints
+   `REFUSING TO PUBLISH — northstar invariant 4` for what is actually *"a human
+   promoted while I was building"* — the gravest message in the project, with no
+   remedy, on the one event where a human is most primed to reach for a fast-forward.
+
+## OUT OF SCOPE, RECORDED, NOT FIXED
+
+**G3 stands and it is worse than "cosmetic".** `${silent.length}` can only ever print
+`0` — a SILENT case exits at the escape check before the summary prints — so check 7's
+verdict line *"0 of 7 now fail SILENT"* is **a constant presented as a measurement, in
+the verdict of the check that exists to prove checks can fail.** It is dispositioned to
+`PUP-WO-0104` and CC-A ruled G1–G8 out of round 5, so I have not touched it; recording
+here that round 5 edited that file and left it, deliberately.
+
+**`check-two-trees.mjs` crashes (`ENOENT` via `cpSync`) on a Latin-1 filename.** Found
+because my adversarial fixture had one. No such file is in the tree, but the byte
+assertion now handles such names, so the two checks disagree about what is publishable.
