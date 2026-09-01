@@ -34,10 +34,29 @@ const bad = (m, detail) => { failures.push({ m, detail }); console.log(`  FAIL  
 const probe = new FakeCacheStorage();
 const rootW = loadWorker(SW, ROOT_SCOPE, probe);
 const stableW = loadWorker(SW, STABLE_SCOPE, probe);
-const rootPrefix = rootW.get('CACHE_PREFIX');
-const stablePrefix = stableW.get('CACHE_PREFIX');
-const rootName = rootW.get('CACHE_NAME');
-const stableName = stableW.get('CACHE_NAME');
+
+/* A worker with no CACHE_PREFIX at all is the PRE-PUP-WO-0101 file — the one whose
+ * activate handler reaps every cache on the origin by inequality. That is the
+ * exact hazard architecture §6 names, and this check is run against every copy
+ * about to be PUBLISHED, so it must say so in words rather than dying on a
+ * ReferenceError. It is how the §6 ordering stops being prose: a promoted copy
+ * carrying that worker cannot be published, whatever order the human steps run in. */
+const readOr = (w, name) => { try { return w.get(name); } catch { return undefined; } };
+const rootPrefix = readOr(rootW, 'CACHE_PREFIX');
+const stablePrefix = readOr(stableW, 'CACHE_PREFIX');
+const rootName = readOr(rootW, 'CACHE_NAME');
+const stableName = readOr(stableW, 'CACHE_NAME');
+
+if (rootPrefix === undefined || rootName === undefined) {
+  console.error('\nCHECK 5 FAILED — this copy\'s sw.js defines no CACHE_PREFIX.');
+  console.error('  That is the pre-PUP-WO-0101 worker, whose activate handler reaps by inequality:');
+  console.error('      names.filter(function(name) { return name !== CACHE_NAME; })');
+  console.error('  caches.keys() is ORIGIN-scoped, so publishing this copy alongside the other one');
+  console.error('  means each deletes the other\'s cache on every activation — northstar invariants');
+  console.error('  3 and 7 (architecture §6).');
+  console.error('\n  If this is the PROMOTED copy: fast-forward `stable` before publishing it.');
+  process.exit(1);
+}
 
 console.log(`  root   scope=${ROOT_SCOPE}\n         prefix=${rootPrefix}\n         name=${rootName}`);
 console.log(`  stable scope=${STABLE_SCOPE}\n         prefix=${stablePrefix}\n         name=${stableName}`);
@@ -105,6 +124,46 @@ const stableFetch = loadWorker(SW, STABLE_SCOPE, new FakeCacheStorage());
 const stableOwn = await stableFetch.dispatch('fetch', { request: { url: 'https://ikthys777.github.io/PupPad/stable/index.html' } });
 if (stableOwn.respondWithCalled) ok('stable worker serves its own path');
 else bad('stable worker declined its own path — the exclusion misfires on the stable copy', 'respondWith not called');
+
+/* ---- 5. finding 7: the legacy exception belongs to the ROOT worker only ---- */
+const store4 = new FakeCacheStorage([LEGACY, stableName]);
+const stableOnly = loadWorker(SW, STABLE_SCOPE, store4);
+await stableOnly.dispatch('activate');
+const left4 = await store4.keys();
+if (left4.includes(LEGACY))
+  ok("stable's worker leaves the ROOT's legacy cache alone (no cross-path deletion)");
+else
+  bad("stable's worker DELETED pup-pad-v16 — a cache the ROOT copy owns", 'root install left with no cache until next online load');
+
+/* ---- 6. finding 4: non-canonical paths that resolve INTO /stable/ ---- */
+const encodings = [
+  ['/PupPad/%73table/manifest.json', 'percent-encoded "s"'],
+  ['/PupPad/stable%2Fmanifest.json', 'encoded separator'],
+  ['/PupPad//stable/manifest.json',  'doubled slash'],
+  ['/PupPad/./stable/manifest.json', 'dot segment'],
+  ['/PupPad/x/../stable/index.html', 'dot-dot segment'],
+];
+const rootServe = loadWorker(SW, ROOT_SCOPE, new FakeCacheStorage());
+for (const [path, why] of encodings) {
+  const r = await rootServe.dispatch('fetch', { request: { url: 'https://ikthys777.github.io' + path } });
+  if (!r.respondWithCalled) ok(`root worker declines ${why}: ${path}`);
+  else bad(`root worker SERVES a path that resolves into /stable/ (${why})`, path);
+}
+/* and it must still serve its own ordinary traffic */
+for (const p of ['/PupPad/index.html', '/PupPad/icon-192.png', '/PupPad/games/gyre.js']) {
+  const r = await rootServe.dispatch('fetch', { request: { url: 'https://ikthys777.github.io' + p } });
+  if (r.respondWithCalled) ok(`root worker still serves ${p}`);
+  else bad('root worker declined a path it owns — the allowlist is too narrow', p);
+}
+
+/* ---- 7. a worker at a non-canonical scope must not leave an orphan cache ---- */
+const orphanStore = new FakeCacheStorage();
+const orphan = loadWorker(SW, 'https://ikthys777.github.io/PupPad//stable/', orphanStore);
+let unregistered = false;
+orphan.sandbox.self.registration.unregister = () => { unregistered = true; return Promise.resolve(true); };
+await orphan.dispatch('activate');
+if (unregistered) ok('a worker at a non-canonical scope unregisters itself instead of orphaning a cache');
+else bad('a worker at a non-canonical scope stayed registered', 'its prefix nests under neither deploy path, so nothing will ever reap it');
 
 /* ---- verdict ---- */
 if (failures.length) {

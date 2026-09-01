@@ -94,25 +94,24 @@ console.log(`  serving ${REPO} at ${ORIGIN}`);
 // version under test is pinned with the lockfile. PUPPAD_CHROMIUM overrides the
 // executable for local runs on a machine that already has a Chromium — the check
 // is about PupPad's console, not about which build renders it.
-// A fixed port is required because the CDP watcher connects to the browser
-// endpoint by URL before any page exists.
-const CDP_PORT = Number(process.env.CDP_PORT || 9333);
+// FINDING 12: a FIXED debug port is a shared resource. Another Chromium — a
+// concurrent run, an orphan from a timed-out run, a developer's browser — can
+// answer on it, and the watcher would then observe a healthy worker in someone
+// else's browser while the broken one under test went green. A random free port
+// makes collision vanishingly unlikely; assertLiveAndOurs() makes it detectable.
+const CDP_PORT = Number(process.env.CDP_PORT || 0) || await (async () => {
+  const { createServer } = await import('node:net');
+  return await new Promise((res) => {
+    const s = createServer();
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); });
+  });
+})();
 const launchOpts = { args: ['--no-sandbox', '--disable-dev-shm-usage', `--remote-debugging-port=${CDP_PORT}`] };
 if (process.env.PUPPAD_CHROMIUM) launchOpts.executablePath = process.env.PUPPAD_CHROMIUM;
 else launchOpts.channel = 'chromium';
 const browser = await chromium.launch(launchOpts);
 // Attach BEFORE any context exists, so the worker target cannot be created and run
 // its first evaluation before the watcher is listening.
-let swWatcher = null;
-try {
-  swWatcher = await attachServiceWorkerWatcher(CDP_PORT, { onError: (e) => record(ownErrors, e) });
-} catch (e) {
-  console.error(`\nCHECK 4 FAILED — could not attach the service-worker watcher: ${e.message}`);
-  console.error('  sw.js runtime coverage is not optional (PUP-WO-0101 §1.5). Failing rather than');
-  console.error('  silently reverting to the blind behaviour PUP-WO-0100 shipped.');
-  process.exit(1);
-}
-
 const context = await browser.newContext();
 
 const ownErrors = [];      // fails the check
@@ -157,6 +156,23 @@ function record(bucket, entry) {
   seen.add(key);
   bucket.push(entry);
 }
+
+let swWatcher = null;
+try {
+  // ownErrors/record are declared above this point on purpose: an error arriving
+  // during the attach would otherwise hit the temporal dead zone and throw a
+  // ReferenceError inside the socket handler (finding 18).
+  swWatcher = await attachServiceWorkerWatcher(CDP_PORT, {
+    onError: (e) => record(ownErrors, e),
+    originPrefix: ORIGIN,
+  });
+} catch (e) {
+  console.error(`\nCHECK 4 FAILED — could not attach the service-worker watcher: ${e.message}`);
+  console.error('  sw.js runtime coverage is not optional (PUP-WO-0101 §1.5). Failing rather than');
+  console.error('  silently reverting to the blind behaviour PUP-WO-0100 shipped.');
+  process.exit(1);
+}
+
 function onConsole(msg) {
   const loc = msg.location() || {};
   const where = loc.url ? `${loc.url}:${loc.lineNumber ?? '?'}` : '(inline)';
@@ -249,6 +265,16 @@ if (swWatcher.sessionCount() === 0) {
   swWatcher.close(); await context.close(); await browser.close(); server.close();
   process.exit(1);
 }
+try {
+  await swWatcher.assertLiveAndOurs();
+  console.log(`  worker observation verified live at end of run: ${swWatcher.workerUrls().join(', ')}`);
+} catch (e) {
+  console.error(`\nCHECK 4 FAILED — service-worker observation was not trustworthy: ${e.message}`);
+  console.error('  A session count proves an attach happened, not that anything was still watching');
+  console.error('  the browser under test. Failing rather than reporting a green nobody was looking at.');
+  swWatcher.close(); await context.close(); await browser.close(); server.close();
+  process.exit(1);
+}
 swWatcher.close();
 await context.close();
 await browser.close();
@@ -278,9 +304,21 @@ if (ownErrors.length) {
   process.exit(1);
 }
 
-if (swState !== 'active' && swState !== 'registered' && swState !== 'installing' && swState !== 'waiting') {
-  console.error(`\nCHECK 4 FAILED — the service worker did not register (state: ${swState}).`);
+/* FINDING 14. This previously accepted `installing` and `waiting` as a pass, so a
+ * worker whose install hangs — `event.waitUntil(new Promise(function(){}))`, which
+ * throws nothing — went GREEN with offline capability dead. And `controlled` was
+ * computed, printed, and never asserted, while PUP-WO-0100's F16 claimed the page
+ * was "verified to end up controlled". Both are assertions now. */
+if (swState !== 'active') {
+  console.error(`\nCHECK 4 FAILED — the service worker never reached "active" (state: ${swState}).`);
+  console.error('  A worker stuck installing or waiting throws nothing and serves nothing.');
   console.error('  index.html:1935 registers it; offline capability (northstar invariant 3) depends on it.');
+  process.exit(1);
+}
+if (!controlled) {
+  console.error('\nCHECK 4 FAILED — the worker is active but does not CONTROL the page.');
+  console.error('  An uncontrolled page is served entirely from the network, so nothing this');
+  console.error('  worker caches is ever used — invariant 3 fails silently.');
   process.exit(1);
 }
 console.log(`\nCHECK 4 PASSED — console clean of same-origin errors; service worker ${swState}.`);

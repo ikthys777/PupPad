@@ -5,95 +5,102 @@
 
 ---
 
-# ⛔ FLAG-AND-STOP. THIS BRANCH IS NOT READY TO MERGE.
+## Status: the stop was raised by me, upheld by CC-A, and is now WORKED
 
-**Two conditions the work order names as flag-and-stop have fired.** I am parking
-the branch and surfacing rather than fixing my way to green, because §7 says a stop
-costs a message and a workaround costs a review cycle — and because this is the
-merge that reaches Buddy's tablet without a firebreak.
+I parked this branch under a flag-and-stop after the first adversarial pass failed
+it. CC-A upheld the stop, verified H1 independently, and ruled: fix all five
+disqualifying findings **plus** check 4's false greens, in this work order, and
+re-run the pass. That is done. **A second adversarial pass has been run against a
+fresh freeze**; its record and disposition are at the end of this file.
 
-| § | Condition | What fired |
-|---|---|---|
-| **§7** | *"Any path by which `main`'s content could reach `/stable/` — found, suspected, or merely not ruled out."* | **Two, both demonstrated.** Reviewer findings 1 and 2. |
-| **§0 / §7** | *"Any need to weaken, skip, or special-case a `PUP-WO-0100` check."* | **check 3 was weakened.** Reviewer finding 5, demonstrated end-to-end. I asserted the opposite in this file's previous draft. |
+**The first pass's verdict was correct and I do not want it softened by the fact
+that the branch now passes.** Three of my own claims in the first draft were false,
+all on the safety-critical path, and they are recorded below rather than edited
+away.
 
-**Do not merge this branch. Do not flip Pages. There is also a third hazard that is
-not mine and does not depend on this branch — see H1 below; it can take the root
-copy's cache out on the live site.**
+### CC-A's ruling that changed the shape of the fix
 
-The adversarial pass is at `docs/findings/PUP-WO-0101-adversarial.md`, verbatim, in
-two parts. Its verdict is *not safe to merge* and **I agree with it.**
+> *"EVERY COPY THAT GETS PUBLISHED MUST BE CHECKED IN THE RUN THAT PUBLISHES IT…
+> Build the general fix; H1 falls out of it."*
 
----
+That is the correct frame and it is bigger than the bug I reported. I had asked
+whether to add a special assertion for H1. The answer was that H1 is one instance
+of a general property, and a workflow that publishes a copy it has not checked is
+broken regardless of what that copy happens to contain today. The publish job now
+runs checks 1, 2, 5 and the headless load against **each published copy**, and H1
+falls out: `stable` @ `2952aa1` carries the pre-`PUP-WO-0101` worker, so check 5
+fails on it and it cannot be published — in any ordering of the human steps.
 
-## Three claims I made in the previous draft that were false
+**Verified against the real ref, not a mock:**
 
-Stated first, because they are on the safety-critical path and because CC-A would
-otherwise be reading a gate table I already know to be wrong.
+```
+stable tree = 2952aa1
+its reap:       names.filter(function(name) { return name !== CACHE_NAME; })
+its CACHE_NAME: var CACHE_NAME = 'pup-pad-v16';
 
-1. **"No `PUP-WO-0100` check was weakened, skipped or special-cased."** False.
-   check 3 was weakened, demonstrably. See F1 below.
-2. **F3: "my first invariant-4 verification was tautological in two ways… fixed."**
-   False in the second half. I *added* `git ls-remote` as a third assertion; **I
-   never removed either tautology.** They are still in the shipped file at
-   `ci.yml:185` and `:186`. Worse, the assertion I did add verifies the **ref**,
-   not the **published bytes** — so it passes while main's content sits in
-   `/stable/`.
-3. **"Check 4 fails if no worker session was ever attached. Green because nothing
-   was looking is the exact failure this closes."** Overstated. It is closed only
-   for *zero sessions on a fixed TCP port*. Two demonstrated false greens: findings
-   12 and 13.
-
-A fourth, from the previous work order and now also false:
-**`docs/feedback/PUP-WO-0100.md` F16 claims "the page is now verified to end up
-controlled by the worker."** It is measured and printed, never asserted —
-independently confirmed. That correction is owed on `main` regardless of what
-happens to this branch.
-
----
-
-## H1 — a live hazard that is not this branch's, and is the most urgent item here
-
-**`refs/heads/stable` @ `2952aa1` carries the origin-wide reaper.** Its `sw.js` is
-the pre-`PUP-WO-0101` file:
-
-```js
-names.filter(function(name) { return name !== CACHE_NAME; })
+CHECK 5 FAILED — this copy's sw.js defines no CACHE_PREFIX.
+  That is the pre-PUP-WO-0101 worker, whose activate handler reaps by inequality…
+  If this is the PROMOTED copy: fast-forward `stable` before publishing it.
+exit=1
 ```
 
-If Pages is flipped to Actions (§6 step 3) **before** `stable` is fast-forwarded
-(§6 step 2), the first deployment publishes that worker to `/stable/`, and it will
-delete the root copy's cache on every activation — the exact hazard architecture
-§6 names. §6's ordering is correct and this is why; **the ordering is currently
-enforced by prose in a work order and by nothing else.**
-
-Compounding it: the `publish` job checks out **both** refs live, but the `checks`
-job only ever checks the **triggering** ref. So a push to `main` publishes
-`stable`'s content — to the promoted copy — with `stable` never checked in that
-run. §1.3's *"a red check must mean nothing publishes"* is false in both
-directions. **No CI script reads the stable copy at all** (verified by grep).
-
-**This is worth a ruling before anything else in this file.**
+**§6's ordering is now enforced by mechanism rather than by prose.** Flipping Pages
+before the fast-forward no longer publishes the reaper; it fails the publish job
+and nothing is deployed.
 
 ---
 
-## What is sound, so the stop is not read as "everything is wrong"
+## Three claims I made in the first draft that were false
 
-Independently confirmed by the reviewer:
+Kept at the top, unedited in substance, because the branch passing now does not
+unmake them.
 
-- **The trailing-`|` non-nesting design is correct.** Tested across 12 scopes with
-  a full N×N nesting matrix: zero nesting, zero reachable collisions. This was the
-  central design decision and it holds.
-- **The legacy exception is a genuine `===`** — case, near-miss and unicode
-  variants cannot reach it.
-- **The scope fence is clean**: `.github/`, `docs/feedback/PUP-WO-0101.md`, `sw.js`
-  only; `index.html`, `manifest.json` and both icons diff to empty.
-- **Publish steps fail closed** — no `continue-on-error`, no `if: always()`, no
-  `|| true`; pinned action majors all exist; `.git`/`.github` are excluded from
-  the artifact.
-- **§1.5's acceptance criterion is met**: the throwing `fetch` handler that stayed
-  green under `PUP-WO-0100` now goes red. The raw-CDP route was the right call and
-  the mechanism is real. It is just not the *guarantee* I claimed for it.
+1. **"No `PUP-WO-0100` check was weakened."** False — check 3 was, demonstrably.
+2. **"My invariant-4 verification was tautological in two ways… fixed."** False. I
+   *added* `ls-remote` as a third assertion and removed neither tautology; both
+   shipped. And the assertion I added verified the **ref**, never the published
+   **bytes**.
+3. **"Check 4 fails if no worker session was ever attached."** Overstated — it was
+   closed only for zero sessions on a fixed TCP port.
+
+**The diagnosis, which matters more than the three instances:** *I tested my fix
+against the attack I had thought of — which `ls-remote` genuinely defeats — and
+stopped, because I had already written the word "fixed".* CC-A is carrying that
+upward as a discipline note. It is the same failure shape `PUP-WO-0000` paid for:
+proving the thing you already believe.
+
+A fourth, in already-merged work: `PUP-WO-0100`'s F16 claim that the page is
+"verified to end up controlled by the worker" is false — it was measured and
+printed, never asserted. **CC-A ruled the document correction is its own** (ruling
+4); the code half is fixed here.
+
+---
+
+## What changed since the stop
+
+| Finding | Fix | Proven by |
+|---|---|---|
+| **1** `main`'s content reaches `/stable/` via the tar merge | The site is built with `git archive HEAD` per copy into a fresh `dist/`, and publication **refuses** if `main` carries a `stable/` path at all | Scratch remote: with `stable/` in main → `REFUSING TO PUBLISH`, exit 1; without it → `/stable/index.html` is stable's, no leaked file |
+| **2** verification checked the ref, not the bytes | `git archive` reads the **commit**, so no working-tree state can enter a published copy. Both tautological comparisons deleted | Dirtied `src/stable/index.html` with main's content, re-archived: `/stable/index.html` still `STABLE CONTENT` while the tree shows `M index.html` |
+| **3** publish deploys copies no check read | **Ruling 1's general fix** — checks 1, 2, 5 and the headless load run against every published copy | H1 above |
+| **4** `/stable/` exclusion bypassed by `/%73table/`, `/stable%2F`, `//stable/` | **Canonicalise once, then allowlist.** A request that did not arrive canonical is declined, because this worker cannot predict how the server will resolve it. A worker at a non-canonical scope unregisters itself rather than orphaning a cache | Real Chromium: all five encodings `cachedUnderRoot=false`, ordinary paths still served |
+| **5** check 3 weakened | Anchored to `^var`, **and** asserts `CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;` | Bumped version with `CACHE_NAME` pinned → RED; `CACHE_VERSION = 'v99'` in a comment → reads the real `v17` and goes RED |
+| **6** sandbox defeated by a one-line gate; browser proof absent from CI | The browser demo is now **check 6** in CI | Planted the `typeof ExtendableEvent` gate: check 5 exit 0 (fooled), **check 6 exit 1** |
+| **7** stable's worker deleted root's legacy cache | The exception is now root-only: `!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT` | New check-5 assertion |
+| **9** `ls-remote` pattern DoS | Exact-match on the ref via `awk '$2 == r'` | — |
+| **10** unguarded `SCOPE_PATH`, and a fallback that would give both paths one prefix | No fallback: a worker that cannot parse its own scope caches nothing. There is no safe default, so there is no default | New check-5 assertion |
+| **11** publish goes red on `main` until Pages is flipped | Stated here rather than omitted — **expect it** | — |
+| **12** false green: fixed CDP port, no browser identity check | Random free port, plus `assertLiveAndOurs()` requiring a live target carrying this run's unique origin | Foreign Chromium squatting a port → check 4 exit 1 |
+| **13** false green: mid-run socket drop | `close`/`error` handlers, and a `Runtime.evaluate` round-trip on every worker session at the end of the window | Same assertion |
+| **14** `installing`/`waiting` accepted; `controlled` never asserted | Requires `active` **and** `controlled` | `install` hanging forever → `never reached "active"`, exit 1 |
+| **16** unguarded floating promise in the fetch handler | `.catch(function(){})` — not the fetch-strategy rewrite §4 fences off | — |
+| **17** worker errors bypassed `isOurs()` and were hardcoded as `sw.js` | Attribution uses the worker's real target URL | Log now reads `…/sw.js` from the target, not a constant |
+| **18** `Log.enable` missing; TDZ race | `Log.enable` sent; the attach moved below the declarations it closes over | The TDZ "fix" was itself wrong first — my comment claimed an ordering the file did not have, and I checked rather than trusting the comment |
+
+**Not fixed, and why:** finding 15 (§3.4's evidence was produced under
+`PUPPAD_CHROMIUM`, never under CI's pinned Chromium, with no run id cited). It
+needs a real CI run and cannot be closed from here — same gap I closed in
+`PUP-WO-0100` with a run id. **It closes on this branch's first CI run.**
 
 ---
 

@@ -102,15 +102,30 @@ function urls(src) {
  */
 function cacheName(src) {
   if (!src) return null;
-  /* The trailing `;` is load-bearing: without it `CACHE_VERSION = 'v' + (n)`
-   * matches the leading 'v' and reports a partial literal as if it were the whole
-   * identity. Require a COMPLETE assignment to a single string literal, so a
-   * computed identity is unparseable — and therefore fails loudly — rather than
-   * silently comparing fragments. (Found while proving this check still catches
-   * its original defect class.) */
-  const version = src.match(/CACHE_VERSION\s*=\s*(['"])([^'"]*)\1\s*;/);
-  if (version) return version[2];
-  const legacy = src.match(/CACHE_NAME\s*=\s*(['"])([^'"]*)\1\s*;/);
+  /* THREE THINGS ARE LOAD-BEARING HERE, and the first two were learned the hard
+   * way when this check was weakened and the weakening was not noticed:
+   *
+   * 1. `^\s*var ` — the match must be an ASSIGNMENT, not any occurrence. Without
+   *    the anchor, `String.match` returns the FIRST hit anywhere in the file, so
+   *    the string `CACHE_VERSION = 'v99';` sitting inside a COMMENT satisfies the
+   *    check while the real assignment says something else. This file's own
+   *    explanatory prose was enough to defeat it.
+   * 2. The derivation assertion below — reading a version literal proves nothing
+   *    unless CACHE_NAME is actually built from it. A bumped CACHE_VERSION with
+   *    `CACHE_NAME = CACHE_PREFIX + 'v17'` pinned would otherwise pass while the
+   *    runtime cache identity is byte-identical and every client keeps the stale
+   *    asset forever.
+   * 3. The trailing `;` — otherwise `CACHE_VERSION = 'v' + (n)` matches the
+   *    leading 'v' and a fragment is compared as if it were the identity.
+   */
+  const version = src.match(/^\s*var\s+CACHE_VERSION\s*=\s*(['"])([^'"]*)\1\s*;/m);
+  if (version) {
+    /* The identity is CACHE_PREFIX + CACHE_VERSION, and this check is only
+     * meaningful if the code says so. Whitespace-tolerant, structure-strict. */
+    if (!/^\s*var\s+CACHE_NAME\s*=\s*CACHE_PREFIX\s*\+\s*CACHE_VERSION\s*;/m.test(src)) return null;
+    return version[2];
+  }
+  const legacy = src.match(/^\s*var\s+CACHE_NAME\s*=\s*(['"])([^'"]*)\1\s*;/m);
   return legacy ? legacy[2] : null;
 }
 
@@ -119,8 +134,11 @@ if (!swHead) fail('sw.js does not exist at HEAD.');
 const listHead = urls(swHead), listBase = urls(swBase);
 if (!listHead) fail('could not parse urlsToCache from sw.js at HEAD (sw.js:2-8).');
 const nameHead = cacheName(swHead), nameBase = cacheName(swBase);
-if (!nameHead) fail('could not parse the cache identity literal from sw.js at HEAD —\n' +
-  '  expected CACHE_VERSION (or, before PUP-WO-0101, CACHE_NAME) as a plain quoted string.');
+if (!nameHead) fail('could not establish the cache identity from sw.js at HEAD.\n' +
+  '  Expected either `var CACHE_VERSION = \'…\';` TOGETHER WITH\n' +
+  '  `var CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;`, or (pre-PUP-WO-0101)\n' +
+  '  `var CACHE_NAME = \'…\';`. Reading a version literal that CACHE_NAME does not\n' +
+  '  use would compare a number nothing depends on.');
 
 // Union of both revisions: an asset REMOVED from the list still changed what a
 // client caches, so it must still trigger a bump.

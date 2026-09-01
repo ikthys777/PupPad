@@ -1,13 +1,15 @@
-# PupPad CI — four checks, each of which can go red for exactly one reason.
+# PupPad CI — five checks, each of which can go red for exactly one reason —
+# plus two-path publication (PUP-WO-0101).
 #
-# This workflow REPORTS. It does not publish, deploy, or write to any branch
-# (northstar invariant 4). Publication is PUP-WO-0101's.
+# THIS WORKFLOW PUBLISHES. main goes to the site root, stable to /stable/, and
+# Buddy's tablet points at /stable/. northstar invariant 4 — the copy Buddy uses
+# advances only when a human promotes it — is enforced here by the publish job's
+# verification, not by convention.
 #
-# Why this file is safe to merge before the firebreak it helps build exists:
-# GitHub Pages under build_type "legacy" serves main:/ as static files and does
-# not serve or execute .github/. So a diff confined to .github/ and docs/ reaches
-# the repository without reaching Buddy's tablet (architecture §6, bootstrap
-# exception; PUP-WO-0100 §0).
+# THE RULE THAT MATTERS MOST: every copy that gets published is CHECKED IN THE RUN
+# THAT PUBLISHES IT. An earlier version checked only the triggering ref, so a push
+# to main published stable's content — to the promoted copy — with stable never
+# checked in that run.
 name: CI
 
 on:
@@ -33,7 +35,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Four checks
+    name: Five checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -89,20 +91,32 @@ jobs:
       - name: "Check 5 — the two deploy paths cannot destroy each other's caches"
         run: node .github/ci/check-cache-isolation.mjs .
 
+      # ---------------------------------------------------------------- 6 ----
+      - name: "Check 6 — both paths in a real browser, not the sandbox"
+        # Check 5 runs sw.js in a Node sandbox, and a sandbox can be detected: a
+        # one-line `typeof ExtendableEvent !== 'undefined'` gate makes a worker
+        # behave for check 5 and reap origin-wide in a browser. This step is the
+        # answer to that — the same properties, asserted against real Chromium with
+        # two real registrations. It was evidence tooling until it turned out
+        # nothing standing in CI caught the bypass.
+        run: node .github/ci/demo-two-path-caches.mjs .
+
   # ==========================================================================
-  # Publication. Gated on the checks BY CONSTRUCTION — `needs: checks` means a red
-  # check does not fail the deploy, it prevents the deploy job from existing
-  # (architecture §6). Never runs on a pull request.
+  # Publication — two copies, one Pages deployment.
+  #
+  # Gated on the checks BY CONSTRUCTION: `needs: checks` means a red check does not
+  # fail the deploy, it prevents the deploy job from existing (architecture §6).
+  # Never runs on a pull request.
   # ==========================================================================
   publish:
     name: Publish both copies
     needs: checks
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Scoped to THIS job only; the workflow default stays contents: read.
-    # pages: write and id-token: write are what actions/deploy-pages requires and
-    # are the minimum for publication — see docs/feedback/PUP-WO-0101.md.
+    timeout-minutes: 20
+    # Scoped to THIS job; the workflow default stays contents: read.
+    # pages: write and id-token: write are exactly what actions/deploy-pages needs
+    # (OIDC for the deployment). Nothing else is widened.
     permissions:
       contents: read
       pages: write
@@ -111,96 +125,138 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     concurrency:
-      # Never cancel a publication in flight: a cancelled deploy can leave the site
-      # serving a half-updated pair of copies.
+      # Never cancel a publication in flight — a cancelled deploy can leave the
+      # site serving a half-updated pair of copies.
       group: pages-publish
       cancel-in-progress: false
     steps:
-      - name: Check out main into the site root
+      - name: Check out the CI tooling from the triggering ref
+        uses: actions/checkout@v7
+
+      - name: Use Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .github/ci/package-lock.json
+
+      - name: Install CI tooling
+        working-directory: .github/ci
+        run: npm ci
+
+      - name: Check out main
         uses: actions/checkout@v7
         with:
           ref: refs/heads/main
-          path: site
+          path: src/main
 
-      - name: Check out stable into /stable/
+      - name: Check out stable
         uses: actions/checkout@v7
         with:
           # refs/heads/stable explicitly, never the bare name: a bare ref can be
-          # satisfied by a TAG of the same name. northstar invariant 4 says the
-          # promoted copy advances only when a human promotes it, so the ref this
-          # resolves is not a detail.
+          # satisfied by a TAG of the same name, and invariant 4 says the promoted
+          # copy advances only when a human promotes it.
           ref: refs/heads/stable
-          path: stable-src
+          path: src/stable
 
-      - name: Stamp each copy with the ref and commit it was built from
-        # The stamp is generated INSIDE each checkout from that checkout's own HEAD.
-        # It cannot inherit the other copy's identity, which is what makes the
-        # verification below meaningful rather than decorative.
-        run: |
-          set -euo pipefail
-          stamp() {
-            local dir="$1" want_ref="$2" out="$3"
-            local sha
-            sha="$(git -C "$dir" rev-parse HEAD)"
-            printf '{"ref":"%s","sha":"%s","path":"%s","built_at":"%s"}\n' \
-              "$want_ref" "$sha" "$out" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              > "$dir/build-stamp.json"
-            echo "  $out -> $want_ref @ $sha"
-          }
-          stamp site   main   /
-          stamp stable-src stable /stable/
-          mkdir -p site/stable
-          # Copy stable's content in, excluding its git metadata.
-          tar -C stable-src --exclude=.git -cf - . | tar -C site/stable -xf -
-
-      - name: "Invariant 4 — verify each copy against the remote ref it claims"
-        # THIS IS THE STEP THAT STANDS BETWEEN AN UNPROMOTED COMMIT AND A
-        # THREE-YEAR-OLD'S TABLET, so it must not verify itself.
-        #
-        # An earlier version of this step was tautological in two ways and would
-        # have passed with main's content in /stable/: it compared the stamp's `ref`
-        # field against the literal this workflow had just written into it, and its
-        # sha comparison fell back to `git rev-parse HEAD` of the very checkout
-        # under test — HEAD against HEAD, true by construction.
-        #
-        # The authority is now `git ls-remote`, which asks the SERVER what
-        # refs/heads/<ref> points at. It is independent of the checkout, of the
-        # stamp, and of this workflow's own assumptions. There is NO fallback: if
-        # the remote tip cannot be established, publication fails.
+      - name: "Invariant 4 — each checkout is the commit its remote ref names"
+        # An earlier version of this step was tautological: it compared a stamp
+        # field against the literal it had just written, and its sha check fell
+        # back to `rev-parse HEAD` of the checkout under test. Both are gone.
+        # `git ls-remote` asks the SERVER, and there is no fallback.
         run: |
           set -euo pipefail
           remote="https://github.com/${GITHUB_REPOSITORY}.git"
-
-          verify() {
-            local dir="$1" want_ref="$2" label="$3"
-            local stamp_ref stamp_sha head_sha remote_sha
-            stamp_ref=$(jq -r .ref  "$dir/build-stamp.json")
-            stamp_sha=$(jq -r .sha  "$dir/build-stamp.json")
-            head_sha=$(git -C "$4" rev-parse HEAD)
-            remote_sha=$(git ls-remote "$remote" "refs/heads/${want_ref}" | cut -f1)
-
-            echo "$label: stamp=$stamp_ref@${stamp_sha:0:12} head=${head_sha:0:12} remote=${remote_sha:0:12}"
-
-            [ -n "$remote_sha" ] || { echo "::error::refs/heads/${want_ref} does not exist on the remote"; exit 1; }
-            [ "$stamp_ref" = "$want_ref" ] || { echo "::error::${label} stamp names ${stamp_ref}, expected ${want_ref}"; exit 1; }
-            [ "$stamp_sha" = "$head_sha" ] || { echo "::error::${label} stamp sha does not match its own checkout"; exit 1; }
+          for ref in main stable; do
+            head_sha=$(git -C "src/$ref" rev-parse HEAD)
+            # Exact-match the ref: `ls-remote <pattern>` matches on path-component
+            # tails, so a branch literally named decoy/refs/heads/main would return
+            # two lines and wedge publication (fail-closed, but wedged).
+            remote_sha=$(git ls-remote "$remote" "refs/heads/${ref}" \
+                          | awk -v r="refs/heads/${ref}" '$2 == r { print $1; exit }')
+            echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
+            [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
             [ "$head_sha" = "$remote_sha" ] || {
-              echo "::error::${label} checkout is ${head_sha}, but refs/heads/${want_ref} on the remote is ${remote_sha}."
-              echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
-              exit 1; }
+              echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}"
+              echo "::error::REFUSING TO PUBLISH — northstar invariant 4."; exit 1; }
+          done
+
+      - name: Build the site from the COMMITS, not the working trees
+        # `git archive HEAD` writes the commit's tree and nothing else, so no
+        # working-tree edit, stray file, or later step can put unpromoted bytes
+        # into a published copy. The previous version copied working trees and
+        # merged stable OVER main's, which meant a `stable/` path in main survived
+        # into /stable/ — main's content on the promoted copy.
+        run: |
+          set -euo pipefail
+          if git -C src/main ls-tree -r --name-only HEAD | grep -qi '^stable/'; then
+            echo "::error::main carries a 'stable/' path, which collides with the promoted copy's mount point."
+            echo "::error::REFUSING TO PUBLISH — the two copies would merge."
+            exit 1
+          fi
+          rm -rf dist && mkdir -p dist
+          git -C src/main archive HEAD | tar -x -C dist
+          rm -rf dist/stable && mkdir -p dist/stable
+          git -C src/stable archive HEAD | tar -x -C dist/stable
+          echo "root copy:     $(find dist -maxdepth 1 -type f | wc -l) files"
+          echo "promoted copy: $(find dist/stable -maxdepth 1 -type f | wc -l) files"
+
+      - name: "Check EVERY published copy, in the run that publishes it"
+        # This is the rule an earlier version got wrong: the checks job only ever
+        # examines the TRIGGERING ref, so a push to main would publish stable's
+        # content — to Buddy's tablet — with stable never checked in that run.
+        #
+        # H1 falls out of this rather than needing its own special case: a /stable/
+        # copy whose worker reaps by inequality fails check 5 here, so it cannot be
+        # published no matter what order the human steps happen in. A sequencing
+        # paragraph in a work order is not a mechanism; this is.
+        run: |
+          set -euo pipefail
+          fail=0
+          for copy in dist dist/stable; do
+            echo "::group::checking published copy: /$([ "$copy" = dist ] && echo '' || echo 'stable/')"
+            for chk in check-syntax check-assets check-cache-isolation; do
+              if node ".github/ci/$chk.mjs" "$copy"; then
+                echo "  ok  $chk"
+              else
+                echo "::error::$chk FAILED for published copy '$copy' — refusing to publish."
+                fail=1
+              fi
+            done
+            echo "::endgroup::"
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Install the browser
+        working-directory: .github/ci
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: "Load every published copy in a real browser"
+        run: |
+          set -euo pipefail
+          fail=0
+          for copy in dist dist/stable; do
+            node .github/ci/check-load.mjs "$copy" || { echo "::error::check-load FAILED for '$copy'"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Stamp each copy with the ref and commit it was built from
+        # Written AFTER the checks so the stamp cannot influence them, and after
+        # the archive so it is the only file in a copy that is not from its commit.
+        run: |
+          set -euo pipefail
+          stamp() {
+            printf '{"ref":"%s","sha":"%s","path":"%s","built_at":"%s"}\n' \
+              "$2" "$(git -C "src/$2" rev-parse HEAD)" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$1/build-stamp.json"
           }
-
-          verify site        main   "root (/)"        site
-          verify site/stable stable "promoted (/stable/)" stable-src
-
-          test -f site/stable/index.html || { echo "::error::/stable/ has no index.html — refusing a partial publish"; exit 1; }
-          test -f site/index.html        || { echo "::error::root has no index.html — refusing a partial publish"; exit 1; }
-          echo "OK: each copy carries the commit its own remote ref points at."
+          stamp dist        main   /
+          stamp dist/stable stable /stable/
+          cat dist/build-stamp.json dist/stable/build-stamp.json
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@v4
         with:
-          path: site
+          path: dist
 
       - name: Deploy to GitHub Pages
         id: deploy

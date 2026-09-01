@@ -46,8 +46,18 @@ function workerScope() {
   return self.location.href.replace(/[^/]*$/, '');
 }
 
-var SCOPE_PATH = new URL(workerScope()).pathname;
-var CACHE_PREFIX = cachePrefixFor(workerScope());
+/* A worker whose own scope cannot be parsed must not guess. An earlier version
+ * fell back to '/', which would hand BOTH deploy paths the prefix
+ * "puppad|%2F|" — a shared prefix, i.e. exactly the mutual deletion this file
+ * exists to prevent. There is no safe default, so there is no default. */
+var SCOPE_URL = workerScope();
+var SCOPE_PATH = null;
+try {
+  SCOPE_PATH = new URL(SCOPE_URL).pathname;
+} catch (e) {
+  SCOPE_PATH = null;
+}
+var CACHE_PREFIX = SCOPE_PATH === null ? null : cachePrefixFor(SCOPE_URL);
 
 /* Bump when any cached asset changes. CI asserts this (check 3). */
 var CACHE_VERSION = 'v17';
@@ -79,21 +89,64 @@ var LEGACY_CACHE_EXACT = 'pup-pad-v16';
  * does not address this; it is a separate mechanism (PUP-WO-0101 §1.2).
  */
 var STABLE_SEGMENT = 'stable/';
-var IS_STABLE_WORKER =
+var IS_STABLE_WORKER = SCOPE_PATH !== null &&
   SCOPE_PATH.length >= STABLE_SEGMENT.length &&
   SCOPE_PATH.slice(-STABLE_SEGMENT.length) === STABLE_SEGMENT;
-var FOREIGN_SUBTREE = IS_STABLE_WORKER ? null : SCOPE_PATH + STABLE_SEGMENT;
+var FOREIGN_SUBTREE = (SCOPE_PATH === null || IS_STABLE_WORKER) ? null : SCOPE_PATH + STABLE_SEGMENT;
 
-function isForeignDeployPath(requestUrl) {
-  if (FOREIGN_SUBTREE === null) return false;
+/* CANONICAL FORM, THEN AN ALLOWLIST — not a denylist of encodings.
+ *
+ * URL.pathname is neither percent-decoded nor slash-normalised, but every static
+ * server (GitHub Pages included) decodes and normalises before resolving. So
+ * "/%73table/x", "/stable%2Fx" and "//stable/x" all reach the SAME file while
+ * failing a naive `pathname.indexOf('/stable/') === 0` test. Enumerating those
+ * encodings is unbounded — %73, %2F, //, dot segments, unicode, and whatever is
+ * not yet thought of.
+ *
+ * So: canonicalise once, and require the request to have ARRIVED canonical. A
+ * path that is not already in canonical form is one this worker cannot predict
+ * the server's resolution of, so it is declined rather than guessed at. That
+ * makes the rule an allowlist — serve only canonical paths inside my own scope
+ * that are not inside a deeper deploy path — and its safety does not depend on
+ * having imagined every encoding. */
+function canonicalPath(pathname) {
+  var decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch (e) {
+    return null;                       /* malformed escape: undecidable */
+  }
+  var collapsed = decoded.replace(/\/{2,}/g, '/');
+  var parts = collapsed.split('/');
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] === '.') continue;
+    if (parts[i] === '..') { out.pop(); continue; }
+    out.push(parts[i]);
+  }
+  return out.join('/');
+}
+
+/** true when this worker may serve the request at all. */
+function servesRequest(requestUrl) {
+  if (SCOPE_PATH === null) return false;
   var u;
   try {
     u = new URL(requestUrl);
   } catch (e) {
     return false;
   }
-  if (u.origin !== self.location.origin) return false;
-  return u.pathname.indexOf(FOREIGN_SUBTREE) === 0;
+  if (u.origin !== self.location.origin) return true;   /* cross-origin: not our subtree question */
+
+  var canon = canonicalPath(u.pathname);
+  if (canon === null) return false;
+  /* Arrived non-canonical -> we cannot predict what the server will serve. Decline. */
+  if (canon !== u.pathname) return false;
+  /* Outside our own scope entirely. */
+  if (canon.indexOf(SCOPE_PATH) !== 0) return false;
+  /* Inside a deeper deploy path that owns itself. */
+  if (FOREIGN_SUBTREE !== null && canon.indexOf(FOREIGN_SUBTREE) === 0) return false;
+  return true;
 }
 
 /* === Precache ============================================================= */
@@ -107,6 +160,7 @@ var urlsToCache = [
 ];
 
 self.addEventListener('install', function(event) {
+  if (CACHE_PREFIX === null) return;      /* unusable scope: cache nothing */
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
       return cache.addAll(urlsToCache);
@@ -116,12 +170,31 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('activate', function(event) {
+  /* A worker registered at a NON-CANONICAL scope — e.g. the "//stable/" a single
+   * typo produces — is an orphan: its prefix nests under neither deploy path, so
+   * no worker will ever reap its cache. It unregisters itself rather than leaving
+   * a cache nothing can clean. */
+  if (CACHE_PREFIX === null || canonicalPath(SCOPE_PATH) !== SCOPE_PATH) {
+    event.waitUntil(
+      caches.keys().then(function(names) {
+        return Promise.all(names.filter(function(n) {
+          return CACHE_PREFIX !== null && n.startsWith(CACHE_PREFIX);
+        }).map(function(n) { return caches.delete(n); }));
+      }).then(function() {
+        return self.registration.unregister();
+      }).catch(function() {})
+    );
+    return;
+  }
   event.waitUntil(
     caches.keys().then(function(names) {
       return Promise.all(
         names.filter(function(name) {
-          /* The one exact-literal exception, documented above. */
-          if (name === LEGACY_CACHE_EXACT) return true;
+          /* The one exact-literal exception — and ONLY the root worker may take
+           * it. pup-pad-v16 was created by the root copy; stable deleting it is a
+           * cross-path deletion that leaves the root install with no cache at all
+           * until it is next loaded online (northstar invariant 3). */
+          if (!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT) return true;
           /* Otherwise: this worker's own prefix, and never outside it. */
           return name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME;
         }).map(function(name) { return caches.delete(name); })
@@ -135,14 +208,18 @@ self.addEventListener('fetch', function(event) {
   /* Decline the other deploy path entirely: no response, no cache entry. Returning
    * without calling respondWith leaves the request to the browser, which is what
    * lets stable's own worker own it. */
-  if (isForeignDeployPath(event.request.url)) return;
+  if (!servesRequest(event.request.url)) return;
 
   event.respondWith(
     fetch(event.request).then(function(response) {
       var clone = response.clone();
+      /* cache.put rejects on a non-GET request, a 206, or an opaque redirect. The
+       * response has already been returned, so there is nothing to recover — but
+       * an unhandled rejection in a worker is now a CI failure, and an unguarded
+       * one here would make routine traffic look like a defect. */
       caches.open(CACHE_NAME).then(function(cache) {
-        cache.put(event.request, clone);
-      });
+        return cache.put(event.request, clone);
+      }).catch(function() {});
       return response;
     }).catch(function() {
       return caches.match(event.request);
