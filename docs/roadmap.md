@@ -369,6 +369,9 @@ Stated because folding it into either was the obvious move and both are wrong.
   *(Added 2026-09-01 — `PUP-WO-0000` §3.1 and `PUP-WO-0100`'s first draft both
   carried the wrong form; CC-B happened to use the right one anyway, which is
   exactly why the rule belongs here rather than in one work order's memory.)*
+- **Every coherent unit of work: commit it.** Not at the end, and not "before you
+  stop" — a stall is not a chosen stop, so that rule never fires when it is needed.
+  A wip commit is recoverable; a dirty tree is not. *(Architecture §8, 2026-09-01.)*
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.
