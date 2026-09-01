@@ -334,7 +334,7 @@ Stated because folding it into either was the obvious move and both are wrong.
   been dropped? Has any ratified change reached the code but not these documents?
   This is cheap here and expensive at launch — it is the failure mode that most
   reliably goes unnoticed, because nothing announces it.
-- **Every work order: the builder's `FEEDBACK.md` is read for findings that belong
+- **Every work order: the builder's `docs/feedback/<WO-id>.md` is read for findings that belong
   upward** — a superseded ruling becomes an architecture amendment, a changed
   constraint goes to the northstar and is re-ratified, an uncheckable gate is fixed
   here by amendment.
