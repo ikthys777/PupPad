@@ -83,7 +83,10 @@ safe assumption is that some device already carries it.
   never activates, and the **old** worker keeps serving. There is no window in which
   the child has neither.
 
-Cost: one re-download of five small assets on the next healthy online load.
+~~Cost: one re-download of five small assets on the next healthy online load.~~
+**FALSE — see ROUND 2. The real cost was EVERY runtime-cached entry: leaflet,
+supabase and every map tile share this cache and the reap deletes it whole. Measured
+24 of 24 tiles rendered offline before, 0 of 24 after. THE BUMP IS REVERTED.**
 
 ---
 
@@ -142,7 +145,7 @@ proves nothing.
 | 3 | offline path still works | **partially met — see below** |
 | 4 | §1.2's answer demonstrated | **met** — §2's table, and the opaque row is unchanged |
 | 5 | a check that would have caught this | **met** — §4, red by named assertion on `origin/main` |
-| 6 | demonstrations assert commit and failing step | **met** — subject blob `72f1699…` recorded in each run |
+| 6 | demonstrations assert commit and failing step | ~~**met**~~ **WAS FALSE — nothing recorded a blob; I computed it by hand at a shell. NOW MET: both files compute and print the subject, and the `origin/main` run emits `72f1699…` itself. See ROUND 2.** |
 
 ### Acceptance 3, stated honestly rather than claimed
 
@@ -158,9 +161,13 @@ call for. The Map panel additionally needs leaflet, which the hermetic run abort
 
 **Why I think the gap is acceptable rather than papered over:** the guard changes
 exactly one cell of §2's matrix. Everything cached before is still cached, except
-same-origin errors. **No panel can lose an asset it previously had** — which is a
+same-origin errors. ~~**No panel can lose an asset it previously had** — which is a
 stronger argument than driving the UI would be, and it is measured rather than
-reasoned. If the reviewer disagrees, the missing evidence is a UI-interaction test and
+reasoned.~~ **FALSE OF THE COMMIT, and this is the finding of the pass. It is true of
+the GUARD; I extended a measurement of the guard to the whole artifact by reasoning.
+Driving the UI is exactly what caught it — a reviewer opened the Map panel offline and
+saw a blank rectangle. The argument I gave for not running the UI test is what
+concealed the defect the UI test finds. See ROUND 2.** If the reviewer disagrees, the missing evidence is a UI-interaction test and
 I would rather be told than assume.
 
 ---
@@ -246,3 +253,93 @@ The specific bug is `cmd | tail` discarding the exit status, which is the same
 
 Recommended for architecture §6.1 beside member 4, since the mitigation as recorded is
 incomplete.
+
+---
+
+# ROUND 2 — the adversarial pass, and its disposition
+
+Four lenses against `ba45d30`. Full record in
+`docs/findings/PUP-WO-0105-adversarial.md`. Every finding below was reproduced by me
+against the artifact before being accepted; two lens claims I corrected on mechanism
+are noted in the record.
+
+**The guard survived everything.** No lens got a same-origin HTTP error past it or
+showed it dropping anything legitimate; across 20 response shapes it turned out to fix
+eight classes rather than the one I claimed. Every serious finding is in what shipped
+*beside* the guard, or in the evidence I offered for it.
+
+## What was reverted
+
+**`CACHE_VERSION` v18 → v17.** The one change I made on my own judgement, flagged for
+review, and the review killed it — for both of the reasons a flagged decision is
+supposed to be checked against:
+
+1. **It cost the Map panel its offline assets.** Everything cross-origin is
+   runtime-cached into the same versioned cache; the reap deletes it whole. Cold start
+   in airplane mode — invariant 3's own falsification test, which nobody had run —
+   went from 24 of 24 tiles to 0 of 24.
+2. **It was never necessary.** `install` is `caches.open(CACHE_NAME).then(c =>
+   c.addAll(urlsToCache))`, so with the name unchanged it overwrites the poisoned
+   precache entries. Shipping a byte-different `sw.js` *is* the re-fetch I claimed a
+   three-year-old could not cause. I verified this myself with a guarded-but-unbumped
+   worker: shell repaired, runtime cache intact.
+
+So the bump traded invariant 3 against invariant 3 — the exact trade §1.2 exists to
+prevent, and which I had just congratulated myself for avoiding in the guard.
+
+**The activate-time `addAll` two lenses proposed was NOT added.** It is a mechanism for
+a problem now proved not to exist.
+
+## What was fixed
+
+| Finding | Disposition |
+|---|---|
+| `demo-error-poisoning.mjs` printed **DEMO GREEN** for a worker that cached nothing — a miss has no `.status` and a 504 has an empty body | **FIXED.** Every step must now prove it did its job first. Verified three ways: green on the guard, red on `origin/main`, red on the null worker for *"step 1 never cached a healthy shell."* |
+| Acceptance 6 claimed a subject blob "recorded in each run"; nothing recorded one | **FIXED.** Both files compute and print it. The `origin/main` run now emits `72f1699…` itself rather than my having typed it. |
+| The `/* hermetic */` comment was false — `ctx.route()` does not intercept a worker's own `fetch()`, and the worker reached the real CDNs | **CORRECTED.** Also true of `check-load.mjs` and `demo-two-path-caches.mjs`; recorded, not changed, as those are not mine. |
+| `sw.js`'s cross-origin branch was executed by **no check**; mutating it to `return false` (Map panel dark offline) left all six checks green — **including mine**, whose opaque assertion forced `type` onto a same-origin URL | **FIXED.** `check-error-caching.mjs` now dispatches a genuinely foreign origin and is the only check in the tree that catches that mutant. The forced-opaque assertion still passes on it, which is the demonstration that predicate and path are different things. |
+| My `sw.js` comment claimed `cache.put` rejects an opaque redirect | **CORRECTED** — measured ACCEPTED. I inherited the sentence and restated it while editing the lines it describes. |
+
+## Carried forward, not fixed
+
+- **Opaque cache entries cost ~8 MB of quota each** — measured 8,088,021 bytes/entry
+  against 1,324 same-origin, a 6,109× padding factor. Map panning is therefore a
+  quota-exhaustion path, and on a full device `install`'s `addAll` fails permanently,
+  so the device can never receive this fix or any future one. **Pre-existing and
+  identical on `main`** — but my §2 reasoning ("the opaque row is byte-identical before
+  and after, therefore harmless") is what would have kept it invisible. Needs a ruling
+  on whether tiles are cached at all; `PUP-WO-0600` dissolves the CDN assets but not
+  the tiles.
+- **The opaque-indistinguishability claim held** across twelve observables, live and
+  after a cache round trip. But the worker *chooses* opacity, and all three hosts serve
+  `ACAO: *`, so a `cors` request was available. Deferred — a naive always-cors regresses
+  any host omitting ACAO on a 200 — but the comment should say the deferral is a choice,
+  not a law of physics.
+- **The guard merges with no regression protection.** The unguarded worker passes all
+  seven wired checks. Fenced out by acceptance 1; wiring assigned to `PUP-WO-0104`.
+- A 200 whose body is an error page still passes; the `NOT ASSERTED:` block names only
+  the opaque hole. The 404/500/503 loop is a code list, not a predicate, and **429** —
+  named in the work order — is untested. `setOffline(true)` does not isolate a worker
+  even from the real internet.
+
+## The finding that outlives the defect
+
+> **A per-change safety argument does not compose across changes in one commit.**
+> Two individually-safe changes in one commit are not a safe commit, and the per-change
+> analysis is what makes that invisible.
+
+I analysed the guard and the bump separately and never composed them. My §2 matrix was
+real and my conclusion from it was not.
+
+**And my own prompt made the defect unfindable.** Five of six probes aimed at the three
+changed guard lines. The only probe aimed at the bump asked four questions — mid-flight,
+`/stable/`, offline-for-a-week, "any state with neither worker" — every one of them
+about *failure* to update, so every one could only answer *safe*. **None asked what a
+successful update costs, which is the only state where the bump does anything at all.**
+I wrote a probe about my own decision that could only return good news. Only the
+unassigned lens was positioned to see it, and this is the second consecutive work order
+where that has been true.
+
+**Three false greens from me in one day** — a pointer resolver that reported success on
+a crashed check, this demonstration, and the acceptance-6 claim. All three had the same
+shape: a verdict read instead of what produced it.

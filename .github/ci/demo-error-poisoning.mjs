@@ -24,8 +24,19 @@
  */
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { join, extname, resolve } from 'node:path';
 import { chromium } from 'playwright';
+
+/* Architecture §5: a demonstration asserts the COMMIT that ran, never the conclusion
+ * alone. PUP-WO-0105's first version printed only a path and its feedback file then
+ * claimed the blob was "recorded in each run" — it was computed by hand at a shell.
+ * Claiming a mechanism that does not exist is the defect this file is about. */
+function subjectBlob(swPath) {
+  try {
+    return execFileSync('git', ['hash-object', swPath], { encoding: 'utf8' }).trim();
+  } catch { return '(git unavailable)'; }
+}
 
 const DIR = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
 const BASE = '/PupPad/';
@@ -61,8 +72,12 @@ if (process.env.PUPPAD_CHROMIUM) opts.executablePath = process.env.PUPPAD_CHROMI
 else opts.channel = 'chromium';
 const browser = await chromium.launch(opts);
 const ctx = await browser.newContext();
-/* hermetic: the real CDNs are aborted, exactly as check-load does, so a slow or
- * rate-limited third party cannot turn this demonstration red. */
+/* Aborts the PAGE's third-party requests. NOT hermetic, and the first version of
+ * this file claimed it was: ctx.route() does not intercept a service worker's own
+ * fetch(), so once the worker controls the page it reaches the public internet.
+ * Measured — with this route in place the worker still cached three real CDN
+ * responses. Blocking at the resolver is what actually isolates it. Harmless here
+ * because nothing below depends on the third parties, but the claim was false. */
 await ctx.route('**/*', (r) => (r.request().url().startsWith(ORIGIN) ? r.continue() : r.abort()));
 const page = await ctx.newPage();
 
@@ -73,7 +88,11 @@ const shellInCache = () => page.evaluate(async (url) => {
   return hit ? { status: hit.status, body: (await hit.clone().text()).slice(0, 60) } : { missing: true };
 }, SHELL);
 
-console.log(`demo-error-poisoning: ${join(DIR, 'sw.js')}\n  origin ${ORIGIN}${BASE}\n`);
+const SW_PATH = join(DIR, 'sw.js');
+const SUBJECT = subjectBlob(SW_PATH);
+console.log(`demo-error-poisoning: ${SW_PATH}`);
+console.log(`  SUBJECT sw.js blob : ${SUBJECT}`);
+console.log(`  origin             : ${ORIGIN}${BASE}\n`);
 
 /* ---- 1. healthy ---- */
 await page.goto(ORIGIN + BASE, { waitUntil: 'domcontentloaded' });
@@ -84,7 +103,8 @@ if (!(await page.evaluate(() => !!navigator.serviceWorker.controller)))
   { console.error('the page is not controlled by a worker — nothing below tests anything'); process.exit(2); }
 await page.evaluate((u) => fetch(u, { cache: 'no-store' }), SHELL);
 await page.waitForTimeout(600);
-console.log('1. healthy   ', JSON.stringify(await shellInCache()));
+const healthy = await shellInCache();
+console.log('1. healthy   ', JSON.stringify(healthy));
 
 /* ---- 2 & 3. an HTTP error, received WHILE ONLINE ---- */
 serveErrors = true;
@@ -104,13 +124,35 @@ console.log('3. OFFLINE, what the device serves ', JSON.stringify(served), '\n')
 
 await browser.close();
 
-const poisoned = (after.status && after.status !== 200) ||
-                 (served.body || '').includes('THIS IS THE ERROR PAGE');
-if (poisoned) {
-  console.error('DEMO RED — the app shell was replaced by an HTTP error received while online.');
-  console.error(`  cached after the 404: ${JSON.stringify(after)}`);
-  console.error(`  served offline:       ${JSON.stringify(served)}`);
+/* THE VERDICT NEEDS POSITIVE CONTROLS, AND THE FIRST VERSION OF THIS FILE HAD NONE.
+ *
+ * It concluded "not poisoned" from `after.status !== 200` plus the absence of an error
+ * string. A cache MISS has no `.status`, and a 504 has an empty body — so a worker that
+ * precached nothing and cached nothing printed DEMO GREEN with `{"missing":true}` and
+ * `{"status":504}` on the two lines directly above the verdict. Reproduced: the
+ * evidence of total failure sat two lines above a verdict contradicting it, which is
+ * architecture §6.1's family exactly, in the file that exists to demonstrate it.
+ *
+ * So each step must now prove it did its job before the verdict is allowed to mean
+ * anything: the shell must have been cached healthy FIRST, and what the device serves
+ * offline must be the real app, not merely not-an-error. */
+const SHELL_MARK = '<!DOCTYPE html>';
+const problems = [];
+if (!(healthy.status === 200 && (healthy.body || '').includes(SHELL_MARK)))
+  problems.push(`step 1 never cached a healthy shell, so nothing below tested anything: ${JSON.stringify(healthy)}`);
+if (after.status && after.status !== 200)
+  problems.push(`the cached shell was REPLACED by an HTTP error while online: ${JSON.stringify(after)}`);
+if (!after.status)
+  problems.push(`the cached shell VANISHED rather than surviving: ${JSON.stringify(after)}`);
+if (!(served.status === 200 && (served.body || '').includes(SHELL_MARK)))
+  problems.push(`OFFLINE the device did not serve the real app: ${JSON.stringify(served)}`);
+
+if (problems.length) {
+  console.error(`DEMO RED — subject ${SUBJECT}`);
+  for (const p of problems) console.error(`  ${p}`);
   console.error('  Buddy taps his icon and gets this. Northstar invariants 3 and 5.');
   process.exit(1);
 }
-console.log('DEMO GREEN — the 404 was refused; the shell survived and is what the device serves offline.');
+console.log(`DEMO GREEN — subject ${SUBJECT}`);
+console.log('  the shell was cached healthy, survived a 404 received while online,');
+console.log('  and is what the device serves with the origin gone.');

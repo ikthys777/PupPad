@@ -61,27 +61,32 @@ var CACHE_PREFIX = SCOPE_PATH === null ? null : cachePrefixFor(SCOPE_URL);
 
 /* Bump when any cached asset changes. CI asserts this (check 3).
  *
- * v17 -> v18 IS DELIBERATE AND IS PART OF THE FIX, not housekeeping — PUP-WO-0105.
- * No cached asset changed, so check 3 does not REQUIRE this bump. It is here because
- * the guard below only stops a NEW poisoning: CACHE_NAME is what a worker adopts on
- * activate, so an unchanged name means a device that already cached a 404 over its
- * app shell keeps serving it after the fix ships, until something re-fetches that
- * exact URL while online — and a three-year-old cannot cause that. The defect is
- * live now, so assume some device already carries it.
+ * PUP-WO-0105 BUMPED THIS TO v18 AND THE ADVERSARIAL PASS REVERSED IT. Kept as a
+ * comment because the reasoning is the useful part.
  *
- * Bumping retires the poisoned cache instead of inheriting it. It is safe in both
- * directions, and both were checked rather than assumed:
- *   - the reap is prefix-bounded (`startsWith(CACHE_PREFIX) && name !== CACHE_NAME`),
- *     so v18 retires v17 and touches nothing outside this worker's own prefix;
- *   - install is `event.waitUntil(cache.addAll(...))`, so on a device that is OFFLINE
- *     when the new worker arrives the precache rejects, install fails, the new worker
- *     never activates, and the OLD worker keeps serving. No window where the child
- *     has neither.
- * The cost is one re-download of five small assets on the next healthy online load.
+ * The bump was meant to recover devices that had already cached a 404 over the app
+ * shell, on the belief that an unchanged CACHE_NAME means the poisoned entry is
+ * inherited. TWO MEASUREMENTS KILLED IT:
+ *   - THE BUMP WAS NEVER NEEDED. `install` is
+ *     `caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))`. With CACHE_NAME
+ *     unchanged that opens the EXISTING cache and puts fresh copies over all five
+ *     precached URLs, including the poisoned ones. Shipping a byte-different sw.js
+ *     IS the re-fetch. Verified: poisoned /PupPad/index.html at 404, guard shipped
+ *     with the version left alone, entry back to 200 and the runtime cache intact.
+ *     There is no residual case — index.html has no relative `./` subresources, so
+ *     addAll covers every same-origin asset that can be poisoned.
+ *   - THE BUMP COST THE MAP PANEL ITS OFFLINE ASSETS. Everything cross-origin is
+ *     runtime-cached into THIS SAME cache — leaflet, supabase, and every OSM tile —
+ *     and the activate reap deletes the old cache whole, after which addAll restores
+ *     five entries and nothing else. Measured by the falsification test northstar
+ *     invariant 3 actually specifies, cold-start in airplane mode: 24 of 24 tiles
+ *     rendered on v17, 0 of 24 on v18. A treasure map with no map.
  *
- * Flagged for review rather than buried: this is the one change here that is not the
- * guard itself, and it is a judgement about recovery, not correctness. */
-var CACHE_VERSION = 'v18';
+ * So the bump traded invariant 3 against invariant 3 — the exact trade §1.2 of the
+ * work order exists to prevent, and which the guard below was carefully written to
+ * avoid. The guard alone. Do not reintroduce a bump for this defect, and do not add
+ * an activate-time addAll either: install already does it. */
+var CACHE_VERSION = 'v17';
 /* Guarded, because `null + 'v17'` is the STRING "nullv17" — a perfectly plausible
  * cache identity that no browser will ever create. It is unreachable today (install
  * returns early, servesRequest declines, activate takes the orphan branch), but
@@ -376,8 +381,14 @@ self.addEventListener('fetch', function(event) {
        * PUP-WO-0600 vendors those assets and dissolves the question. Do not read
        * this guard as covering the cross-origin case.
        *
-       * cache.put still rejects on a non-GET request, a 206, or an opaque
-       * redirect, and `ok` is true for a 206 — so the .catch stays. The response
+       * cache.put still rejects on a non-GET request or a 206, and `ok` is true
+       * for a 206 — so the .catch stays. (It does NOT reject an opaque redirect:
+       * measured, `put` ACCEPTED one. That clause was inherited from the previous
+       * comment and restated here while editing the very lines it describes,
+       * which is architecture §5's "a wrong comment is a claim" — and the same
+       * shape as sw.js's own note about a comment surviving the fix that
+       * falsified it. The guard below now refuses opaqueredirect anyway, since
+       * its type is 'opaqueredirect' and its `ok` is false.) The response
        * has already been returned, so there is nothing to recover, but an
        * unhandled rejection in a worker is a CI failure and an unguarded one here
        * would make routine traffic look like a defect. */

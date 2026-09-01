@@ -48,6 +48,7 @@
  * Usage: node check-error-caching.mjs <dir containing sw.js>
  */
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { FakeCacheStorage, loadWorker, swRequest } from './lib/sw-harness.mjs';
 
 const DIR = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
@@ -120,7 +121,11 @@ async function run(kind, { seedGood }) {
   return { net, hit, stored: hit ? { status: hit.status, body: await hit.clone().text() } : null };
 }
 
-console.log(`check-error-caching: ${SW}\n`);
+/* Architecture §5: assert the COMMIT that ran, never the conclusion alone. */
+let SUBJECT = '(git unavailable)';
+try { SUBJECT = execFileSync('git', ['hash-object', SW], { encoding: 'utf8' }).trim(); } catch {}
+console.log(`check-error-caching: ${SW}`);
+console.log(`  SUBJECT sw.js blob : ${SUBJECT}\n`);
 
 /* ---- 1. the fixture must actually fire, or every verdict below is vacuous ---- */
 const base = await run(200, { seedGood: false });
@@ -142,6 +147,39 @@ for (const code of [404, 500, 503]) {
     bad(`A ${code} RESPONSE WAS CACHED OVER THE APP SHELL — invariants 3 and 5`,
         `cached status=${r.stored.status} body=${JSON.stringify(r.stored.body.slice(0, 40))}; ` +
         `offline, the device would serve this instead of the app`);
+  }
+}
+
+/* ---- 3b. THE CROSS-ORIGIN PATH ITSELF, which no check in this tree executed ----
+ *
+ * Assertions 2-3 above dispatch a SAME-ORIGIN url, and assertion 4 below forces
+ * `type: 'opaque'` onto the response with defineProperty. Together they test the
+ * guard's PREDICATE correctly and never once take sw.js's cross-origin branch —
+ * `if (u.origin !== self.location.origin) return true;` — which is what actually
+ * decides whether leaflet, supabase and every OSM tile are served at all. V8
+ * coverage put that line at count 0 across the whole suite, and mutating it to
+ * `return false` (the Map panel dark offline) left every check green.
+ *
+ * That is this work order's own defect one level over: the fixture reached the
+ * predicate and never the path. So dispatch a real foreign origin. */
+const FOREIGN = 'https://cdn.example.org/leaflet.min.js';
+{
+  const cacheStorage = new FakeCacheStorage();
+  const worker = loadWorker(SW, SCOPE, cacheStorage, {
+    fetch: async () => fixture('opaque'),
+  });
+  const name = worker.get('CACHE_NAME');
+  const { responses } = await worker.dispatch('fetch', { request: swRequest(FOREIGN) });
+  if (!responses.length) {
+    bad('the worker DECLINED a cross-origin request outright — the Map panel gets nothing',
+        `no respondWith for ${FOREIGN}`);
+  } else {
+    await responses[0].catch(() => {});
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    const hit = await (await cacheStorage.open(name)).match(FOREIGN);
+    if (hit && hit.status === 0) ok('a genuinely cross-origin asset is served and cached (sw.js cross-origin branch)');
+    else bad('THE CROSS-ORIGIN BRANCH DID NOT CACHE — leaflet, supabase and every map tile would be absent offline',
+             `stored=${hit ? JSON.stringify({ status: hit.status }) : 'null'} for ${FOREIGN}`);
   }
 }
 
