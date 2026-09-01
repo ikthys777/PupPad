@@ -50,9 +50,128 @@ poisoning a live device, and 0104 explicitly forbids touching `sw.js`, so 0104
 **Triggers are not limited to a deploy.** A Pages incident, a 503, a 429, or a
 no-deployment gap all produce a non-200 while the device is online.
 
+## 0a. Round 3 — the fix must be able to ARRIVE
+
+*Added by CC-A 2026-09-01, after the round-2 pass. **This section is ranked first and
+it is the only thing this work order still needs.** The guard in §1 is built,
+verified twice in a real browser, and is not reopened here.*
+
+**The finding, and it is disqualifying for §0's own claim.** `install` is
+`caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))`. On a device with no quota
+headroom **`addAll` rejects with `QuotaExceededError`, the install fails, the new
+worker goes `redundant`, and the OLD UNGUARDED WORKER STAYS ACTIVATED.** Measured
+A/B varying only remaining quota: with headroom, `statechange → installed` and the
+poisoned shell returns to 200; squeezed, `statechange → redundant` and it stays 404.
+Recorded at `sw.js`'s `CACHE_VERSION` comment on `build/wo-0105`, and in
+`docs/architecture.md` §6.5.
+
+**And the devices most likely to be squeezed are the most-used** — a poisoned device
+is one that has been *used*, and use is what accumulates opaque entries at ~7 MB
+each. So **the fix cannot reach the devices that most need it**, which is Buddy's.
+
+**Why this blocks the merge rather than being a limitation to note.** Merging the
+guard is not a regression — a squeezed device is left exactly as it is today. But
+§0 of this work order says *"this is live, and it is on the tablet now"*, and P1's
+exit gate items 3 and 4 are **live verifications on that tablet**. A fix that cannot
+install on a squeezed device does not satisfy its own §0, and would let P1 close on a
+gate that passes on an adult's browser while the child's tablet stays poisoned. That
+is this project's own recurring failure — **the verdict read instead of what produced
+it** — arriving at the phase gate.
+
+### 0a.1 The required property, stated once
+
+**Install must not be able to fail because of quota.** However it is achieved, a
+device that cannot precache must still end the update with **the guarded worker
+activated**.
+
+### 0a.2 The sharp edge — what this fix must NOT refuse
+
+A bare `.catch(function(){})` on the install promise satisfies 0a.1 and is **wrong**,
+and this is the standing question answered before the code rather than after it.
+
+**Install failing loudly is a safety property this project already relies on.**
+`sw.js`'s own cross-origin comment argues for vendoring leaflet *because* install
+would then "fail loudly instead of half-provisioning the device." A blanket catch
+destroys that: a genuinely bad deploy — a 404 on a `urlsToCache` entry, a network
+drop mid-install — would then activate a worker over a cache it never provisioned,
+and the device is half-provisioned **silently**. That is invariant 3 traded for
+invariant 3 again, the exact trade §1.2 exists to prevent.
+
+**So the fix must discriminate: a quota failure is survivable; a fetch or HTTP
+failure is not.** `addAll` rejects with a `QuotaExceededError` `DOMException` for the
+first and a `TypeError` for the second — **verify that in Chromium against this
+worker rather than taking it from this sentence**, and if the two are not reliably
+separable through `addAll`, say so and use a path that can separate them (per-URL
+`fetch` + `put` gives you both the URL and the reason). Mechanism is yours; the
+discrimination is not optional.
+
+### 0a.3 A steer, not a spec — reclaim before giving up
+
+Swallowing the quota error leaves the guard installed and the shell repaired only
+opportunistically, on the next healthy *online* fetch of each poisoned URL — and §0
+already records that **a three-year-old cannot produce that condition**. Better, if
+it holds: **on `QuotaExceededError`, delete this worker's own runtime entries and
+retry the precache.**
+
+Bounds, because an unbounded reclaim is how the origin-wide reap returns wearing
+cleanup's clothes (§6 of the architecture, and `PUP-WO-0102` §1.3):
+
+- Only entries in **`CACHE_NAME`**, never `caches.keys()`, never another prefix.
+- **Never a `urlsToCache` entry.** Those are the thing being provisioned.
+- The retry is **bounded** — it must not loop.
+
+**Answer the standing question for this too, and answer it in the feedback:** what
+does reclaiming refuse? It refuses the Map panel its offline tiles. **Rank it and say
+so.** CC-A's ranking, for you to falsify rather than assume: an app shell that will
+not load beats a map that works offline, because invariant 5 has no tap out of a
+shell that fails and invariant 3 for the shell is the precondition for every other
+surface. **If your measurements contradict that ranking, that is a flag-and-stop.**
+
+### 0a.4 The check comes back — §3.5 is unmet, and §6.4 rests on it
+
+`check-error-caching.mjs` and `demo-error-poisoning.mjs` were built and then
+**stripped** at `d53dfbc` ("sw.js ships alone"). That was right for that commit's
+purpose and is **not right for the merge**: acceptance criterion §3.5 — *the one that
+matters most* — is currently unmet, and `.github/ci/` carries no check for this class.
+
+**This is not a tidy-up and it is not new scope.** Architecture **§6.4** is the ruling
+that lets `PUP-WO-0105` go *before* the `PUP-WO-0104` cache gate, and its entire
+reason is that **a worker change must be gated by a check for the class it changes**,
+which 0105 was to satisfy by bringing its own. Merge without it and the ordering
+ruling is falsified and the flip proceeds on a premise that is not true.
+
+Required:
+
+- **Recover both files from `d53dfbc^`** rather than rewriting them. You already did
+  this work; do not do it twice.
+- **Wire them into `ci.yml`'s `checks` job.** Feedback §6.3 records that neither was
+  wired. An unregistered check is a file, not a gate.
+- **Extend the check to 0a.1's class**: a squeezed-quota install must be *asserted*,
+  not measured and printed. You already produced the A/B by hand, so the mechanism
+  exists; if quota cannot be constrained inside the CI harness, **that is a
+  flag-and-stop and a ruling, not a limit to declare.**
+- **Both red first**, against the unguarded worker and against the un-reclaiming
+  install respectively, each with the commit and the failing step name
+  (architecture §5).
+
+### 0a.5 §7's third-round condition fired, and this is the ruling on it
+
+§7 says a second pass finding serious defects means *"the problem is not the guard."*
+**It fired, and the reading is accepted rather than waived: the problem is not the
+guard.** The guard is six executable lines and both passes confirmed it correct. What
+went wrong is upstream of it — **P1 was scoped as *rebuild the firebreak* and became
+an open-ended `sw.js` investigation in which each pass spawns another `sw.js` work
+order.** Seven work orders exist and zero games.
+
+So the response is **not another round of widening.** F1 is admitted because it
+defeats §0's own claim on the one device that matters, and because its fix lives in
+the same file, in the same update path, and is bounded by §0a.2. **Nothing else is
+admitted.** See §4's standing instruction.
+
 ## 1. Scope
 
-**One change, plus the tests that prove it.**
+**Two changes, plus the tests that prove them. Items 1 and 2 are BUILT and verified —
+they are recorded here as the standing scope, not as work.** Item 3 is what is open.
 
 1. **Guard the cache write on response status.** Store only what should be stored.
    `response.ok` is the obvious predicate; **justify whatever you choose in the
@@ -67,9 +186,14 @@ no-deployment gap all produce a non-200 while the device is online.
    Note `PUP-WO-0600` may vendor those assets and dissolve the question; do not
    depend on that.
 
-3. **Do not change anything else in `sw.js`.** Not the reap, not the prefix
+3. **Make the fix able to arrive** — the install path, §0a. Ranked first; it is the
+   only part of this work order still open.
+
+4. **Do not change anything else in `sw.js`.** Not the reap, not the prefix
    derivation, not the `/stable/` decline, not the legacy exception. They are correct
-   and reviewed.
+   and reviewed. **`CACHE_VERSION` stays `v17`** — the v18 bump was flagged, measured
+   and reversed (0 of 24 tiles offline), and its reasoning is preserved in the file.
+   Do not reintroduce it, and do not add an activate-time `addAll`.
 
 ## 2. Invariants — restated by number
 
@@ -118,6 +242,15 @@ tests in §3 — the cache gate's shape is `PUP-WO-0104`'s and must not be pre-e
 6. **Every demonstration asserts the commit and the failing step name**
    (architecture §5).
 
+7. **The guard ARRIVES on a squeezed device** (§0a.1). Demonstrate the A/B again,
+   now with the fix present: quota constrained, install completes, the new worker
+   reaches `activated`, and the poisoned shell is repaired. **And demonstrate the
+   other half of §0a.2 in the same run** — a genuine bad precache (a 404 on a
+   `urlsToCache` entry) still fails the install loudly, with the old worker left in
+   place. One without the other proves nothing.
+8. **§3.5's check exists, is registered in `ci.yml`, and covers both classes**
+   (§0a.4), each shown red first.
+
 ## 4. Scope fence — NOT in this work order
 
 - **The cache gate's shape** — the origin-mapped browser, content assertions across
@@ -126,6 +259,24 @@ tests in §3 — the cache gate's shape is `PUP-WO-0104`'s and must not be pre-e
 - **`index.html`**, including the CDN loads — `PUP-WO-0600`.
 - **Publication and the deploy path** — `PUP-WO-0103`.
 - **The reap, the prefix derivation, the `/stable/` decline, the legacy exception.**
+- **Whether the worker should cache cross-origin tiles at all.** Real, unratified,
+  and **it has no home** — architecture §6.5 records that `PUP-WO-0600` cannot
+  receive it, because OSM tiles are per-coordinate map data and unvendorable. It gets
+  its own numbered work order **after P2**. Do not answer it here.
+- **The un-closable Map overlay** — `PUP-WO-0106`, CC-A's to author.
+
+**And a standing instruction on this work order specifically, from Scotty:
+`PUP-WO-0105` does not grow again.** Seven work orders exist and zero games. P1 was
+scoped as *rebuild the firebreak* and has become an open-ended `sw.js` investigation
+where each pass spawns another `sw.js` work order. Architecture §6.4 is explicit that
+**P1 closes on its own gate, not on `PUP-WO-0104`**: items 1 and 2 are met, items 3
+and 4 are live verifications Scotty runs. So the path is short — this work order
+merges, Scotty flips, gates 3 and 4 run, **P1 is done**.
+
+**A new `sw.js` finding does not reopen P1 unless it is live-on-the-tablet severity,
+which is the bar `PUP-WO-0105` itself cleared.** Anything else: record it in the
+feedback file with its severity, **park it as its own numbered work order after P2,
+and do not build it here.** P2 is the priority the moment the flip is done.
 
 ## 5. Adversarial pass
 
@@ -156,10 +307,26 @@ Probes:
   another is a ruling, not a build step.
 - Any need to touch `index.html`, `manifest.json`, or an icon.
 - Any need to build `PUP-WO-0104`'s gate to prove this.
+- **Quota not constrainable inside the CI harness** (§0a.4). A ruling, not a limit
+  to declare.
+- **A measurement contradicting §0a.3's ranking** — shell over map. That is an
+  invariant-against-invariant trade and it is CC-A's call, not a build step.
+- **`QuotaExceededError` proving inseparable from a fetch failure** by any path
+  (§0a.2). Do not ship a blanket catch and describe it as a fix.
 - A second adversarial pass finding serious defects — this work order is one guard,
   and if it takes three rounds the problem is not the guard.
 
 ## 8. Provenance
+
+**§0a added 2026-09-01 after the round-2 pass.** F1 is the builder's finding and it
+falsified a claim CC-A had already accepted and repeated upward — *"shipping a
+byte-different `sw.js` IS the re-fetch"* — which is true only with quota headroom.
+The two facts that compose into it were **both already in `sw.js`'s own comments and
+had never been put together**, which is this work order's own finding recurring inside
+the file that records it. §0a.4 is CC-A's: the ordering ruling in architecture §6.4
+was written on the premise that 0105 brings its own gate, and stripping the check at
+`d53dfbc` quietly falsified it. Nothing ever asked whether that recommendation became
+a commit.
 
 Written by CC-A 2026-09-01, mid-`PUP-WO-0103` adversarial pass, on a defect found by
 two independent lenses from opposite ends: one reproduced the poisoned shell in
