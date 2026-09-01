@@ -61,9 +61,19 @@ var CACHE_PREFIX = SCOPE_PATH === null ? null : cachePrefixFor(SCOPE_URL);
 
 /* Bump when any cached asset changes. CI asserts this (check 3). */
 var CACHE_VERSION = 'v17';
-var CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
+/* Guarded, because `null + 'v17'` is the STRING "nullv17" — a perfectly plausible
+ * cache identity that no browser will ever create. It is unreachable today (install
+ * returns early, servesRequest declines, activate takes the orphan branch), but
+ * check 3 reads this value and would report "nullv17" as an identity rather than
+ * failing. A name that cannot exist should not be expressible. */
+var CACHE_NAME = CACHE_PREFIX === null ? null : CACHE_PREFIX + CACHE_VERSION;
 
-/* ONE-TIME EXCEPTION, and the only name deleted outside this worker's prefix.
+/* THE ONLY NAME DELETED OUTSIDE THIS WORKER'S PREFIX.
+ *
+ * It is NOT a one-time migration, and an earlier version of this comment called it
+ * one. The line below runs on EVERY activation of every non-stable worker, forever,
+ * until this constant is removed — which is what makes the precondition at the
+ * deletion site load-bearing rather than a merge-day footnote.
  *
  * Every device that has ever loaded PupPad — Buddy's included — holds a cache
  * called exactly "pup-pad-v16". It matches no prefix, so a correctly bounded reap
@@ -79,10 +89,16 @@ var CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
  * a standing exception to the rule the rest of this file exists to enforce.
  *
  * WHAT THIS EXCEPTION KNOWINGLY DOES NOT COVER, stated so the choice is visible.
- * Sixteen cache names have existed on main: pup-pad-v1, v3, and v4 through v16
+ * FIFTEEN cache names have existed on main: pup-pad-v1, v3, and v4 through v16
  * (there was never a v2). Only v16 is listed here, so a device that last loaded
  * PupPad at v1-v15 and has not loaded since keeps that cache FOREVER — a bounded
- * reap cannot reach it, and no later worker will either.
+ * reap cannot reach it, and no later worker will either. That is FOURTEEN stranded
+ * names. Verified against git rather than counted by hand, because an earlier
+ * version of this comment said "sixteen" while enumerating fifteen, and the
+ * architect is being asked to rule on the size of this trade:
+ *     for c in $(git rev-list origin/main -- sw.js); do
+ *       git show $c:sw.js | grep -oE "^var CACHE_NAME = 'pup-pad-v[0-9]+'"; done |
+ *       grep -oE 'pup-pad-v[0-9]+' | sort -u | wc -l     ->  15
  *
  * That is a leak, not a violation: such a cache is never read (the offline read is
  * scoped to CACHE_NAME) and never served, so invariants 3 and 7 hold regardless. It
@@ -93,7 +109,7 @@ var CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
  * across every one of this account's Pages repositories, so each name listed here
  * is another unconditional origin-wide deletion — and this exception is the single
  * place where that rule is broken. Trading a permanent, invisible, shrinking leak
- * for fifteen more origin-wide deletions is a widening of the one thing this file
+ * for fourteen more origin-wide deletions is a widening of the one thing this file
  * warns returns "disguised as cleanup", and it is the architect's call, not the
  * builder's. Raised as decision-needed in docs/feedback/PUP-WO-0102.md.
  */
@@ -107,6 +123,15 @@ var LEGACY_CACHE_EXACT = 'pup-pad-v16';
  * invariant 7 failing with disjoint cache names and a green gate. Prefix naming
  * does not address this; it is a separate mechanism (PUP-WO-0102 §1.4).
  */
+/* THE TWO-PATH ASSUMPTION, NAMED WHERE IT IS MADE (WO §4 fences generalising to N).
+ *
+ * Both of these are correct for exactly two deploy paths and quietly wrong for a
+ * third: IS_STABLE_WORKER is a SUFFIX test, so a scope ending "/unstable/" reads as
+ * the promoted copy; and FOREIGN_SUBTREE is SCOPE-RELATIVE, so a worker at
+ * /PupPad/games/ would protect /PupPad/games/stable/ rather than the real
+ * /PupPad/stable/. Neither is reachable in today's topology — index.html registers
+ * with no explicit scope, so the only scopes that exist are the two deploy paths.
+ * Written down so the third path finds this comment instead of the behaviour. */
 var STABLE_SEGMENT = 'stable/';
 var IS_STABLE_WORKER = SCOPE_PATH !== null &&
   SCOPE_PATH.length >= STABLE_SEGMENT.length &&
@@ -160,9 +185,26 @@ function canonicalPath(pathname) {
     try {
       d = decodeURIComponent(seg);
     } catch (e) {
-      return null;                     /* malformed escape: undecidable */
+      /* A MALFORMED ESCAPE IS NOT UNDECIDABLE, and declining it was an invariant 3
+       * violation of the same shape as F7. The URL path encode-set does NOT escape
+       * '%', so a browser sends "/100%off.png" verbatim; decodeURIComponent throws on
+       * it, and a static host serves the file literally named "100%off.png". Refusing
+       * it meant an asset that works online and is silently absent offline.
+       *
+       * So decode leniently instead — escape by escape, leaving invalid ones alone,
+       * which is what a lenient server does. Safety is preserved because the check
+       * below runs on the RESULT: if any valid escape in the segment decodes to a
+       * separator it is still declined, so "%2Fstable%GG" cannot slip through on the
+       * back of its own malformedness. */
+      d = seg.replace(/%[0-9A-Fa-f]{2}/g, function (esc) {
+        try { return decodeURIComponent(esc); } catch (e2) { return esc; }
+      });
     }
-    if (d.indexOf('/') !== -1 || d.indexOf('\\') !== -1) return null;   /* invented separator */
+    /* Only '/' invents structure. Backslash was rejected here too and should not have
+     * been: it is not a path separator in a URL (RFC 3986) and not one on the host
+     * serving these files, so "a%5Cb.png" is an ordinary filename that a static host
+     * serves and this worker was refusing offline. */
+    if (d.indexOf('/') !== -1) return null;   /* invented separator */
     if (d === '.') continue;
     if (d === '..') { if (out.length > 1) out.pop(); continue; }
     out.push(d);
@@ -179,7 +221,15 @@ function servesRequest(requestUrl) {
   } catch (e) {
     return false;
   }
-  if (u.origin !== self.location.origin) return true;   /* cross-origin: not our subtree question */
+  /* Cross-origin. Not a subtree question — but saying only that understates what
+   * happens next: the fetch handler CACHES what it serves, so third-party bytes land
+   * in the child's cache keyed by URL, with no allowlist. That is deliberate for the
+   * Map panel (leaflet must work offline; invariant 3), and it sits awkwardly beside
+   * northstar §5's third non-goal. The three CDN loads themselves are PUP-WO-0600's
+   * to remove; whether a worker should cache cross-origin responses AT ALL is an
+   * architect's call, raised in docs/feedback/PUP-WO-0102.md. Recorded here so the
+   * behaviour is a decision rather than a side effect of a comment about scoping. */
+  if (u.origin !== self.location.origin) return true;
 
   var canon = canonicalPath(u.pathname);
   if (canon === null) return false;              /* undecidable: decline */
@@ -240,7 +290,26 @@ self.addEventListener('activate', function(event) {
           /* The one exact-literal exception — and ONLY the root worker may take
            * it. pup-pad-v16 was created by the root copy; stable deleting it is a
            * cross-path deletion that leaves the root install with no cache at all
-           * until it is next loaded online (northstar invariant 3). */
+           * until it is next loaded online (northstar invariant 3).
+           *
+           * ITS PRECONDITION, STATED BECAUSE IT IS NOT SELF-EVIDENT AND IS NOT
+           * ENFORCED HERE. This deletion is safe only while NO OTHER LIVE COPY IS
+           * STILL RUNNING THE PRE-PUP-WO-0102 WORKER. refs/heads/stable is at
+           * 2952aa1 as of 2026-09-01, and that worker's cache IS LITERALLY
+           * `pup-pad-v16` — so if /stable/ were ever published from it, this line
+           * would delete the promoted copy's live cache, and that worker's own
+           * origin-wide reap would delete this one's. Mutual destruction, which is
+           * architecture §6's hazard exactly.
+           *
+           * It cannot happen today: Pages is build_type `legacy` serving main:/, so
+           * /stable/ does not exist. It is prevented once it does by architecture
+           * §5's ruling — publication refuses any copy whose worker reaps or reads
+           * outside its own prefix, and check-cache-isolation.mjs prints the remedy
+           * ("fast-forward `stable` before publishing it") rather than dying on a
+           * ReferenceError. That refusal is PUP-WO-0103's to wire into the publish
+           * job. The precondition is recorded here, at the line that depends on it,
+           * so it cannot be satisfied by accident and then quietly stop being true.
+           * (Raised by this work order's adversarial pass.) */
           if (!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT) return true;
           /* Otherwise: this worker's own prefix, and never outside it. */
           return name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME;
@@ -278,6 +347,14 @@ self.addEventListener('fetch', function(event) {
        * read is not. */
       return caches.open(CACHE_NAME).then(function(cache) {
         return cache.match(event.request);
+      }).then(function(hit) {
+        /* A MISS MUST NOT THROW. cache.match resolves to undefined when nothing is
+         * stored, and respondWith(undefined) raises "Failed to convert value to
+         * 'Response'" — an uncaught exception in the worker on every offline miss.
+         * No user-visible difference (the request fails either way), but check 4 now
+         * fails on ANY worker exception, and on a copy whose cache is empty or was
+         * just reaped EVERY request produces one. Answer with a real response. */
+        return hit || new Response('', { status: 504, statusText: 'Offline and not cached' });
       });
     })
   );

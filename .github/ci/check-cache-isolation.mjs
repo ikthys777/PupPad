@@ -18,7 +18,7 @@
  * defect is one line of rewriting away from passing such a grep.
  */
 import { join } from 'node:path';
-import { FakeCacheStorage, loadWorker } from './lib/sw-harness.mjs';
+import { FakeCacheStorage, loadWorker, swRequest, REQUEST_SHAPES } from './lib/sw-harness.mjs';
 
 const REPO = process.argv[2] || process.cwd();
 const SW = join(REPO, 'sw.js');
@@ -79,7 +79,13 @@ else bad('root\'s cache name STARTS WITH stable\'s prefix', `${rootName} vs ${st
 const LEGACY = 'pup-pad-v16';
 const ADJACENT = rootPrefix.replace(/\|$/, 'x|') + 'v17';   // adjacent, NOT owned
 const UNRELATED = 'some-other-app-cache';
-const rootStale = rootPrefix + 'v1';
+/* Derived so it can NEVER equal rootName. `rootPrefix + 'v1'` collides the moment
+ * CACHE_VERSION is 'v1', and the check would then demand one cache be both deleted
+ * and preserved — an assertion guaranteed to fail whatever the worker does. This
+ * file's sibling already carries the lesson ("a check that cannot survive the change
+ * another check requires is a check that will be deleted"); it was applied there and
+ * not here. */
+const rootStale = rootName + '-stale-from-a-previous-build';
 
 const store = new FakeCacheStorage([rootName, rootStale, stableName, ADJACENT, UNRELATED, LEGACY]);
 const activating = loadWorker(SW, ROOT_SCOPE, store);
@@ -155,6 +161,25 @@ const stableOwn = await stableFetch.dispatch('fetch', { request: { url: 'https:/
 if (stableOwn.respondWithCalled) ok('stable worker serves its own path');
 else bad('stable worker declined its own path — the exclusion misfires on the stable copy', 'respondWith not called');
 
+/* ---- 4b. F4: the decline must hold across every REQUEST SHAPE, not just a GET ----
+ *
+ * A worker that exempts top-level navigations from the /stable/ decline caches the
+ * promoted copy's document under the root prefix and passed all six checks, because
+ * every fake request here was `{ url }` and nothing else. The sandbox could not
+ * express a navigation, so no assertion could reach the branch. */
+const shapeW = loadWorker(SW, ROOT_SCOPE, new FakeCacheStorage());
+for (const [what, opts] of REQUEST_SHAPES) {
+  const foreign = await shapeW.dispatch('fetch', {
+    request: swRequest('https://ikthys777.github.io/PupPad/stable/index.html', opts) });
+  if (!foreign.respondWithCalled) ok(`root worker declines /stable/ for ${what}`);
+  else bad(`root worker SERVES /stable/ for ${what} — it caches the promoted copy under the root prefix`,
+           JSON.stringify(opts));
+  const own = await shapeW.dispatch('fetch', {
+    request: swRequest('https://ikthys777.github.io/PupPad/index.html', opts) });
+  if (own.respondWithCalled) ok(`root worker still serves its own path for ${what}`);
+  else bad(`root worker declined its OWN path for ${what} — the rule is shape-dependent`, JSON.stringify(opts));
+}
+
 /* ---- 5. finding 7: the legacy exception belongs to the ROOT worker only ---- */
 const store4 = new FakeCacheStorage([LEGACY, stableName]);
 const stableOnly = loadWorker(SW, STABLE_SCOPE, store4);
@@ -172,6 +197,13 @@ const encodings = [
   ['/PupPad//stable/manifest.json',  'doubled slash'],
   ['/PupPad/./stable/manifest.json', 'dot segment'],
   ['/PupPad/x/../stable/index.html', 'dot-dot segment'],
+  /* The lenient-decode path must not become an escape hatch. sw.js decodes a
+   * malformed segment escape-by-escape precisely so "100%off.png" is served; these
+   * prove the separator test still runs on the RESULT, so a valid %2F cannot ride
+   * through on the back of a neighbouring invalid escape. Without them the comment
+   * in sw.js would be claiming coverage nothing tests. */
+  ['/PupPad/%2Fstable%GG/manifest.json', 'valid %2F beside an INVALID escape'],
+  ['/PupPad/%GG%2Fstable/manifest.json', 'invalid escape first, then a valid %2F'],
 ];
 const rootServe = loadWorker(SW, ROOT_SCOPE, new FakeCacheStorage());
 for (const [path, why] of encodings) {
@@ -238,8 +270,67 @@ if (servedOffline === 'BYTES FROM THE OTHER DEPLOY PATH')
 else
   ok('offline fallback reads only this worker\'s own cache, not the origin');
 
+/* F6 — PROVE THE FIXTURE FIRED. The assertion above only means anything if the
+ * worker actually took its offline branch, and what forces it there is the sandbox
+ * `fetch` rejecting. Neuter that one stub — make fetch RESOLVE — and the worker
+ * returns the network response, the offline branch never runs, and the assertion
+ * passes because nothing happened. The positive control above proves the SEED was
+ * reachable; it does not prove the BRANCH was taken. This does. */
+const net = rootOffline.network();
+if (net.attempted > 0 && net.rejected === net.attempted)
+  ok(`the offline branch was actually taken (network attempted ${net.attempted}x, rejected ${net.rejected}x)`);
+else
+  bad('the offline branch was NOT exercised — the assertion above passed vacuously',
+      `network attempted ${net.attempted}, rejected ${net.rejected}: a resolving fetch means the worker never reached its cache fallback`);
+
+/* ---- 8b. F5: the invariant's OWN stated direction — the promoted copy reading ----
+ *
+ * Northstar invariant 7's falsification column reads "load the PROMOTED copy after
+ * the TEST copy has been cached; find any asset served from the other build." The
+ * assertion above runs the mirror of that: it seeds stable and reads from root. The
+ * code is symmetric so both behave identically today — which is exactly why the gap
+ * was invisible. It is not wrong now; it is unguarded against a change that touches
+ * only one worker's branch.
+ *
+ * The fixture is a realistic device state, not a synthetic one: /PupPad/stable/... in
+ * the ROOT worker's cache is precisely what a pre-PUP-WO-0102 root worker produced,
+ * since its scope covered /stable/ and it cached unconditionally. */
+const stableShared = 'https://ikthys777.github.io/PupPad/stable/app.js';
+const mirrorStore = new FakeCacheStorage();
+const rootSeed = loadWorker(SW, ROOT_SCOPE, mirrorStore);
+const rootCacheHandle = await mirrorStore.open(rootSeed.get('CACHE_NAME'));
+await rootCacheHandle.put(stableShared, 'BYTES FROM THE TEST BUILD');
+if (await mirrorStore.match(stableShared) === 'BYTES FROM THE TEST BUILD')
+  ok('test-build seed is reachable through the store (the next assertion is not vacuous)');
+else
+  bad('the test-build seed did not take — the promoted-copy assertion would pass VACUOUSLY', 'put or origin-wide match is inert');
+
+const stableOffline = loadWorker(SW, STABLE_SCOPE, mirrorStore);
+const promoted = await stableOffline.dispatch('fetch', { request: swRequest(stableShared) });
+let promotedServed;
+if (promoted.respondWithCalled) {
+  try { promotedServed = await promoted.responses[0]; } catch (e) { promotedServed = undefined; }
+}
+if (promotedServed === 'BYTES FROM THE TEST BUILD')
+  bad('THE PROMOTED COPY SERVED THE TEST BUILD\'S BYTES — invariant 7 by its own stated test',
+      'load the promoted copy after the test copy has been cached; an asset came from the other build');
+else
+  ok('the promoted copy, offline, reads only its own cache (invariant 7 in its own stated direction)');
+const netP = stableOffline.network();
+if (netP.attempted > 0 && netP.rejected === netP.attempted)
+  ok(`the promoted copy's offline branch was actually taken (network attempted ${netP.attempted}x)`);
+else
+  bad('the promoted copy\'s offline branch was NOT exercised', `network attempted ${netP.attempted}, rejected ${netP.rejected}`);
+
 /* ---- 9. legitimate percent-encoded assets must still be served (invariant 3) ---- */
-const encodedOk = ['/PupPad/my%20photo.png', '/PupPad/caf%C3%A9.png', '/PupPad/a%2Bb.png'];
+/* All of these are served by a static host and must therefore be served offline too,
+ * or they are invariant 3 violations of the exact shape F7 was: works online, absent
+ * offline, no error anywhere. The first three decode cleanly and always passed. The
+ * last two are the ones the adversarial pass found refused — a filename containing a
+ * backslash, and one containing a bare percent (the URL path encode-set does not
+ * escape '%', so the browser sends it verbatim and decodeURIComponent throws). */
+const encodedOk = ['/PupPad/my%20photo.png', '/PupPad/caf%C3%A9.png', '/PupPad/a%2Bb.png',
+                   '/PupPad/a%5Cb.png', '/PupPad/100%off.png'];
 const rootEnc = loadWorker(SW, ROOT_SCOPE, new FakeCacheStorage());
 for (const p of encodedOk) {
   const r = await rootEnc.dispatch('fetch', { request: { url: 'https://ikthys777.github.io' + p } });
@@ -253,6 +344,28 @@ for (const p of ['/PupPad/stable', '/PupPad/stable?x=1']) {
   if (!r.respondWithCalled) ok(`root worker declines the bare foreign directory: ${p}`);
   else bad('root worker serves the foreign directory without its trailing slash', `${p} — a host 301s this to /stable/ and a subresource fetch follows`);
 }
+
+/* ---- 11. F7: the PRECACHE must not reach outside this worker's scope ----
+ *
+ * `install` was never dispatched by any check and `addAll` recorded nothing, so
+ * everything the precache does was unobservable. "A worker touches only what it
+ * owns" covers install as much as fetch and activate — a urlsToCache entry pointing
+ * into the other deploy path writes the promoted copy's bytes under this prefix
+ * before a single fetch happens. */
+const preStore = new FakeCacheStorage();
+const installing = loadWorker(SW, ROOT_SCOPE, preStore);
+await installing.dispatch('install');
+const ownCache = await preStore.open(installing.get('CACHE_NAME'));
+const precached = await ownCache.keys();
+if (precached.length) ok(`install precached ${precached.length} entr(ies) into its own cache`);
+else bad('install precached NOTHING — the worker has no offline capability at all (invariant 3)', 'urlsToCache is empty or addAll never ran');
+
+const rootScopePath = new URL(ROOT_SCOPE).pathname;
+const escaped = precached
+  .map((u) => { try { return new URL(u, ROOT_SCOPE).pathname; } catch (e) { return u; } })
+  .filter((path) => !path.startsWith(rootScopePath) || path.startsWith(rootScopePath + 'stable/'));
+if (escaped.length === 0) ok('every precached entry lies inside this worker\'s own scope');
+else bad('install precached OUTSIDE this worker\'s scope', escaped.join(', '));
 
 /* ---- verdict ---- */
 if (failures.length) {

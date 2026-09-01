@@ -28,9 +28,16 @@ export class FakeCacheStorage {
     if (!this.entries.has(name)) this.entries.set(name, new Map());
     const store = this.entries.get(name);
     return {
-      addAll: async () => {},
+      /* addAll RECORDS. It used to be `async () => {}`, which made the entire
+       * precache unobservable: a worker that precached the other deploy path — a
+       * direct violation of "a worker touches only what it owns" — wrote nothing
+       * this harness could see, so no check could assert anything about install.
+       * A stub that swallows its input cannot fail. */
+      addAll: async (urls) => { for (const u of urls) store.set(String(u), 'PRECACHED'); },
+      add: async (u) => { store.set(String(u), 'PRECACHED'); },
       put: async (req, res) => { store.set(typeof req === 'string' ? req : req.url, res); },
       match: async (req) => store.get(typeof req === 'string' ? req : req.url),
+      keys: async () => [...store.keys()],
     };
   }
   /**
@@ -48,11 +55,49 @@ export class FakeCacheStorage {
 }
 
 /**
+ * F4 — A REQUEST STUB THAT CAN EXPRESS THE INPUT CLASSES A REAL REQUEST HAS.
+ *
+ * Every fake request used to be `{ url }` and nothing else. So a worker branching on
+ * `request.mode`, `request.method` or `request.destination` was structurally
+ * INVISIBLE to the sandbox — not a stub returning a wrong value, but a stub that
+ * cannot represent the input at all. One clause,
+ *
+ *     if (!servesRequest(event.request.url) && event.request.mode !== 'navigate')
+ *
+ * exempts top-level navigations from the /stable/ decline, caches the promoted
+ * copy's document under the root prefix, and passes all six checks.
+ *
+ * Defaults match what a browser sends for a subresource GET; a caller overrides only
+ * what it is probing.
+ */
+export function swRequest(url, opts = {}) {
+  return {
+    url,
+    method: 'GET',
+    mode: 'no-cors',
+    destination: '',
+    credentials: 'same-origin',
+    headers: new Map(),
+    ...opts,
+  };
+}
+
+/** The request shapes a worker must treat identically. Used to sweep every rule. */
+export const REQUEST_SHAPES = [
+  ['a subresource GET', {}],
+  ['a top-level navigation', { mode: 'navigate', destination: 'document' }],
+  ['a same-origin cors request', { mode: 'cors' }],
+  ['a script subresource', { destination: 'script' }],
+  ['a POST', { method: 'POST' }],
+  ['a prefetch', { destination: 'empty', mode: 'cors' }],
+];
+
+/**
  * @param {string} swPath   path to sw.js
  * @param {string} scope    the worker's registration scope URL
  * @param {FakeCacheStorage} cacheStorage  shared across both workers on purpose
  */
-export function loadWorker(swPath, scope, cacheStorage) {
+export function loadWorker(swPath, scope, cacheStorage, extraGlobals = {}) {
   const listeners = new Map();
   const origin = new URL(scope).origin;
 
@@ -67,9 +112,25 @@ export function loadWorker(swPath, scope, cacheStorage) {
     clients: { claim: () => {} },
   };
 
+  /* F6 — THE NETWORK FIXTURE IS OBSERVABLE, because it silently gated the headline
+   * assertion. `fetch` rejecting is what forces the worker down its offline branch,
+   * and that branch is the ONLY path the origin-wide-read assertion exercises. If
+   * fetch resolved, the worker returned the network response, the offline branch
+   * never ran, and the assertion passed because nothing happened — indistinguishable
+   * from passing because the read was correctly scoped.
+   *
+   * It was not among the six stubs audited, and the reason it escaped is worth
+   * keeping: the rule was "audit the stubs whose DEGENERATE value is also a
+   * legitimate one", and a RESOLVING fetch is not degenerate at all — it is what an
+   * online browser hands the worker on every request. The dangerous value here is
+   * the NORMAL one. A caller can now assert the fixture actually fired. */
+  const network = { attempted: 0, rejected: 0 };
   const sandbox = {
     self, caches: cacheStorage, URL, console,
-    fetch: async () => { throw new Error('network disabled in harness'); },
+    fetch: async () => {
+      network.attempted++; network.rejected++;
+      throw new Error('network disabled in harness');
+    },
     Promise, Response: globalThis.Response, Request: globalThis.Request,
     /* TIMERS ARE PRESENT ON PURPOSE, and their absence was a hole.
      *
@@ -81,6 +142,11 @@ export function loadWorker(swPath, scope, cacheStorage) {
      * the stub that returned undefined unconditionally (architecture §6.1). A
      * sandbox that cannot host the defect is not a sandbox for it. */
     setTimeout, clearTimeout, setInterval, clearInterval,
+    /* extraGlobals lets a caller evaluate the SAME source under a different
+     * environment — used by check 3 to prove the cache identity does not depend on
+     * which environment is reading it. Spread last so a caller can also override a
+     * default deliberately. */
+    ...extraGlobals,
   };
   sandbox.self.self = sandbox.self;
   vm.createContext(sandbox);
@@ -103,5 +169,7 @@ export function loadWorker(swPath, scope, cacheStorage) {
     },
     /** Read a top-level binding out of the loaded worker. */
     get(name) { return vm.runInContext(name, sandbox); },
+    /** What the network fixture actually did — so a check can prove it fired. */
+    network() { return { ...network }; },
   };
 }

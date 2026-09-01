@@ -13,15 +13,18 @@ file summarises the other's job.
 | Protected surfaces diff to empty | **EMPTY** | `git diff origin/main -- index.html manifest.json icon-192.png icon-512.png` prints nothing |
 | No publication job, script, or permission | **NONE** | `grep -nE 'publish\|deploy-pages\|pages: write\|id-token' .github/workflows/ci.yml` matches only prose in comments; the workflow has one job, `checks`, and `permissions: contents: read` at the top with no job-level override |
 | `.github/` touched only for checks + harness | **YES** | the ci.yml diff adds two steps to the `checks` job and edits comments; nothing else |
-| PUP-WO-0100's four checks unmodified in intent | **STRENGTHENED, NEVER WEAKENED** | checks 1 and 2 are byte-identical to `main`; check 3 replaced a text-scrape with an evaluation; check 4 replaced a four-way permissive state test with `=== 'active'` **and** `controlled` |
+| PUP-WO-0100's four checks unmodified in intent | **STRENGTHENED — after a correction; see F3 below** | checks 1 and 2 are byte-identical to `main`; check 3 replaced a text-scrape with an evaluation **and now evaluates twice, under two environments**; check 4 replaced a four-way permissive state test with `=== 'active'` **and** `controlled` |
 | Diff scope | `sw.js`, `.github/ci/`, `ci.yml`'s `checks` job, `docs/` | `git diff --stat origin/main` |
 | All six checks green on this branch | **6/6** | run each of `.github/ci/check-{syntax,assets,cache-name,load,cache-isolation}.mjs` and `demo-two-path-caches.mjs` against `.` |
 
-**On the last row and §0.** No `PUP-WO-0100` check was weakened, skipped or
-special-cased to land this. Checks 3 and 4 were made **stricter** — check 4 in
-particular previously passed a worker stuck in `installing` with offline capability
-dead. If you want the one-line version: nothing went green by being asked more
-gently.
+**On that row and §0 — I had this wrong and the adversarial pass caught it.** My
+first draft of this table said *"STRENGTHENED, NEVER WEAKENED"*. That was false for
+one class, and the pass proved it rather than asserting it. §1.5 requires check 3 to
+**evaluate** the worker instead of scraping its text, and evaluating opened a hole
+the regex did not have: **the sandbox is detectable.** The correction and its
+red-then-green demonstration are F3 below. As the artifact now stands the claim
+holds, but it did not hold when I first wrote it down, and the difference between
+those two sentences is the whole point of the pass.
 
 ---
 
@@ -171,7 +174,7 @@ otherwise.
 
 ### 5 · The assertion I added to prove the merge-day path could not fail
 
-**`.github/ci/demo-two-path-caches.mjs:161-176` · a stub that cannot fail · FIXED · decision-needed: no**
+**`.github/ci/demo-two-path-caches.mjs` (the offline cold-load block) · a stub that cannot fail · FIXED · decision-needed: no**
 
 This is the sharpest finding in the work order and it is against me, in this work
 order, on the discipline this work order exists to enforce.
@@ -220,11 +223,11 @@ red; this one is the reason I can say that.
 
 I asked §5's question of the reap fix — *what legitimate behaviour does this now
 refuse?* — and the answer is: **it refuses to delete anything outside its own prefix,
-and sixteen cache names have existed on `main`.**
+and fifteen cache names have existed on `main`.**
 
 ```
 pup-pad-v1, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16
-                                                        (there was never a v2)
+  = FIFTEEN names (there was never a v2); v16 is excepted, so FOURTEEN are stranded
 ```
 
 Only `v16` is excepted. A device that last loaded PupPad at **v1–v15** and has not
@@ -237,7 +240,7 @@ pattern" rule exactly and cost nothing to write. But `ikthys777.github.io` is a
 added is one more unconditional origin-wide deletion — widening the single place in
 the file where the rule the whole file exists to enforce is deliberately broken. The
 file's own comment calls that "how the origin-wide reap returns, disguised as
-cleanup." Trading a permanent, invisible, shrinking leak for fifteen more origin-wide
+cleanup." Trading a permanent, invisible, shrinking leak for fourteen more origin-wide
 deletions is an architect's call.
 
 **The case for leaving it at one (my recommendation):** it is a leak, not a
@@ -255,14 +258,113 @@ informed rather than forgotten.
 
 ---
 
+## The adversarial pass — findings and dispositions
+
+Verbatim in `docs/findings/PUP-WO-0102-adversarial.md`, including the exact prompt,
+every command, every output, and the pass's own disclosure that it accidentally
+committed to the frozen branch and reset it. **Its verdict:** nothing in `sw.js`
+reaches Buddy's tablet as a live defect; three items blocking for acceptance; four
+serious gate holes; it explicitly declined to pad to WO §7's third-pass stop and said
+so — *"the file is clean; the gate around it is not."*
+
+**It was right about the thing that matters most: it wrote two genuinely broken
+workers that passed all six checks, and proved the harm in a real browser.** Not
+argued — demonstrated. Both now fail.
+
+| # | Finding | Disposition |
+|---|---|---|
+| **F1** | Deleting `pup-pad-v16` blanks a stale `/stable/` copy offline — demonstrated in Chromium | **Confirmed at source, comment fixed, RULING NEEDED.** See below. |
+| **F2** | The verbatim findings file did not exist; 12 of 16 mutations unauditable | **Fixed.** File committed with the pass verbatim, plus the engine's full source and output. Now 21 mutations, each named. |
+| **F3** | "No check was weakened" is false — check 3 defeatable by sandbox detection | **Confirmed, fixed, gates line corrected.** Check 3 evaluates twice, bare and browser-shaped, and requires agreement. Red-then-green. |
+| **F4** | A worker exempting *navigations* from the `/stable/` decline passes all six | **Fixed.** Harness gained a real request stub; check 5 sweeps six request shapes; check 6 performs an actual top-level navigation. Mutant now red. |
+| **F5** | Check 5 ran the **mirror** of invariant 7's stated test; the promoted copy's read was never exercised | **Fixed.** §8b runs it in the invariant's own direction. Mutant now red. |
+| **F6** | The sandbox `fetch` stub silently gated the headline assertion and was never audited | **Fixed.** The network fixture is now observable and both offline assertions prove the branch was taken. Mutant now red. |
+| **F7** | `install` never dispatched; `addAll` inert, so the precache was unobservable | **Fixed.** `addAll` records, `install` is dispatched, nothing may be precached outside scope. Mutant now red. |
+| **F8** | `/stable/` has zero offline capability during promotion lag | **Accepted as correct-by-design. RULING NEEDED** on the runbook. |
+| **F9** | Any canonical scope other than the two deploy paths orphans a cache | **Accepted, documented, RULING NEEDED** — becomes reachable when `games/` lands. |
+| **F10** | `%5C` and a bare `%` served online, silently absent offline | **Fixed.** Backslash is not a URL separator and should never have been refused; a malformed escape now decodes leniently, as a static host does. |
+| **F11** | Third-party bytes are cached into the child's cache | **Documented at the line. RULING NEEDED.** |
+| **F12** | An offline cache miss raises an uncaught `TypeError` | **Fixed.** A miss answers with a real 504 rather than `undefined`. |
+| **F13** | `IS_STABLE_WORKER` is a suffix test; `FOREIGN_SUBTREE` is scope-relative | **Documented where the assumption is made.** Correct-by-fence per §4. |
+| **F14** | The cache count is wrong — fifteen names, not sixteen | **Fixed, and it was mine.** Verified against git; the command is in the comment. |
+| **F15** | "ONE-TIME EXCEPTION" is not one-time | **Fixed.** It runs on every activation, forever, and that is what makes F1's precondition load-bearing. |
+| **F16** | `CACHE_NAME` is the string `"nullv17"` when the prefix is null | **Fixed.** A name that cannot exist is no longer expressible. |
+| **F17** | Check 5 self-contradicts if `CACHE_VERSION` were `'v1'` | **Fixed.** The stale name is derived so it can never equal the live one. |
+| **F18** | One citation in this file does not resolve | **Fixed.** |
+| **F19** | Acceptance §3.1 depends on which `main` the reviewer has | **Acknowledged.** The gates table already says `origin/main`; CC-A's PR #6 corrects §3.1. |
+
+### The four that changed the artifact most
+
+**F4 and F5 are the same defect in two costumes, and it is the one worth naming.**
+Both mutants passed all six checks because **the harness could not represent the
+input**. Not a stub returning a wrong value — a stub that cannot express a navigation,
+and a fixture that only ever ran one of the two workers. Architecture §6.1 point 2
+says *"a stub that cannot fail is not a test."* These are one level up: **a stub that
+cannot pose the question is not a test either**, and it is harder to see, because
+nothing about it looks degenerate.
+
+**F6 is the sharpest thing in the pass, and it is a correction to my own rule.** I
+wrote that a stub fails silently *"exactly when its neutered return value is also a
+legitimate one"*, audited six stubs against it, and missed the seventh — because a
+**resolving** `fetch` is not degenerate at all. It is what an online browser hands the
+worker on every request. **The dangerous value was the normal one.** My rule pointed
+at degenerate values and this stub's failure mode was ordinary success, so the rule
+looked satisfied while the fixture that decides whether the headline assertion runs at
+all went unexamined. The positive control I added proved the *seed* was reachable; it
+never proved the *branch* was taken.
+
+**F1 was demonstrated, not argued**, and it is worse than my comment claimed. I had
+already recorded the precondition after verifying `origin/stable @ 2952aa1` carries
+`var CACHE_NAME = 'pup-pad-v16'`. What the pass added is that this is not a merge-day
+race: **the deletion runs on every activation of the root worker, forever**, so a
+stale `/stable/` can never stably hold an offline cache at all. My comment called it a
+"ONE-TIME EXCEPTION"; it is not one, and WO §1.3's "removed once" is not either.
+
+---
+
+## Rulings needed
+
+1. **F1 — may `/stable/` be published before `stable` is fast-forwarded past this
+   commit?** It cannot happen today (Pages is `legacy`, serving `main:/`), and
+   architecture §5 already rules the mechanism. My ask is narrow and concrete:
+   **`PUP-WO-0103`'s publish loop must run check 5 against the `stable` copy
+   specifically**, not merely the triggering ref. The diagnostic that names the remedy
+   already exists in check 5; what is missing is the thing that calls it.
+
+2. **The legacy list — one literal or fourteen?** Unchanged from my original framing
+   except the corrected count. My recommendation is still one, and F1 strengthens it:
+   every literal added is another unconditional origin-wide deletion, on a shared
+   origin, running forever.
+
+3. **F8 — promotion runbook.** `/stable/` has no offline capability until it has been
+   loaded online once. If the icon moves and the tablet goes out the door offline,
+   Buddy gets a browser error page. Runbook step, or enforced?
+
+4. **F11 — should the worker cache cross-origin responses at all?** It is what makes
+   the Map panel work offline (invariant 3), and it sits against northstar §5's
+   third non-goal. `PUP-WO-0600` removes the CDN loads; until then this is a standing
+   decision, now documented at `sw.js`'s cross-origin branch.
+
+5. **F9 — scope allowlist.** Not reachable today because `index.html` registers with
+   no explicit scope. Becomes reachable the moment a page under `games/` registers a
+   worker, which P2 makes likely.
+
+6. **Where should the mutation engine live?** It is the only thing proving the checks
+   can fail, and it is uncommitted. `PUP-WO-0103` touches `.github/` only and could
+   host it without putting a mutation engine on a tablet-reaching branch.
+
+---
+
 ## Red demonstrations — §3.3 and §3.7
 
 Run by a meta-check that **fails if any mutation escapes**: it asserts check 5 goes
 RED when the defect is present, and classifies each neutered stub as SILENT (the stub
 was the only defence) or LOUD (another assertion contradicts it).
 
-Sixteen mutations, all as predicted. Full captured output is in
-`docs/findings/PUP-WO-0102-adversarial.md`. The two that matter most:
+**Twenty-one mutations, all as predicted** — fourteen defects that must go red, seven
+stubs neutered and classified. Full source and captured output are in
+`docs/findings/PUP-WO-0102-adversarial.md`, so every mutation is enumerated rather
+than asserted. The two that matter most:
 
 - **A1 — invariant 7's own falsification test.** Restore the origin-wide read; check 5
   goes RED on *"the root worker SERVED the other deploy path's cached bytes when

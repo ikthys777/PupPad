@@ -161,6 +161,33 @@ else bad('root worker CACHED a /stable/ asset under the root prefix — invarian
 if ((await keys(root)).length === before.length) ok('no new cache was created by that request');
 else bad('a new cache appeared during the /stable/ probe', (await keys(root)).join(', '));
 
+/* ---- F4: a top-level NAVIGATION to /stable/ must not poison the root cache ----
+ *
+ * The probe above uses a subresource `fetch`. A top-level navigation is a different
+ * request — `mode: 'navigate'`, `destination: 'document'` — and a worker that
+ * branches on either serves it while declining the subresource. That mutant passed
+ * all six checks: the sandbox could not express a navigation, and this file never
+ * performed one. It is the promotion-lag case, when only the root worker exists and
+ * someone opens the promoted copy for the first time. */
+const navBefore = await keys(root);
+const navPage = await context.newPage();
+await navPage.goto(`${ORIGIN}/stable/index.html`, { waitUntil: 'load' });
+await navPage.waitForTimeout(600);
+const poisoned = await root.evaluate(async ({ cacheName }) => {
+  const names = await caches.keys();
+  if (!names.includes(cacheName)) return { missing: true };
+  const c = await caches.open(cacheName);
+  return { missing: false, urls: (await c.keys()).map((r) => new URL(r.url).pathname)
+                                                 .filter((p) => p.startsWith('/stable/')) };
+}, { cacheName: ROOT_CACHE });
+await navPage.close();
+if (poisoned.missing) bad(`the root cache ${ROOT_CACHE} does not exist — this assertion tested nothing`);
+else if (poisoned.urls.length === 0) ok('a top-level NAVIGATION to /stable/ left no foreign bytes under the root prefix');
+else bad('a NAVIGATION to /stable/ was cached under the ROOT prefix — invariant 7 fails',
+         poisoned.urls.join(', '));
+if ((await keys(root)).length === navBefore.length) ok('no new cache appeared during the navigation probe');
+else bad('a new cache appeared during the navigation probe', (await keys(root)).join(', '));
+
 /* ---- item 5, SECOND HALF: offline cold-load after the legacy migration ----
  *
  * §3.5 does not stop at "legacy reaped, new cache built" — it ends "offline

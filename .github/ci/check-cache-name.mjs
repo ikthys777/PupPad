@@ -109,12 +109,43 @@ function urls(src) {
  */
 const IDENTITY_SCOPE = 'https://ikthys777.github.io/PupPad/';
 
-function cacheIdentity(src) {
-  if (!src) return null;
+/* AN IDENTITY THAT DEPENDS ON WHO IS LOOKING IS NOT AN IDENTITY.
+ *
+ * Evaluating instead of scraping removed the regex-versus-parser class, but it
+ * opened one the regex did not have: this sandbox is DETECTABLE. A single line —
+ *
+ *     var CACHE_VERSION = (typeof ExtendableEvent !== 'undefined') ? 'evil' : 'v17';
+ *
+ * evaluates to 'v17' here and to something else in Chromium, so the check would
+ * compare a name the browser never uses. The old regex refused that source, though
+ * only by accident: it accepted string literals ONLY, so it equally refused the
+ * correct `CACHE_NAME = CACHE_PREFIX + CACHE_VERSION` this work order requires.
+ * Narrower is not the same as stronger, and neither one was sound.
+ *
+ * So the source is evaluated TWICE — once bare, once under a browser-shaped global
+ * set — and the two identities must agree. Any environment-dependent identity fails
+ * loudly instead of being read in whichever environment happens to be convenient.
+ * Check 6 does catch this class in a real browser, because it derives its expected
+ * names from the sandbox and then looks for them in Chromium; that is a genuine
+ * backstop but an incidental one, and a defect should fail at the check whose
+ * subject it is. (Raised by the PUP-WO-0102 adversarial pass as F3.) */
+const BROWSERISH_GLOBALS = {
+  ExtendableEvent: function ExtendableEvent() {},
+  FetchEvent: function FetchEvent() {},
+  ServiceWorkerGlobalScope: function ServiceWorkerGlobalScope() {},
+  Cache: function Cache() {},
+  CacheStorage: function CacheStorage() {},
+  Client: function Client() {},
+  importScripts: function importScripts() {},
+  navigator: { userAgent: 'Mozilla/5.0 Chrome', onLine: true },
+  location: { href: IDENTITY_SCOPE + 'sw.js', origin: new URL(IDENTITY_SCOPE).origin },
+};
+
+function evaluateIdentity(src, extraGlobals) {
   const tmp = join(tmpdir(), `puppad-sw-${Math.random().toString(36).slice(2)}.js`);
   try {
     writeFileSync(tmp, src);
-    const w = loadWorker(tmp, IDENTITY_SCOPE, new FakeCacheStorage());
+    const w = loadWorker(tmp, IDENTITY_SCOPE, new FakeCacheStorage(), extraGlobals);
     const name = w.get('CACHE_NAME');
     return typeof name === 'string' && name.length ? name : null;
   } catch {
@@ -122,6 +153,31 @@ function cacheIdentity(src) {
   } finally {
     try { unlinkSync(tmp); } catch {}
   }
+}
+
+function cacheIdentity(src) {
+  if (!src) return null;
+  const bare = evaluateIdentity(src, {});
+  const browserish = evaluateIdentity(src, BROWSERISH_GLOBALS);
+  if (bare !== null && browserish === null) {
+    /* Not a case to skip past. A worker that loads bare and THROWS under a
+     * browser-shaped environment is environment-dependent in the most direct way
+     * there is, and an `x !== null` guard on the comparison below would let it
+     * through by making the assertion silently not apply — the same shape as a
+     * check that passes because it measured nothing. */
+    fail('sw.js loads in a bare sandbox but FAILS under a browser-shaped one.\n' +
+      '  The identity CI verified would not be the identity the tablet uses, and\n' +
+      '  a worker that throws on load caches nothing at all (invariant 3).');
+  }
+  if (bare !== null && browserish !== null && bare !== browserish) {
+    fail('the cache identity DEPENDS ON THE ENVIRONMENT evaluating it.\n' +
+      `  bare sandbox:      ${bare}\n` +
+      `  browser-shaped:    ${browserish}\n` +
+      '  A worker that names its cache one thing for CI and another for Chromium\n' +
+      '  defeats every check that derives an expected name from this source, and the\n' +
+      '  name the child\'s tablet actually uses is the one nothing verified.');
+  }
+  return bare;
 }
 
 
