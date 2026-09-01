@@ -109,7 +109,11 @@ terms a work order can cite: (a) the exact function signature a game module must
 export; (b) the exact registry entry fields; (c) a file-by-file disposition of both
 Grok workspaces marked port / rewrite / discard; (d) a list of contradictions found
 against architecture §3, which may be empty but must be explicitly stated as empty.
-`git diff main --stat` for this work order shows changes under `docs/` only.
+`git fetch origin && git diff origin/main --stat` for this work order shows changes
+under `docs/` only. *(Form corrected 2026-09-01 per §5 — a local `main` ref is not
+fast-forwarded and this gate would have measured against a stale base. The gate's
+substance is unchanged and its PASS below stands: it was verified against
+`origin/main` at review time.)*
 
 **Gate status: PASSED**, 2026-09-01, merged at `1690617`. All four answered — (a)
 findings §8.1, (b) §9.1, (c) §7 with 487 files reconciled against an independent
