@@ -38,6 +38,10 @@ on:
         options: [verify, rollback]
         default: verify
         required: true
+      main_sha:
+        description: "verify ONLY: full 40-char commit SHA to treat as the ROOT copy. Lets a refusal be demonstrated against a real commit instead of argued. Cannot deploy."
+        type: string
+        required: false
       stable_sha:
         description: "Full 40-char commit SHA to treat as the promoted copy. REQUIRED for rollback (a human names it; nothing infers it). Optional for verify, where it selects a hypothetical /stable/ and cannot deploy anything."
         type: string
@@ -227,9 +231,21 @@ jobs:
         # names, no tags, no "latest", no abbreviations that could resolve
         # ambiguously, and no default. The SHA is verified to exist and to be an
         # ancestor of a real ref further down, before anything is built from it.
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.stable_sha != ''
+        if: github.event_name == 'workflow_dispatch' && (github.event.inputs.stable_sha != '' || github.event.inputs.main_sha != '')
         run: |
           set -euo pipefail
+          if [ -n '${{ github.event.inputs.main_sha }}' ] && [ '${{ github.event.inputs.mode }}' != verify ]; then
+            echo "::error::main_sha is accepted in verify mode ONLY. It substitutes the ROOT copy so a"
+            echo "::error::refusal can be demonstrated against a real commit, and verify cannot deploy."
+            exit 1
+          fi
+          for sha in '${{ github.event.inputs.main_sha }}' '${{ github.event.inputs.stable_sha }}'; do
+            [ -n "$sha" ] || continue
+            case "$sha" in
+              *[!0-9a-f]*) echo "::error::a named SHA must be 40 lowercase hex characters."; exit 1 ;;
+            esac
+            [ "${#sha}" -eq 40 ] || { echo "::error::a named SHA must be exactly 40 characters; got ${#sha}."; exit 1; }
+          done
           sha='${{ github.event.inputs.stable_sha }}'
           case "$sha" in
             *[!0-9a-f]* | "") echo "::error::stable_sha must be a full 40-character lowercase hex commit SHA."; exit 1 ;;
@@ -259,7 +275,7 @@ jobs:
       - name: Check out main
         uses: actions/checkout@v7
         with:
-          ref: refs/heads/main
+          ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.main_sha != '') && github.event.inputs.main_sha || 'refs/heads/main' }}
           path: src/main
           fetch-depth: 0
 
@@ -285,9 +301,10 @@ jobs:
         run: |
           set -euo pipefail
           remote="https://github.com/${GITHUB_REPOSITORY}.git"
-          named_sha=''; mode=''
+          named_sha=''; named_main=''; mode=''
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then
             named_sha='${{ github.event.inputs.stable_sha }}'
+            named_main='${{ github.event.inputs.main_sha }}'
             mode='${{ github.event.inputs.mode }}'
           fi
           for ref in main stable; do
@@ -299,6 +316,17 @@ jobs:
                           | awk -v r="refs/heads/${ref}" '$2 == r { print $1; exit }')
             [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
             echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
+
+            if [ "$ref" = main ] && [ -n "$named_main" ] && [ "$mode" = verify ]; then
+              # Same reasoning as the stable branch below: verify cannot deploy, so
+              # this names a copy to CHECK. It exists so acceptance item 3's refusals
+              # are demonstrated against REAL commits carrying the real defect, rather
+              # than argued from the shell source.
+              [ "$head_sha" = "$named_main" ] || {
+                echo "::error::src/main is ${head_sha}, not the requested ${named_main}."; exit 1; }
+              echo "main: VERIFY against hypothetical root copy ${named_main:0:12} (real tip ${remote_sha:0:12}); this run cannot deploy"
+              continue
+            fi
 
             if [ "$ref" = stable ] && [ -n "$named_sha" ] && [ "$mode" = verify ]; then
               # VERIFY against an explicitly named promoted commit. The equality test
