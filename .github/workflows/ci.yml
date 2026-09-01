@@ -39,7 +39,7 @@ on:
         default: verify
         required: true
       stable_sha:
-        description: "rollback ONLY: the full 40-character commit SHA to publish at /stable/. A human names the commit; nothing infers it."
+        description: "Full 40-char commit SHA to treat as the promoted copy. REQUIRED for rollback (a human names it; nothing infers it). Optional for verify, where it selects a hypothetical /stable/ and cannot deploy anything."
         type: string
         required: false
 
@@ -219,7 +219,7 @@ jobs:
     env:
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'verify' }}
     steps:
-      - name: "Rollback input — a human must name the commit"
+      - name: "Named-commit input — a human names it, and only rollback can publish it"
         # PUP-WO-0103 §1.7 and §7. The lever exists because a promoted copy nobody
         # can roll back is a safety mechanism welded shut in the emergency it was
         # built for. It must never become a path by which content reaches /stable/
@@ -227,7 +227,7 @@ jobs:
         # names, no tags, no "latest", no abbreviations that could resolve
         # ambiguously, and no default. The SHA is verified to exist and to be an
         # ancestor of a real ref further down, before anything is built from it.
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'rollback'
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.stable_sha != ''
         run: |
           set -euo pipefail
           sha='${{ github.event.inputs.stable_sha }}'
@@ -235,7 +235,12 @@ jobs:
             *[!0-9a-f]* | "") echo "::error::stable_sha must be a full 40-character lowercase hex commit SHA."; exit 1 ;;
           esac
           [ "${#sha}" -eq 40 ] || { echo "::error::stable_sha must be exactly 40 characters; got ${#sha}."; exit 1; }
-          echo "rollback requested by ${{ github.actor }} to stable_sha=$sha"
+          echo "mode=${{ github.event.inputs.mode }} stable_sha=$sha requested by ${{ github.actor }}"
+          if [ "${{ github.event.inputs.mode }}" = verify ]; then
+            echo "VERIFY: this names a HYPOTHETICAL promoted copy so the rest of the"
+            echo "pipeline can be exercised while refs/heads/stable is still behind."
+            echo "The deploy job cannot run in verify mode, so nothing reaches the site."
+          fi
 
       - name: Check out the CI tooling from the triggering ref
         uses: actions/checkout@v7
@@ -267,7 +272,7 @@ jobs:
           #
           # On a rollback the human-named SHA wins, and it is checked below for both
           # existence and ancestry before a byte of it is published.
-          ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'rollback') && github.event.inputs.stable_sha || 'refs/heads/stable' }}
+          ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.stable_sha != '') && github.event.inputs.stable_sha || 'refs/heads/stable' }}
           path: src/stable
           fetch-depth: 0
 
@@ -280,9 +285,10 @@ jobs:
         run: |
           set -euo pipefail
           remote="https://github.com/${GITHUB_REPOSITORY}.git"
-          rollback_sha=''
-          if [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ github.event.inputs.mode }}" = rollback ]; then
-            rollback_sha='${{ github.event.inputs.stable_sha }}'
+          named_sha=''; mode=''
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            named_sha='${{ github.event.inputs.stable_sha }}'
+            mode='${{ github.event.inputs.mode }}'
           fi
           for ref in main stable; do
             head_sha=$(git -C "src/$ref" rev-parse HEAD)
@@ -294,7 +300,23 @@ jobs:
             [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
             echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
 
-            if [ "$ref" = stable ] && [ -n "$rollback_sha" ]; then
+            if [ "$ref" = stable ] && [ -n "$named_sha" ] && [ "$mode" = verify ]; then
+              # VERIFY against an explicitly named promoted commit. The equality test
+              # below is deliberately NOT applied: the point is to stand in a commit
+              # that is not the current tip, so the rest of this pipeline can be
+              # exercised at all while refs/heads/stable is still behind PUP-WO-0102.
+              # Otherwise every step after the /stable/ check is unreachable until a
+              # human fast-forwards stable, which happens only AFTER this merges.
+              # Safe because verify cannot deploy: the deploy job requires
+              # mode == rollback. This names a copy to CHECK, never one to publish,
+              # and it is checked exactly as a real one would be.
+              [ "$head_sha" = "$named_sha" ] || {
+                echo "::error::src/stable is ${head_sha}, not the requested ${named_sha}."; exit 1; }
+              echo "stable: VERIFY against hypothetical promoted copy ${named_sha:0:12} (real tip ${remote_sha:0:12}); this run cannot deploy"
+              continue
+            fi
+
+            if [ "$ref" = stable ] && [ -n "$named_sha" ] && [ "$mode" = rollback ]; then
               # A rollback deliberately publishes something OTHER than the current
               # tip, so equality is the wrong test. Two things are required instead,
               # and together they are strictly narrower than "any commit in the repo":
@@ -305,17 +327,17 @@ jobs:
               #      main, a PR head, or any commit a human has not already promoted.
               # That is what keeps §7's "no path by which main's content reaches
               # /stable/ without a human naming the commit" true of the lever itself.
-              [ "$head_sha" = "$rollback_sha" ] || {
-                echo "::error::src/stable is ${head_sha}, not the requested ${rollback_sha}."; exit 1; }
+              [ "$head_sha" = "$named_sha" ] || {
+                echo "::error::src/stable is ${head_sha}, not the requested ${named_sha}."; exit 1; }
               git -C src/stable fetch --quiet origin "refs/heads/stable:refs/remotes/origin/stable-tip"
               tip=$(git -C src/stable rev-parse refs/remotes/origin/stable-tip)
               [ "$tip" = "$remote_sha" ] || {
                 echo "::error::fetched stable tip ${tip} disagrees with ls-remote ${remote_sha}."; exit 1; }
-              git -C src/stable merge-base --is-ancestor "$rollback_sha" "$tip" || {
-                echo "::error::${rollback_sha} is NOT an ancestor of refs/heads/stable (${remote_sha})."
+              git -C src/stable merge-base --is-ancestor "$named_sha" "$tip" || {
+                echo "::error::${named_sha} is NOT an ancestor of refs/heads/stable (${remote_sha})."
                 echo "::error::The rollback lever can only move the promoted copy backward along its own"
                 echo "::error::history. REFUSING — northstar invariant 4."; exit 1; }
-              echo "stable: ROLLBACK to ${rollback_sha:0:12}, verified an ancestor of ${tip:0:12}"
+              echo "stable: ROLLBACK to ${named_sha:0:12}, verified an ancestor of ${tip:0:12}"
               continue
             fi
 
