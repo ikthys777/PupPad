@@ -54,6 +54,29 @@ that constraint in your feedback so it is not lost if this work order is split.
 
 ## 2. Scope
 
+### 2.0 FIRST: check 5 is red by crash, not by assertion — G4
+
+*Added 2026-09-01 from `PUP-WO-0103`'s second pass. **Do this before §2.1**, because
+until it is done every other red in this check is of unknown provenance.*
+
+A worker whose offline read **rejects** produces this from `check-cache-isolation`:
+both invariant-7 assertions print as **passing**, `CHECK 5 PASSED` is printed, and
+**then** node dies on an unhandled rejection. Exit 1 — for a reason that is not an
+assertion at all.
+
+**Reproduced by CC-A**: replacing `return cache.match(event.request)` with a
+rejecting promise yields exactly that — `CHECK 5 PASSED` on stdout, two
+invariant-7 lines reporting success, exit 1 from `Error: offline read rejects`.
+
+**So the check is red by accident.** Add a `.catch()` anywhere on that path — which
+is ordinary hardening someone will eventually do — and it goes **fully green with
+the defect present.** This is family member 3 in its purest form: a failure whose
+cause is not the one under test, where the cause is not a test at all.
+
+Required: the offline-read path is exercised through an assertion that fails
+**as an assertion**, with a named message, and an unhandled rejection anywhere in
+the check is itself a failure with its own message rather than a bare stack trace.
+
 ### 2.1 A real browser at the production origin — M9
 
 Today there are **two separable gates**, and a payload conditioned on both is
@@ -113,11 +136,34 @@ never mere presence, and order the steps so recreation cannot mask deletion.
 that makes CI remember it.* Add M9, M7 and the §2.3 cases to `check-mutations.mjs`
 so each is required to produce red. They are then regressions, not lessons.
 
+**And repair PART B's verdict while you are in that file.** *(Found by
+`PUP-WO-0103`'s pass; amended here 2026-09-01, before dispatch.)*
+`check-mutations.mjs:106` reads `const matched = !expectFail || fails.some(...)`, and
+**none of PART B's seven mutations carries an `expectFail`** — verified: 18
+occurrences in the file, zero after PART B begins. So for all of PART B `matched` is
+unconditionally true and the verdict collapses to *did check 5 go red at all*, which
+is exactly what the comment above it says was fixed. A pure syntax error in a PART B
+harness patch scores `ok`.
+
+Its summary line therefore claims more than the run supports: **"every stub is
+load-bearing"** is not established by a verdict that never discriminates which
+assertion fired. **This is family member 1 inside the step `ci.yml` calls "the one
+that makes green mean something"** — so it is not a tidy-up, it is the defect class
+this project has spent the most effort on, living in the check built to prevent it.
+
+Give every PART B mutation an `expectFail`, and make the summary claim only what the
+verdict tests.
+
 ## 3. Acceptance — proven, not asserted
 
 1. `git fetch origin && git diff origin/main --stat` shows `.github/` and `docs/`
    only. **`sw.js` and `index.html` diff to empty.**
-2. **M9, M7 and M10's cases each demonstrated RED**, by their own mutant, each
+2. **G4 first: every red this check produces is red BY ASSERTION.** Demonstrate that
+   the rejecting-offline-read worker fails with a named assertion message, and that
+   no path in the check can exit nonzero via an unhandled rejection. Until this
+   holds, results 3–6 below cannot be trusted, because a red of unknown provenance
+   proves nothing about what it was pointed at.
+3. **M9, M7 and M10's cases each demonstrated RED**, by their own mutant, each
    reverted, each with captured output.
 3. **Every demonstration asserts the commit and the step.** *Architecture §5, ruled
    after four false demonstrations in `PUP-WO-0103`.* Record `head_sha` against the
