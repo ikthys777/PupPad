@@ -21,6 +21,10 @@
  * papering over — see FEEDBACK.md.
  */
 import { execFileSync } from 'node:child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { FakeCacheStorage, loadWorker } from './lib/sw-harness.mjs';
 
 const REPO = process.argv[2] || process.cwd();
 const git = (...a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8' }).trim();
@@ -84,18 +88,53 @@ function urls(src) {
   return new Set([...m[1].matchAll(/['"]([^'"]+)['"]/g)]
     .map(x => norm(x[1])).map(x => (x === '' ? 'index.html' : x)));
 }
-function cacheName(src) {
+/**
+ * Determine the cache identity a revision's sw.js would ACTUALLY use.
+ *
+ * This does not read a literal — it EVALUATES the worker at a fixed scope and asks
+ * what CACHE_NAME comes out. Every regex attempt at this has been defeated, and
+ * each time by something more ordinary than the last:
+ *
+ *   - reading `CACHE_VERSION` from anywhere, so a value in a COMMENT won.
+ *   - anchoring to `^\s*var`, which is a LINE start, not code — so a block comment
+ *     whose lines begin at column 0 still won.
+ *   - and with or without an anchor, `String.match` returns the FIRST hit, so two
+ *     `var CACHE_VERSION = …;` lines are enough: the check reads one, the worker
+ *     uses the other.
+ *
+ * A regex is answering "does this text appear?" when the question is "what will
+ * this code compute?". `check-cache-isolation.mjs` already evaluates the worker at
+ * two scopes; this uses the same harness. A cache identity that cannot be
+ * evaluated fails loudly rather than being guessed at from its spelling.
+ */
+const IDENTITY_SCOPE = 'https://ikthys777.github.io/PupPad/';
+
+function cacheIdentity(src) {
   if (!src) return null;
-  const m = src.match(/CACHE_NAME\s*=\s*['"]([^'"]+)['"]/);
-  return m ? m[1] : null;
+  const tmp = join(tmpdir(), `puppad-sw-${Math.random().toString(36).slice(2)}.js`);
+  try {
+    writeFileSync(tmp, src);
+    const w = loadWorker(tmp, IDENTITY_SCOPE, new FakeCacheStorage());
+    const name = w.get('CACHE_NAME');
+    return typeof name === 'string' && name.length ? name : null;
+  } catch {
+    return null;                 /* unparseable or throws at load: not an identity */
+  } finally {
+    try { unlinkSync(tmp); } catch {}
+  }
 }
+
 
 const swHead = readAt(head, 'sw.js'), swBase = readAt(base, 'sw.js');
 if (!swHead) fail('sw.js does not exist at HEAD.');
 const listHead = urls(swHead), listBase = urls(swBase);
 if (!listHead) fail('could not parse urlsToCache from sw.js at HEAD (sw.js:2-8).');
-const nameHead = cacheName(swHead), nameBase = cacheName(swBase);
-if (!nameHead) fail('could not parse CACHE_NAME from sw.js at HEAD (sw.js:1).');
+const nameHead = cacheIdentity(swHead), nameBase = cacheIdentity(swBase);
+if (!nameHead) fail('could not establish the cache identity from sw.js at HEAD.\n' +
+  '  Expected either `var CACHE_VERSION = \'…\';` TOGETHER WITH\n' +
+  '  `var CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;`, or (pre-PUP-WO-0102)\n' +
+  '  `var CACHE_NAME = \'…\';`. Reading a version literal that CACHE_NAME does not\n' +
+  '  use would compare a number nothing depends on.');
 
 // Union of both revisions: an asset REMOVED from the list still changed what a
 // client caches, so it must still trigger a bump.
