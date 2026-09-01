@@ -1,7 +1,13 @@
-# PupPad CI — four checks, each of which can go red for exactly one reason.
+# PupPad CI — seven checks, each of which can go red for exactly one reason.
 #
 # This workflow REPORTS. It does not publish, deploy, or write to any branch
-# (northstar invariant 4). Publication is PUP-WO-0101's.
+# (northstar invariant 4). Publication is PUP-WO-0103's.
+#
+# Checks 5 and 6 were added by PUP-WO-0102 and verify THE WORKER, which is the seam
+# between the two work orders: a check that verifies the worker lives here, a check
+# that verifies publication is PUP-WO-0103's. Both work orders touch this file, in
+# disjoint jobs and in sequence — PUP-WO-0103 branches from this one's merge — so
+# there is never a second writer.
 #
 # Why this file is safe to merge before the firebreak it helps build exists:
 # GitHub Pages under build_type "legacy" serves main:/ as static files and does
@@ -25,12 +31,12 @@ concurrency:
   # Cancel superseded PR runs, but NEVER a run on main. A cancelled run is neither
   # green nor red, and main is what publishes to the tablet — two quick pushes
   # must not leave the live commit with no verdict at all. Matters more once
-  # PUP-WO-0101 gates publication on this.
+  # PUP-WO-0103 gates publication on this.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:
-    name: Four checks
+    name: Seven checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -81,3 +87,38 @@ jobs:
         # up from its own location to .github/ci/node_modules, which is why the
         # tooling can stay out of the repository root.
         run: node .github/ci/check-load.mjs .
+
+      # ---------------------------------------------------------------- 5 ----
+      - name: "Check 5 — a worker touches only the cache it owns"
+        # Behavioural, not textual: sw.js is loaded into a sandbox, handed a
+        # POPULATED origin-wide cache store, its real activate and fetch handlers
+        # are dispatched, and the check asks what survived and what was served. A
+        # grep for `startsWith` proves a token is present, not that a foreign cache
+        # is still there afterwards — and the defect is one rewrite away from
+        # passing such a grep.
+        run: node .github/ci/check-cache-isolation.mjs .
+
+      # ---------------------------------------------------------------- 6 ----
+      - name: "Check 6 — both deploy paths in a real browser, not the sandbox"
+        # Check 5 runs sw.js in a Node sandbox, and a sandbox can be detected: a
+        # one-line `typeof ExtendableEvent !== 'undefined'` gate makes a worker
+        # behave for check 5 and reap origin-wide in a browser. This step is the
+        # answer to that — the same properties asserted against real Chromium with
+        # two real registrations of the SAME sw.js, at / and at /stable/. It needs
+        # no published trees, which is why it is this work order's and not
+        # PUP-WO-0103's.
+        run: node .github/ci/demo-two-path-caches.mjs .
+
+      # ---------------------------------------------------------------- 7 ----
+      - name: "Check 7 — the checks themselves can fail"
+        # Answers a different question from the six above: not "is sw.js correct?"
+        # but "would we know if it weren't?". It restores each defect in turn and
+        # requires check 5 to go red, then neuters each harness stub in turn and
+        # requires the resulting blindness to be contradicted by some other
+        # assertion. Architecture §6.1 exists because an origin-wide read shipped
+        # under a fully green gate; this is the step that makes green mean something.
+        #
+        # It also keeps itself honest: its mutations are anchored to exact source
+        # text, so a legitimate edit to sw.js breaks an anchor and turns this red
+        # rather than letting the mutation set rot unnoticed.
+        run: node .github/ci/check-mutations.mjs .
