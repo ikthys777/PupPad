@@ -201,3 +201,115 @@ whether the first rollback should be a rehearsed step in §6's sequencing.**
   `main` or `stable`. Deleting them would make the demonstrations unrepeatable, which
   is the failure mode `PUP-WO-0102`'s uncommitted mutation engine had. If CC-A would
   rather they went, deleting them costs nothing but the reproducibility.
+
+---
+
+# THE ADVERSARIAL PASS — AND A §7 FLAG-AND-STOP
+
+**Verbatim in `docs/findings/PUP-WO-0103-adversarial.md`.** Three disqualifying
+findings. **I have fixed none of them**, and that is deliberate: §7 makes F2 a
+flag-and-stop, and its own words are *"Not a check to tune."*
+
+## The flag-and-stop
+
+**F2 · `verify` constructs `main`'s bytes at `/stable/`, passes every check, and is
+stopped only by one boolean.** §7's bar is *"any path by which `main`'s content could
+reach `/stable/` — found, suspected, or **merely not ruled out**."*
+
+I reproduced it before reading the pass's reasoning, because it is mine:
+
+```
+mode = verify    stable_sha = 30036e9c3aa4…  (= refs/heads/main)
+  root (/):            tree=b00e76ad5fd9fa30  published=b00e76ad5fd9fa30
+  promoted (/stable/): tree=b00e76ad5fd9fa30  published=b00e76ad5fd9fa30
+  publish: success
+```
+
+**That run is this document's own §3.2 headline evidence.** I offered it above as proof
+that §1.2 works. It is the state §1.2 exists to forbid. The two identical hashes I
+quoted as a success are the finding.
+
+The verify branch `continue`s past the only assertion tying `/stable/` to
+`refs/heads/stable`, and its comment justifies that with *"Safe because verify cannot
+deploy"* — a claim about a **different job**, asserted here, enforced here by nothing.
+Two independent expressions (`DRY_RUN`, and the deploy `if`) are complementary only
+because the `choice` input happens to have exactly two options.
+
+**I built that input.** Defect #4 was real — refusing `stable` made the green path
+unreachable — and the fix I chose for it created a supported, fully green configuration
+whose sole guard is one predicate. **A fix that opens a §7 violation while closing a
+real problem is the shape that split `PUP-WO-0101`,** and it is mine again.
+
+## The other two
+
+**F0 · Nothing in the publish path can observe the root worker eating `/stable/`'s
+cache.** Verified myself against a mutant that deletes the promoted copy's caches:
+
+```
+check 5 (sandbox)          RED (caught)
+check 6 (browser)          PASS  <-- not caught
+check-two-trees (§1.5)     PASS  <-- not caught
+```
+
+Root activates before stable's cache exists; the "force-activate" is a no-op against a
+byte-identical worker; my baseline is sampled after both have activated. **The harness
+I built as §1.5's "hardest acceptance item" reproduces the defect it was built to
+backstop.** And the three cache checks disagree about the deploy paths — check 5 uses
+`/PupPad/` and `/PupPad/stable/`, both browser checks use `/` and `/stable/` — so a
+reap keyed to the real path literal is invisible to all three. That is
+architecture §6.1's scar repeating: a green suite over the exact hazard §6 was written
+about, on the copy the child uses.
+
+**F1 · A rollback is erased by the next push to `main`.** The lever deploys a named
+commit but never moves `refs/heads/stable`, so the next merge rebuilds `/stable/` from
+the tip and silently republishes the build the human rolled away from. Invariant 4's
+own falsification test — *the promoted copy changes without a human action* — passes.
+
+## What the pass could NOT break, which is the part that matters most
+
+**On an ordinary push to `main`, with no human dispatching anything, it found no path
+by which `main`'s content reaches `/stable/`.** It attacked that specifically: a
+`stable/` path in main, a blob named `stable`, a submodule at that path,
+`.gitattributes` both directions, committed symlinks, post-archive substitution, extra
+files under `dist/stable`, `tar | tar -x` merging, and PR events reaching `publish`.
+Every one refused or caught. The invariant-4 `ls-remote` check, the ancestry gate, the
+archive refusals and the byte assertion all hold under attack.
+
+**So the disqualifying findings are: one dispatch-mediated latent path (F2), one gate
+blindness (F0), and one lever defect (F1). The ordinary-push path is sound.**
+
+## Dispositions — none applied
+
+| # | Finding | Disposition |
+|---|---|---|
+| **F0** | Publish path cannot see the cross-path reap | **CC-A's.** Fixes 1–3 are in my file; 4 touches a 0102 file — a seam call. |
+| **F1** | Rollback erased by the next push | **CC-A's.** Its two options differ in kind: remove the lever, or add a pin. |
+| **F2** | `verify` green-lights main at `/stable/` | **FLAG-AND-STOP. Not mine to tune.** |
+| F3 | Check 5 barely exercises the promoted scope | 0102's file; seam call |
+| F4 | Two-tree assertions skipped in real lag; two vacuous `ok`s | mine, ready to fix on CC-A's word |
+| F5/B/C | Check 7's scope and exit-code-only verdict | mine + 0102 seam |
+| F6 | Shell injection ahead of its own validation | mine, unambiguous four-line fix, no trade-off |
+| F7 | `rollback` with no `stable_sha` bypasses its guard | mine |
+| F8 | The lever has **zero** valid targets today | sharper form of the gap I raised; CC-A's |
+| F9 | A red `/stable/` masks all root-copy findings | mine — the inverse of my own defect #3 fix |
+| F10 | Byte assertion blind to symlinks; hashes a different set than ships | mine |
+| F11 | Job-level concurrency may repeat the eviction defect | unconfirmed; needs a CI run |
+| F12 | §1.6's stated window is false — `afterSettle` read once | **mine, in this document.** The claim above is wrong. |
+| F13/F14 | Two false refusals; a blob named `stable` | mine |
+| F15 | Environment branch policy unrecorded | Scotty's; belongs in architecture §6 |
+
+**F12 corrects this document.** My §1.6 entry says the 250 ms trap records *"from here
+to the end of the run."* It does not — `afterSettle` is read once, immediately after the
+sleep. The real window is 250 ms flat, and I stated a bound wider than the truth in the
+section whose entire job was stating bounds honestly.
+
+## What I am NOT claiming
+
+The pass is the **first** on this work order, so §7's third-pass condition is not
+tripped. But the *other* signal it names is present and I would rather say it than have
+it noticed later: **two of the three disqualifying findings are in changes I made
+during this work order, both in response to real problems the work order asked me to
+solve.** F2 came from making the pipeline exercisable; F0 came from building the
+two-tree harness. That is fixes generating defects, which is the evidence that split
+`PUP-WO-0101` — and it is a scope signal for CC-A to weigh, not for me to absorb by
+fixing quietly.
