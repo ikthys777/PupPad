@@ -326,7 +326,7 @@ demonstrated red first with the mutant it exists to catch, then green.**
 | **F2** | The ancestry gate applies to **any** named `stable_sha`, in **every** mode. `verify` no longer takes a branch that skips it on the strength of a claim about a different job. | main's tip refused as a promoted copy |
 | **F0** | Promoted copy comes up **first** so its cache exists before the root worker activates; baseline sampled **before** that activation; both browser harnesses serve `/PupPad/` and `/PupPad/stable/` | `THE ROOT WORKER DESTROYED THE PROMOTED COPY'S CACHE` in check-two-trees; `the /stable/ cache was DELETED by the root worker activating` in check 6 |
 | **F3** | Check 5's full reap matrix and install inspection at **both** scopes | a reaper active only at the promoted scope — 5 assertions fire |
-| **F5/B** | Check 7's verdict names **which** assertion must fire, not just the exit code | wrong expected assertion → `RED, but NOT on the expected assertion` |
+| **F5/B** | ~~Check 7's verdict names **which** assertion must fire, not just the exit code~~ **FALSE AS WRITTEN — see ROUND 4 / G1. True of PART A only; none of PART B's seven mutations carries an `expectFail`, so their verdict is the exit code and nothing else.** | wrong expected assertion → `RED, but NOT on the expected assertion` — PART A only |
 | **F6** | Every dispatch input via `env:`; no expression interpolated into any `run:` | — (no trade-off; the payload no longer reaches a shell) |
 | **F7** | The validation step runs on every dispatch, so its rollback guard is reachable | — |
 | **F9** | Both copies judged every run: `continue-on-error` plus a fail-closed GATE | — |
@@ -499,3 +499,161 @@ Recommended for architecture §6.1, beside the existing family. It is a distinct
 0102's was *an assertion that passes by not running*; the §3.2 self-catch was *an
 assertion that passes and certifies the forbidden state*; this is **a failure whose
 cause is not the one under test**. All three look identical from the exit code.
+
+---
+
+# ROUND 4 — the second adversarial pass, and its disposition
+
+Subject `246c5f7`. Five independent reviewers; full record in
+`docs/findings/PUP-WO-0103-adversarial.md` under **SECOND PASS**. Every claim
+below was reproduced by me against the artifact before being written down —
+a subagent's summary is a claim, and two of them turned out to be wrong on
+mechanism.
+
+## LEADING THE REPORT, BECAUSE IT WAS ASKED AS A DECISION: THE FLIP IS NOT SAFE TODAY
+
+**And the reason it was thought safe was a fact that could not have exercised the
+question.** The premise — `sw.js` on `main` is byte-identical to what merged at
+`922c2dc`, blob `72f1699` — is TRUE and I reproduced it. The conclusion does not
+follow, **because `/stable/` is not built from `main`.** It is built from
+`refs/heads/stable`, which is 43 commits behind, does not contain `922c2dc`, and
+carries the pre-`0102` worker whose activate handler reaps every cache on the origin
+by inequality. The promoted copy derives no prefix at all, so "the two copies derive
+distinct non-nesting prefixes" describes `main`'s worker loaded at two scopes — the
+only configuration any check exercises — and not the two published copies.
+
+Three preconditions, none of them code, none of them mine:
+
+| # | Precondition | Why, and when |
+|---|---|---|
+| 1 | **Fast-forward `refs/heads/stable`** | `ci.yml:471` has no event guard, so from the moment #10 merges every PR in the repo goes red at the `/stable/` call site — 0104's own included. **Before the merge, not merely before the flip.** |
+| 2 | **Add `stable` to the `github-pages` environment's branch policy** | It currently lists `main` only. A promotion push runs `publish` green and then has `deploy` rejected before step one. The promotion silently does not land, then arrives later attached to an unrelated `main` merge. |
+| 3 | **Tablet off or in airplane mode across the flip window**, until `/PupPad/` and `/PupPad/stable/` both verify 200 | The LIVE worker caches whatever the origin returns, including a 404 — see G-LIVE. |
+
+Precondition 2 lands on §1.7. The lever was removed on the finding that the human's
+promotion authority already existed structurally. The **ref-level** authority does
+exist. The **deployment** of that promotion is gated on an environment policy that
+excludes the very branch, so the authority stops at the ref and never reaches the
+site. In an emergency rollback the human pushes `stable`, watches green, and believes
+Buddy is rolled back. He is not. That is §1.7's own sentence — *"a safety mechanism
+you cannot use in the emergency it was built for"* — returning after the lever was
+deleted for being redundant with an authority that turns out to be truncated. It does
+**not** put `main`'s content on `/stable/`; what is broken is WHEN, and whether the
+human can tell.
+
+**And the first pass asked for precondition 2 and I did not do it.** F15 said
+*"nowhere is it recorded what that policy currently allows."* F15 asked whether the
+policy permits TOO MUCH. Nobody asked whether it permits ENOUGH. I closed it "by
+construction" on thirteen real CI runs, **none of which ever pushed to `stable`.** A
+question closed by evidence that could not have exercised it — §6.1 member 1 in new
+clothing, and the second instance in this project of a control verified to REFUSE and
+never verified to PERMIT.
+
+## DISPOSITION
+
+Nothing below is fixed. The artifact is frozen and PR #10 is parked; §7 is invoked on
+three counts and the shape question goes to CC-A before more code is written.
+
+### Flag-and-stop — not mine, no fix attempted
+
+| ID | Finding | Disposition |
+|---|---|---|
+| **G-LIVE** | `sw.js:337` caches HTTP error responses over its own precache. `fetch()` resolves on 4xx/5xx, so a 404 received while online overwrites the precached app shell; offline, the child gets the error page. Heals per-URL on the next healthy online fetch of that URL — so not permanent, but not something a three-year-old can cause. Reproduced in Chromium. | **§7: "any need to modify `sw.js`." NOT FIXED, NOT MINE.** One line — `if (response.ok)`. It is `PUP-WO-0102`'s file and predates it: the pre-`0102` worker has the identical unguarded put. **`PUP-WO-0104` cannot fix it** — 0104 forbids worker changes. Needs a work order or an amendment. Mitigated for the flip by precondition 3. |
+| **S1** | `refs/heads/stable` at `2952aa1` | **§7: a push to `stable`.** Operator's. |
+| **S2** | `github-pages` policy excludes `stable` | **§7: a repository setting.** Operator's. |
+
+### The third member of the M9/M7 family — reported as the prompt asked
+
+**G-LIVE is the defect; the blindness that hides it is the other half, and the two
+were found independently from opposite directions.** `sw-harness.mjs:130`'s sandbox
+`fetch` always throws, so check 5 never executes the online write branch; and check 7
+— *"the step that makes green mean something"* — drives exactly one of the seven
+checks, the one whose harness cannot reach it.
+
+I corrected one of my own reviewers here, because the precise version is worse than
+the dramatic one. It is **not** that the branch is unreachable: `check-mutations.mjs:349`
+is literally *"B7 sandbox fetch RESOLVES."* But B7's fetch returns
+`{ clone: () => 'LIVE' }` — a bare stub with no `status` and no `ok`, not a `Response`
+— and nothing in any check asserts on the status of a cached entry. **The online write
+branch is reachable in exactly one mutation, and the value it is fed cannot carry a
+status.** A fixture-shape blindness, not a missing branch. The harness comment shows
+the author one step away: he identified that a resolving fetch is the dangerous value,
+then made the stub assert that it FIRED rather than letting it carry the property.
+
+### Gate weaknesses — real, and they block the next `sw.js` change, not this merge
+
+| ID | Finding | Disposition |
+|---|---|---|
+| **G1** | check 7 PART B declares no `expectFail`, so `matched` is unconditionally true and the verdict is the exit code alone. Two reviewers found it independently. | **My ROUND-2 claim was false as written and I have struck it in place above.** The fix landed on PART A and I described both halves as done. → 0104 §2.5. |
+| **G2** | PART B's *"every stub is load-bearing"* is unsupported: stripping the paired real defect from all seven cases gives byte-identical output. What it measures is "the positive controls notice a blinded harness." | Reword or add `expectFail` per case. → 0104 §2.5. |
+| **G3** | `${silent.length}` can only ever print 0 — any SILENT exits at line 367 before line 372 prints. I quoted that line as evidence. | Cosmetic; delete or compute honestly. |
+| **G4** | `check-cache-isolation.mjs:299,346` — a rejecting offline read makes BOTH invariant-7 assertions print `ok`. The step is red only by an unhandled rejection that crashes Node AFTER `CHECK 5 PASSED`. | **The most serious gate finding.** `catch → undefined → else → ok`, in the check carrying the central invariant. → 0104. |
+| **G5** | item 6 catches its own defect **3 times in 10**, measured. Fire-and-forget `cache.put` versus an immediate sample. | **This corrects me.** I called it a dead assertion on an out-of-scope argument. Interception is by controlling client, not URL scope. A flaky assertion is worse than a dead one — it goes green on a real regression and gets dismissed as flake. → 0104. |
+| **G6** | `check-two-trees.mjs` never reads `CACHE_PREFIX`/`CACHE_NAME`; its distinctness check `new Set(names).size === names.length` cannot be false. So non-nesting between two genuinely different published prefixes — the reason `sw.js` carries a trailing `\|` — is asserted nowhere. | Architecture §6 requires CI to assert it. → 0104. |
+| **G7** | `serviceWorker.ready` inside `page.evaluate` (no timeout) hangs the job for 20 minutes on a copy whose worker cannot install; the job timeout kills GATE too, so there is no `::error::` at all. check-load diagnoses it in 5s and runs afterwards. | **First-pass finding A, unfixed and never dispositioned.** → 0104. |
+| **G8** | First-pass findings C and F never dispositioned — not fixed, not deferred, not disclosed. | Recorded here; C is G1/G2, F is a one-character fix. |
+
+### Byte assertion — all fail-CLOSED, all false-red
+
+**B1** the expected side C-quotes and the actual side does not, so one `mamá.png`
+wedges publication forever and blames northstar invariant 4 — found by four of five
+reviewers, and it is **the same class the comment sixty lines above fixed with `-z`**,
+applied to the two greps and missed at the one site that is not a grep. `-z` fixes it;
+`core.quotePath=false` fixes only the non-ASCII half. **B2** `git hash-object` without
+`--`, plus `%P\n`/`read -r` mangling newline and leading-space names — and none of it
+trips `set -e` because a failing `$(…)` inside a `printf` argument is not a command
+failure, a trap `ci.yml:578` documents and guards two steps later. **B3** `git
+hash-object` without `--no-filters` makes the hash depend on the workspace checkout's
+attributes, which no gate examines. **B4** a submodule outside `stable` gives the same
+false invariant-4 message. **B5** `published ⊂ hashed` strictly — no hole — but the
+closing line *"byte-for-byte their own commit's tree"* is false as written, and a
+future `.well-known/assetlinks.json` (exactly what an Android home-screen icon needs)
+is silently dropped from publication with the gate still green. **B6** `find | head`
+can exit 141 mute above the pipe-buffer threshold; two reviewers reached opposite
+verdicts from sound method and both were right — recorded rather than averaged.
+
+### Messages — lower severity than they deserve
+
+**M1** the `/stable/` call site blames "NOT PREFIX-BOUNDED" for any nonzero exit and
+prescribes fast-forwarding `stable` — an instruction to perform the act invariant 4
+protects, in response to an unrelated crash. **M2** check 7's anchor error is
+excellent prose delivered as a bare Node stack trace naming an already-deleted tmpdir
+instead of the file to edit; **0 of 22 `::error::` annotations are in the check
+scripts**, so the most-likely-to-fire refusal never annotates. **M3** the
+`.gitattributes` and symlink refusals are correct and give no remedy — and a refusal a
+human cannot diagnose is one that gets deleted rather than satisfied.
+
+### Liveness
+
+**O1** `pages-publish` is one slot shared by PRs and pushes, so PR churn can evict a
+pending promotion's publish job and no later run rescues it. **O2** the workflow-level
+group collides for push-to-`main` and push-to-`stable` of the same commit — which is
+exactly what a promotion is. **O3** every deployment rewrites
+`/stable/build-stamp.json`, and roadmap P1 gate 3 uses that file as a falsification of
+invariant 4. **O4** a PR based on `stable` is only ever verified in the root position.
+
+## WHAT HELD
+
+No path was found by which `main`'s content, a PR head, a fork, a re-run or any other
+event reaches `/stable/`. One reviewer worked the full event × job matrix, confirmed
+there is exactly one workflow file so nothing listens on the deployment events this one
+emits, confirmed the workflow holds no ref-write capability at all, and confirmed the
+promoted checkout is asserted against `git ls-remote` with no fallback. `contents: read`
+on publish is correct and complete. The GATE chain is sound with no `always()` anywhere.
+Both deleted assertions are honest and nothing reclaims their coverage. ROUND 3's
+demo-PR table reproduces exactly. The B1/B6 claim survived attack from both sides. The
+array-prune fix could not be broken.
+
+## §7 INVOKED, THIRD COUNT
+
+My own standing condition was that **a third pass finding serious defects on one work
+order is a scope signal to report rather than absorb.** It has. One reviewer reached
+that conclusion independently: until this pass, no adversarial review existed against
+this artifact at all — the recorded one names subject `c8c8cf1`, its `ci.yml`
+citations land on unrelated text and several are past end-of-file, and it lists
+`workflow_dispatch` as a live attack surface. The acceptance section still offers, as
+evidence, CI output from the deleted dispatch surface; and acceptance item 8a — *"a
+cancelled or absent run does not publish, demonstrated, not reasoned"* — is neither
+demonstrated, flagged, nor waived.
+
+**Parked for review. Not merging.**

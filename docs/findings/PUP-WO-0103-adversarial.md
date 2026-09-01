@@ -904,3 +904,898 @@ That runs at line 257. The injection fires at line 251. **The check that rejects
 then reference `"$MAIN_SHA"`, `"$STABLE_SHA"`, `"$MODE"` in the script. Never `${{ }}` inside `run:`. The same change is needed at `ci.yml:324-326`.
 
 **decision-needed: no** — this is an unambiguous fix with no trade-off.
+
+---
+---
+
+# SECOND PASS — subject `246c5f7`, dispatched 2026-09-01
+
+**READ THIS BEFORE READING ANYTHING ABOVE.** The pass recorded above names its
+subject as `c8c8cf1a4dc291877b69d18648d491270d7836d3`. ROUND 2 and ROUND 3 rewrote
+the publish job between that commit and this one, so **every `ci.yml:NNN` citation
+above lands on unrelated text and several are past end-of-file.** It also lists
+`workflow_dispatch` as a live attack surface; that surface no longer exists. Treat
+the first pass as a record of a different artifact, kept because its findings and
+their dispositions are still traceable, not as a review of what merges.
+
+That confusion was itself a finding of this pass (F-H below), and this divider is
+its fix.
+
+**Subject:** `246c5f7693ed611f5dab8342aacf962e2c4e2498`, branch `build/wo-0103`,
+tree clean before and after. Protected surfaces (`index.html`, `sw.js`,
+`manifest.json`, both icons) diff to empty against `origin/main`.
+
+**Method.** Five independent reviewers, dispatched simultaneously, each reading its
+instructions from `docs/findings/PUP-WO-0103-pass-prompt.md` in the frozen tree
+rather than from the dispatcher — so that a dangling pointer would be hit by five
+agents at once instead of silently worked around by one. Each verified `HEAD` and a
+clean tree before starting and was told that a moved freeze is itself the finding.
+
+    lens 1   probe 1 alone — /stable/ reachability
+    lens 2   probes 2 + 6 — wrong-cause reds, and verifying the builder's claims
+    lens 3   probes 3 + 4 — the find/prune re-attack, and assertions that cannot fire
+    lens 4   probe 5 — what legitimate behaviour does each fix now refuse
+    lens 5   UNASSIGNED — sent deliberately at the seams the partition does not cover,
+             including at the prompt itself as part of the artifact
+
+The fifth existed because the partition was written by the artifact's own author and
+is therefore exactly the assumption §6.1 member 4 describes. It earned its place: two
+of the four most serious findings below are its, and one of them is a hole in the
+prompt's own probe list.
+
+**Every reviewer was told the flip question outranked the report format,** and told
+to try to BREAK the claim that the flip is safe rather than confirm it, with the
+architect's basis quoted and attributed.
+
+---
+
+## THE FLIP — the pass's headline, and the architect's answer was wrong
+
+Four of five lenses reached the same conclusion independently. The builder reproduced
+every step of it before relaying any of it.
+
+**The premise is TRUE.** `sw.js` is one blob across all three commits that matter:
+
+    922c2dc:sw.js    72f1699197d9b94726cd52334464b45b8d1c89d3   (the merge on the tablet)
+    origin/main:sw.js 72f1699197d9b94726cd52334464b45b8d1c89d3
+    246c5f7:sw.js    72f1699197d9b94726cd52334464b45b8d1c89d3
+
+**The conclusion does not follow, because `/stable/` is not built from `main`.** The
+publish job builds the promoted copy from `refs/heads/stable` in every event — which
+is correct and is the design — and that ref has never been fast-forwarded:
+
+    refs/heads/main    db4e283
+    refs/heads/stable  2952aa1     43 commits behind; does NOT contain 922c2dc
+
+    $ git show origin/stable:sw.js | head -1
+    var CACHE_NAME = 'pup-pad-v16';
+    $ git show origin/stable:sw.js | sed -n '23p'
+        names.filter(function(name) { return name !== CACHE_NAME; })
+
+That is the unbounded reap `PUP-WO-0102` existed to remove: it deletes every cache on
+the origin by inequality, with no prefix bound. The promoted copy today derives **no
+prefix at all**, so "the two copies derive distinct non-nesting prefixes" is not a
+statement about the two published copies — it is a statement about `main`'s worker
+loaded at two scopes, which is the only configuration any check exercises.
+
+**Do not carry that sentence forward as a standing fact.** If someone later relies on
+it to relax check 5's refusal, they will be wrong.
+
+### What actually protects the child, and it is not the prefixes
+
+The pipeline refuses. Reproduced by the builder against the real refs, running the
+transcribed `/stable/` call site (`ci.yml:471-481`):
+
+    $ node .github/ci/check-cache-isolation.mjs dist/stable
+    CHECK 5 FAILED — this copy's sw.js defines no CACHE_PREFIX.
+      That is the pre-PUP-WO-0102 worker, whose activate handler reaps by inequality
+      If this is the PROMOTED copy: fast-forward `stable` before publishing it.
+    exit 1
+
+Fail-closed and all-or-nothing: GATE refuses, the upload is skipped, `deploy` never
+exists. **So the failure mode of flipping today is paralysis, not mutual cache
+destruction** — no push can produce a successful deployment, including the push that
+would fix it. The error message is the best in the artifact and names the remedy
+outright, which is why this is a sequencing fact and not a defect.
+
+### The consequence that moves the fast-forward earlier than the flip
+
+`ci.yml:471` has **no event guard**. `publish` now runs on `pull_request`, and the
+promoted copy is `refs/heads/stable` in every event — so the moment PR #10 merges,
+**every pull request in the repository goes red at that call site**, for a reason
+having nothing to do with the pull request. `PUP-WO-0104`'s own PR included.
+
+The fast-forward is therefore a precondition of THE MERGE, not merely of the flip.
+
+### The second precondition, which no probe in the prompt asked for
+
+Found by lens 5, which was sent to look for exactly this kind of gap, and read from
+the API by the builder rather than reasoned about:
+
+    $ gh api repos/ikthys777/PupPad/environments/github-pages/deployment-branch-policies
+    {"total_count":1,"branch_policies":[{"name":"main","type":"branch"}]}
+
+    deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}
+
+**Only `main`.** `deploy` carries `environment: github-pages` (`ci.yml:638`), and a
+branch outside an environment's policy is rejected **before its first step**, with
+`"steps":[]` and no log — the signature this file's own comments at `ci.yml:209-223`
+record as unreadable, because the builder hit it once already.
+
+So a human pushes `refs/heads/stable` to promote. `publish` runs and goes green.
+`deploy` is rejected. **Nothing lands.** Then an unrelated merge to `main` arrives,
+`deploy` is permitted, and both copies deploy — so the promoted copy advances
+attached to a merge no human associated with promoting, at a moment no human chose.
+
+**This lands directly on §1.7.** The rollback lever was removed on the finding that
+"the human's promotion and rollback authority already existed structurally." The
+ref-level authority does exist and the ruleset was verified in both directions. But
+the DEPLOYMENT of that promotion is gated on an environment policy that excludes the
+very branch, so **the authority stops at the ref and never reaches the published
+site.** The case that matters is an emergency rollback: the human pushes `stable`
+back to a known-good commit, watches `publish` go green, and believes Buddy is rolled
+back. He is not — not until someone next merges to `main`. That is the sentence §1.7
+used against fail-closed — *"a safety mechanism you cannot use in the emergency it
+was built for"* — returning after the lever was deleted for being redundant with an
+authority that turns out to be truncated.
+
+Stated carefully, because the distinction matters: **this does not put `main`'s
+content on `/stable/`.** What Buddy receives is still the commit the human named.
+What is broken is WHEN, and whether the human can tell. The false confirmation is the
+dangerous part.
+
+### And the first pass asked for this and it was not done
+
+`PUP-WO-0103-adversarial.md` F15 (first pass, above): *"Nowhere is it recorded what
+that policy currently allows,"* recommending it be recorded in architecture §6.
+
+    $ rg -n 'branch_policy|deployment branch|environment' docs/architecture.md \
+          docs/northstar.md docs/roadmap.md
+    (no matches)
+
+F15 asked whether the policy permits **too much**. Nobody asked whether it permits
+**enough**. And the builder closed F15 "by construction" on the strength of real CI
+runs — **none of which ever pushed to `stable`.**
+
+**A question closed by evidence that could not have exercised it.** That is §6.1
+member 1 in new clothing, and it is the second instance in this project of a control
+verified to REFUSE and never verified to PERMIT — architecture §6.2's finding about
+the `stable` ruleset was the first. Two instances make it a pattern.
+
+---
+
+## F-LIVE · the shipped worker caches HTTP error responses over its own precache
+
+**Found by lens 1, reproduced in real Chromium. The mechanism was then confirmed by
+the builder by reading. This is in the code on Buddy's tablet right now.**
+
+`sw.js:337`, and the whole of the online branch:
+
+    event.respondWith(
+      fetch(event.request).then(function(response) {
+        var clone = response.clone();
+        caches.open(CACHE_NAME).then(function(cache) {
+          return cache.put(event.request, clone);
+        }).catch(function() {});
+        return response;
+      }).catch(function() { ...scoped offline read... })
+
+    $ grep -n "\.ok\b|status ===|status >=|response.status" sw.js
+    (none)
+
+`fetch()` **resolves** for 4xx and 5xx — it rejects only on a network-layer failure.
+So an HTTP 404 or 503 received while ONLINE is written into the precache under its
+own key, overwriting the good entry, and the `.catch` offline branch is never taken
+because nothing rejected.
+
+Lens 1's Chromium run, one reload against a 404ing origin:
+
+    === healthy ===
+     "puppad|%2FPupPad%2F|v17 :: /PupPad/":           "200 91128B "
+    === app assets 404 while ONLINE ===        <- one reload
+     "puppad|%2FPupPad%2F|v17 :: /PupPad/":           "404 109B <<<POISONED>>>"
+    === OFFLINE — what does the child get? ===
+      /PupPad/  -> status 404  title "SITE-NOT-FOUND"  body "404 THIS IS THE ERROR PAGE"
+
+`./` is in `urlsToCache`. That is the app shell. Buddy taps his icon and gets an
+error page, offline, with no way to tap out of it. Northstar invariants 3 and 5.
+
+**Severity, stated honestly, because lens 1 tested recovery instead of assuming the
+worst:** it heals PER URL on the next healthy ONLINE fetch of that URL.
+
+    === BACK ONLINE, origin healthy ===
+     "/PupPad/":            "200 91128B "              <- healed, it was navigated to
+     "/PupPad/index.html":  "404 109B <<<POISONED>>>"  <- still poisoned, nothing re-fetched it
+
+Not permanent. But the window is "until an adult next opens it online against a
+healthy origin," and any URL not re-navigated stays poisoned indefinitely. A
+three-year-old cannot produce that condition.
+
+**The comment directly above the bug is the tell:**
+
+    /* cache.put rejects on a non-GET request, a 206, or an opaque redirect. ... */
+
+Every one of `cache.put`'s REJECTION modes was enumerated and handled. The case never
+considered is the one where `cache.put` **succeeds and stores the wrong thing.** That
+is *ask what the fix refuses*, inverted: the author verified against the failure he
+imagined. The pre-`0102` worker (`bd1b15f5`) carries the identical unguarded put, so
+`PUP-WO-0102` rewrote this handler extensively and carried the defect through.
+
+**This is the THIRD member of the M9/M7 family the prompt asked for,** and it is
+distinct from both: M9 is a worker gated on the sandbox and the production origin;
+M7 is cache-content corruption a check cannot see. This is the shipped worker
+corrupting its own cache under an ordinary network condition, with no attacker and no
+mutation.
+
+### Why no check can see it — lens 5, from the opposite direction, and a correction
+
+Lens 5 independently found the structural reason, without knowing lens 1's finding:
+
+    .github/ci/lib/sw-harness.mjs:130
+      fetch: async () => { network.attempted++; network.rejected++;
+                           throw new Error('network disabled in harness'); }
+
+The sandbox `fetch` **always throws**, so in check 5 the `.then(response => cache.put(...))`
+branch is never executed. And check 7 — which `ci.yml:145` calls *"the step that makes
+green mean something"* — drives exactly one check:
+
+    check-mutations.mjs:87
+      execFileSync(node, [dir + '/ci/check-cache-isolation.mjs', dir])
+
+One of seven, and it is the one whose harness cannot reach the branch.
+
+**Lens 5 said check 5 "cannot express this defect class at all." The builder verified
+that and it is too strong; the real mechanism is sharper and worse.** `check-mutations.mjs:349`
+is literally titled *"B7 sandbox fetch RESOLVES, WITH the origin-wide read (the audit's
+own blind spot)"* — so a resolving fetch **is** exercised. But look at what it resolves to:
+
+    fetch: async () => { network.attempted++; return { clone: () => 'LIVE' }; }
+
+A bare stub object. No `status`, no `ok`, **not a `Response`.** And across all eight
+checks and three lib files, the only `new Response` occurrences are the 504s inside
+`sw.js` MUTATION TEXT — the offline-miss path, not a fetched response. Nothing
+anywhere asserts on the status of a cached entry.
+
+**So the accurate statement: the online write branch is reachable in exactly one
+mutation, and the value it is fed cannot carry a status. No check in this artifact can
+express "the worker cached an error response."** That is a fixture-shape blindness,
+not a missing branch — the fixture was built to prove the stub FIRES, never to carry
+the property under test.
+
+The harness comment is the sharpest thing in this pass, and it shows the author one
+step from the answer:
+
+    /* the rule was "audit the stubs whose DEGENERATE value is also a legitimate one",
+     * and a RESOLVING fetch is not degenerate at all — it is what an online browser
+     * hands the worker on every request. The dangerous value here is the NORMAL one.
+     * A caller can now assert the fixture actually fired. */
+
+He saw that a resolving fetch was the dangerous case, and then fixed the wrong half:
+added counters so a caller can assert the stub fired, while leaving it unable to ever
+resolve with a real response. **A stub that cannot fail is not a test; a stub that can
+only fail is not one either.**
+
+### What this does to the flip, and what 0104 cannot do about it
+
+It inverts it. Paralysis is inert. This is not: **the flip is precisely the operation
+that makes the origin return a non-200 while the device may be online.** Every other
+trigger is independent of whether Pages 404s during a source change specifically — a
+Pages incident, a 503, a 429, or the no-deployment gap above.
+
+Lens 1's mitigation costs nothing and the builder endorses it: **keep the tablet off
+or in airplane mode from the moment the flip starts until both `/PupPad/` and
+`/PupPad/stable/` are verified 200.** That converts this from a live risk to a
+scheduled follow-up.
+
+`PUP-WO-0104` **cannot** fix it — 0104 forbids touching `sw.js` ("if the gate appears
+to require a worker change, that is a flag-and-stop and a dependency, not an edit").
+Its M7 check would DETECT the class; no CI check can stop a production 404 from
+poisoning a live device. The guard is one line, `if (response.ok)`, and it belongs to
+`PUP-WO-0102`'s file. There is also an open question the file already raises at
+`sw.js:225`: opaque cross-origin responses, stored as status 0 and zero bytes.
+
+**Related, and already a recorded decision rather than a new finding:** `sw.js:224-231`
+states plainly that the worker caches cross-origin bytes with no allowlist, that this
+is deliberate so leaflet works offline (invariant 3), that it sits awkwardly beside
+northstar §5's third non-goal, that the three CDN loads are `PUP-WO-0600`'s to remove,
+and that whether a worker should cache cross-origin responses at all is an architect's
+call. Lens 3 raised it; it is answered in the file.
+
+---
+
+## THE GATE IS WEAKER THAN THE FEEDBACK FILE CLAIMS
+
+These do not put wrong bytes on the tablet today. They are why a FUTURE regression in
+the worker would likely pass, which is the whole purpose of the gate.
+
+### G1 · check 7's PART B verifies only "the child exited non-zero"
+**Found independently by lens 2 and lens 3. Verified by the builder by reading.
+This falsifies a claim in the builder's own feedback file.**
+
+    check-mutations.mjs:106
+      const matched = !expectFail || fails.some((f) => f.includes(expectFail));
+
+`expectFail` appears 14 times, at lines 128-259. **PART B begins at line 266 and none
+of its seven mutations declares one.** So `matched` is unconditionally `true` for all
+of PART B and the verdict collapses to `observed === expect` — did check 5 go red AT
+ALL — which is exactly what the comment eight lines above says was fixed. The fix
+landed on PART A and missed PART B.
+
+`docs/feedback/PUP-WO-0103.md:329` states, unqualified:
+
+> Check 7's verdict names **which** assertion must fire, not just the exit code.
+
+True for PART A. False for PART B. Stated without the qualifier.
+
+It follows structurally, with no run needed, that any unrelated red scores as `ok`:
+check 5 exits nonzero, `observed` becomes LOUD, `expect` is LOUD, `matched` is true.
+Lens 2 demonstrated it with a pure syntax error in B1's harness patch:
+
+      ok   B1  FakeCacheStorage.match() -> undefined, WITH the origin-wide read
+    CHECK 7 PASSED — 21 mutations, all as predicted.
+
+Lens 3 demonstrated it harder, and its version is the one that matters: it neutered
+**both** positive controls and added one unrelated failing assertion. All seven B
+cases scored `ok LOUD`, including B1 and B6 whose real defences it had just removed.
+The only thing that caught the sabotage was the separate `baseline: sw.js as committed`
+GREEN case — so had the unrelated red occurred only under mutation, check 7 would have
+printed `PART B: every stub is load-bearing` with all seven undefended.
+
+### G2 · PART B's summary line is a claim its own run does not support
+Line 372: `PART B: every stub is load-bearing, and ${silent.length} of 7 now fail SILENT.`
+
+Lens 2 stripped the paired real `sw:` defect from all seven B cases and re-ran:
+
+    $ diff b_before.txt b_after.txt
+    >>> BYTE-IDENTICAL <<<
+      PART B: every stub is load-bearing, and 0 of 7 now fail SILENT.
+
+PART B's header says *"neuter the STUB, keep a real defect. SILENT = the stub was the
+only defence."* Removing the real defect from all seven changes nothing — verdicts,
+FAIL texts and summary identical. **What PART B actually measures is "check 5's
+positive controls notice a blinded harness."** That is true and useful. It is not
+"every stub is load-bearing."
+
+### G3 · `${silent.length}` is structurally always 0
+**Lens 3.** Every B case expects `LOUD`, so any `SILENT` result sets `pass = false`,
+lands in `escaped`, and `process.exit(1)` fires at line 367 — **before** line 372 can
+print. The line can only ever read "0 of 7". A constant printed as a measurement, and
+the builder quoted it as evidence.
+
+### G4 · a rejecting offline read prints `ok` on BOTH invariant-7 assertions
+**Lens 3, reproduced. The most serious gate finding.**
+
+`check-cache-isolation.mjs:299` and `:346`:
+
+    try { servedOffline = await offline.responses[0]; } catch { servedOffline = undefined; }
+    if (servedOffline === 'BYTES FROM THE OTHER DEPLOY PATH') bad(...)
+    else ok('offline fallback reads only this worker\'s own cache, not the origin');
+
+Lens 3 made `sw.js`'s offline branch reject instead of resolve:
+
+      ok    offline fallback reads only this worker's own cache, not the origin
+      ok    the promoted copy, offline, reads only its own cache (invariant 7 in its
+            own stated direction)
+    CHECK 5 PASSED — prefixes differ and do not nest; the reap is bounded...
+    sw.js:357
+    Error: offline read failed
+    [exit 1]
+
+**The two assertions that carry invariant 7 — the point of the check — both went
+green.** The step is red only by accident: an unhandled rejection from the un-awaited
+`responses` array (`lib/sw-harness.mjs:167-168` awaits `waits`, never `responses`)
+crashes Node AFTER the verdict line. A human reads `CHECK 5 PASSED` followed by a
+stack trace. Handle that rejection anywhere, or change Node's default, and the check
+goes fully green with the defect present.
+
+`catch → undefined → else → ok` is the "catch block that turns a throw into a pass"
+the prompt asked for, found in the check that carries the project's central invariant.
+
+### G5 · item 6 catches the defect it names 3 times in 10 — and this corrects the builder
+**Lens 3, measured. It overturns a conclusion lens 5 reached and the builder repeated.**
+
+Lens 5 reported `demo-two-path-caches.mjs:186` as a dead assertion: the probe fetches
+`origin + '/stable/manifest.json'` while `STABLE_BASE` is `/PupPad/stable/`, so the
+URL is outside the root worker's scope, so the worker never sees it, so `probe.hit`
+is necessarily false and the `ok()` is a guaranteed print. **The builder verified that
+by reading and relayed it. Both were wrong on mechanism.**
+
+Service-worker interception is by **controlling client**, not URL scope. A controlled
+page's fetch to any URL reaches the worker's fetch handler — including cross-origin.
+`sw.js:232` proves it in this very worker:
+
+    if (u.origin !== self.location.origin) return true;   /* cross-origin: SERVED and CACHED */
+
+So the request does reach the worker. `/stable/manifest.json` is then declined at
+`sw.js:237` — the generic *"outside our own scope entirely"* branch — and **not** at
+the `FOREIGN_SUBTREE` branch at `:242`, which is the dedicated `/stable/` exclusion
+item 6 exists to test. The unread `stableBase` parameter is a real smell for that
+reason: the probe exercises a URL production never serves.
+
+**But the race is what kills the assertion.** `sw.js` stores fire-and-forget
+(`caches.open(...).then(cache => cache.put(...))`, deliberately un-awaited), and the
+probe samples the cache immediately after `await fetch(...)`. Lens 3 removed
+`if (!servesRequest(event.request.url)) return;` — the exact defect item 6 exists to
+catch — and ran the shipped probe ten times:
+
+    run 1: CAUGHT   2: MISSED   3: MISSED   4: MISSED   5: MISSED
+    run 6: CAUGHT   7: CAUGHT   8: MISSED   9: MISSED  10: MISSED
+    === defect present, shipped code: CAUGHT=3  MISSED=7 out of 10 ===
+
+Adding `await new Promise(r => setTimeout(r, 800))` after the fetch made it
+deterministic — RED 3/3 with the defect, no false alarm on clean `sw.js` 3/3.
+
+Line 265 prints `CHECK 6 PASSED — acceptance items 4, 5 and 6 hold in a real browser.`
+It holds 30% of the time, **and a loaded CI runner biases toward green.** A flaky
+assertion is worse than a dead one: it will eventually go green on a real regression
+and be dismissed as flake.
+
+### G6 · non-nesting between two genuinely different published prefixes is unasserted
+**Lens 5; the grep verified by the builder.**
+
+    $ grep -n "CACHE_PREFIX\|CACHE_NAME" .github/ci/check-two-trees.mjs
+    (no matches)
+
+`check-two-trees.mjs` is the only check that serves two DIFFERENT published builds —
+the promotion-lag state it was written for — and it never reads either cache
+identifier. Its distinctness assertion at `:183` is `new Set(names).size === names.length`,
+which cannot be false: `CacheStorage` is keyed by name, so duplicates are impossible
+by spec, and the `COLLIDE` branch at `:187` is dead code. The author caught the sibling
+vacuity one line above (the `>= 2` comment) and missed this one.
+
+So the **non-nesting property — the entire reason `sw.js` carries a trailing `|`
+delimiter — is asserted only by `check-cache-isolation.mjs:67-76`, which loads ONE
+`sw.js` at two scopes.** In the state where the two copies are genuinely different
+builds, nothing asserts it. Architecture §6 requires CI to assert it.
+
+### G7 · a copy whose worker cannot install hangs check 6 for the job timeout
+**Lens 2, reproduced. This is first-pass finding A, unfixed and never dispositioned.**
+
+`page.evaluate` has no Playwright timeout, and `await navigator.serviceWorker.ready`
+sits inside one at `demo-two-path-caches.mjs:121,127` and `check-two-trees.mjs:133`.
+The only bound is the job's `timeout-minutes: 20`.
+
+Reachable because check 2 asserts *referenced ⊆ cached* and, by its own documented
+design, not the reverse — so a `urlsToCache` entry that 404s passes it. One added
+entry `'./sounds/missing.mp3'`:
+
+    check 1 (syntax)          exit=0
+    check 2 (assets)          CHECK 2 PASSED — all 5 local asset reference(s) are cached.
+    check 5 (cache isolation) exit=0
+    check 6, healthy copy:            exit=0   elapsed=6s
+    check 6, same copy +1 bad entry:  exit=124 elapsed=90s  (killed, printed nothing)
+    check-load (check 4) on the SAME copy:
+      [service worker uncaught exception] TypeError: Failed to execute 'addAll' on
+      'Cache': Request failed
+      exit=1  elapsed=5s
+
+Fail-closed, but the run's verdict is *"exceeded the maximum execution time of 20
+minutes"* — no `::error::`, and **no GATE output at all, because a job timeout
+terminates the job and `!cancelled()` never runs.** The human is told the runner was
+slow, not that the promoted copy's worker cannot install — which is the failure mode
+`ci.yml:318-319` itself names as the danger. The check that diagnoses it in 5 seconds
+runs AFTER the one that hangs.
+
+### G8 · first-pass findings C and F were never dispositioned
+**Lens 2.** Neither appears in ROUND 2 or ROUND 3: not fixed, not deferred to 0104,
+not disclosed. Finding C is G1/G2 above, raised once already. Finding F is
+`demo-two-path-caches.mjs:98` — `const bad = (m) => ...` takes one parameter while
+`:198`, `:258` and `:261` pass a second; `:258` is the assertion that reports *"the
+tablet is blank with no network"* and it silently discards `coldErr`, the actual
+exception. One-character fix.
+
+---
+
+## THE BYTE ASSERTION — five reviewers, one defect class, all false-RED
+
+Every finding here is fail-closed. None can put wrong bytes on the tablet. All of them
+wedge publication and blame the gravest invariant in the project for a filename.
+
+### B1 · one side is C-quoted and the other is not
+**Found by lenses 1, 2, 3 and 4 independently — the most-converged finding of the pass.**
+
+`ci.yml:408` uses `git ls-tree -r HEAD --format='%(path) %(objectname)'` with no `-z`;
+`ci.yml:415-418` uses `find -printf '%P\n'`, which emits raw bytes.
+
+    $ git ls-tree -r HEAD --format='%(path) %(objectname)' | grep dok
+    "dokument\303\266/a.png" c1b0730e…        <- expected side, C-quoted
+    $ (cd dist && find . -type f -printf '%P\n' | grep dok)
+    dokumentö/a.png                            <- actual side, raw
+
+    root (/): tree=453226aed36c29f7 published=f663460168f94c85
+    ::error::root (/) — the bytes about to be published are NOT the commit's tree.
+    ::error::REFUSING TO PUBLISH — northstar invariant 4.
+
+One `naïve.mp3` or one photo called `mamá.png` and the publish job is dead on every
+trigger, forever.
+
+**This is the same defect class the comment sixty lines above claims to have fixed.**
+`ci.yml:326-329` and `:355` use `ls-tree -z | tr '\0' '\n'` with a comment explaining
+precisely this hazard. The guard was applied to the two refusal greps — both verified
+working, including a `.gitattributes` inside a non-ASCII directory — and missed at the
+one site that is not a grep: the one that produces the invariant-4 verdict.
+
+**The fix is `-z`, not `core.quotePath=false`.** Lens 3 tested all three:
+
+    git ls-tree -r -z HEAD --format='%(path) %(objectname)'    -> "dokument\303\266.txt" STILL QUOTED
+    git -c core.quotePath=false ls-tree -r -z ... --format=... -> dokumentö.txt OK, but
+                                                                 "news\nline.txt" still quoted
+    git ls-tree -r -z HEAD    (default format, no --format)    -> fully unquoted, both cases
+
+### B2 · `git hash-object "$f"` has no `--`, and `%P\n` + `read -r` mangles three more classes
+`ci.yml:417`. All reproduced:
+
+    -icon.png            -> error: unknown switch `i'         -> invariant-4 refusal
+    embedded newline     -> fatal: could not open 'dist/a'    -> invariant-4 refusal
+    leading/trailing sp. -> read -r strips IFS whitespace     -> invariant-4 refusal
+
+And the reason none of it trips `set -euo pipefail`: `:417` is
+`printf '%s %s\n' "$f" "$(git hash-object "$f")"`. **A failing substitution used as a
+printf argument is not a command failure** — an empty hash is written and the step
+reports invariant 4. `ci.yml:578-583` documents this exact trap in a comment and
+guards against it; the byte assertion two steps earlier does not.
+
+Filenames with interior spaces and `$` are handled correctly — the array-prune fix
+holds. Lens 3 tried to break it and could not.
+
+### B3 · the hash depends on a third tree no gate examines
+**Lens 1, reproduced at component level; lens 3 concurs.** `dist/` is created inside
+`$GITHUB_WORKSPACE`, itself a git repository, so `git hash-object` applies attribute
+rules from THAT tree — which the "Reject trees that can publish something other than
+their own bytes" step never looks at, examining only `src/main` and `src/stable`.
+
+    # workspace-root .gitattributes: *.html text eol=lf  (in NEITHER src tree)
+    git hash-object index.html              -> 422c2b7ab3b3c668038da977e4e93a5fc623169c
+    git hash-object --no-filters index.html -> c30dea8a3641ea99b125d04d599d843712292759  <- true bytes
+
+This is the direction that lets the assertion say "these are the commit's bytes" about
+bytes that are not. Reachability is narrow and it also covers `.git/info/attributes`
+and `core.attributesFile` on a self-hosted runner. **The fix is one word: `--no-filters`.**
+
+### B4 · a submodule outside `stable` gives the same false invariant-4 message
+**Lenses 2 and 4.** Mode `160000` is listed by `ls-tree -r` and invisible to
+`find -type f`; `git archive` writes an empty directory. Neither the
+`.gitattributes`/symlink refusal nor the `^stable(/|$)` grep catches it. The first
+pass tested a submodule AT `stable`; elsewhere was uncovered.
+
+### B5 · the step is named for the published bytes and hashes a different set
+**Lenses 1, 4 and 5; lens 3 resolved the disagreement by fetching the action.**
+
+`actions/upload-pages-artifact@v4` tars with
+`--exclude=.git --exclude=.github --exclude=".[^/]*"`. **The third exclusion is
+v4-only** — v3 does not have it — and it drops every dotfile at any depth.
+
+    hashed 43 · published 26 · published-but-not-hashed = EMPTY
+
+So `published ⊂ hashed`, strictly: **nothing reaches the site unhashed, and there is
+no hole.** But the step's closing line, `OK: both published copies are byte-for-byte
+their own commit's tree`, is false as written — the published bytes are the commit's
+tree minus `.github/**` and minus every dotfile. §6.1 member 2 is precisely a check
+whose message overstates what it compared.
+
+**The latent trap, and it is the one to act on:** a future legitimately-needed dotfile
+is **silently dropped from publication while the assertion stays green**, because the
+hash sees it on disk and in the tree. Lens 4 planted `.well-known/assetlinks.json` —
+the Digital Asset Links file that binds an Android home-screen app to a web origin,
+i.e. exactly what "the child's home-screen icon" is — and got `matches in artifact: 0`
+with the gate still printing OK. A refusal with no message at all.
+
+Also confirmed and worth knowing: **all of `docs/` is published at the public site
+root** — every work order, finding and adversarial review.
+
+### B6 · `find … -type l | head -5` under `pipefail` can exit 141 mute
+**A DISAGREEMENT BETWEEN TWO REVIEWERS, SURFACED RATHER THAN AVERAGED.**
+
+Lens 1 looked for this and reported it did **not** reproduce: at 300 symlinks, `find`
+completes its write before `head` exits, because the output fits the 64 KiB pipe
+buffer. Step `rc=0`, guard fired correctly.
+
+Lens 3 reproduced it at **6000** entries: `head` closes the pipe, `find` takes SIGPIPE,
+`pipefail` propagates 141, and the assignment kills the step before any `echo`:
+
+    ================= STEP: assert published bytes =================
+    [exit 141]
+
+**Both are correct.** It is a pipe-buffer threshold, not a disagreement about
+behaviour, and the honest statement is that it is real, fail-closed, mute, and
+effectively unreachable in practice because committed symlinks are refused upstream.
+Recorded because two reviewers reached opposite verdicts from sound method, and
+averaging them would have produced a wrong answer in either direction.
+
+---
+
+## MESSAGES AND ATTRIBUTION — what a human reads when it goes red
+
+### M1 · the `/stable/` call site attributes ANY nonzero exit to "NOT PREFIX-BOUNDED"
+**Lens 2, 3/3 reproduced.** `ci.yml:471-481`'s `else` branch is unconditional on the
+reason. Three unrelated failures — `sw.js` missing from the promoted copy, `dist/stable`
+absent, `sw.js` present but unparseable — all print:
+
+    ::error::THE /stable/ COPY'S WORKER IS NOT PREFIX-BOUNDED.
+    ::error::If refs/heads/stable is still behind PUP-WO-0102, fast-forward it.
+
+Its own comment at `:460` claims *"First, so its precise diagnostic is what a human
+reads."* **It is the first `::error::` a human reads, and its prescribed remedy is to
+perform the one act invariant 4 exists to protect, in response to a crash that has
+nothing to do with it.** Mitigating: the per-copy loop still runs, so a correct message
+appears later in the same log.
+
+### M2 · check 7's anchor error is excellent prose delivered three wrong ways
+**Lens 4.** The message itself — *"THIS IS MAINTENANCE, NOT FLAKINESS, AND THE FIX IS
+NOT TO DELETE THIS CHECK…"* — does explain itself to a stranger, and lens 4 would not
+change a word. But:
+
+1. It arrives as an **uncaught Node stack trace, not a `::error::` annotation.**
+   Measured: 22 `::error::` in `ci.yml`, **0 across all eight check scripts.** Check 7
+   is run bare at `ci.yml:157` with no wrapper to re-emit, so the most-likely-to-fire
+   refusal in the artifact is the one that never annotates.
+2. It names `/tmp/puppad-red-8kxsKn/sw.js` — a tmpdir the `finally` has already
+   deleted — and **not the file the human must edit.** "the anchor below" has no file
+   or line.
+3. It **throws**, aborting at the first broken anchor, so a refactor breaking five
+   anchors is five sequential red runs.
+
+Adding one entry to `urlsToCache` — the edit check 2 MANDATES whenever an asset is
+added — breaks A14. Renaming a local `hit` to `cached` breaks A1. Bumping
+`CACHE_VERSION` v17→v18 breaks nothing, which is well designed.
+
+### M3 · `.gitattributes` and symlink refusals name the danger and never the remedy
+**Lens 4.** Both refusals are CORRECT — `eol=` genuinely rewrites archived bytes, and
+Pages tars with `--dereference`, so a relative symlink out of `dist` publishes runner
+filesystem or the other copy's bytes. But a textbook-legitimate
+`* text=auto eol=lf` gets an accusation with no instruction, and **the cheapest
+response to a refusal you cannot diagnose is to delete the check.**
+
+### M4 · the symlink scan has no prune, so `/stable/`'s symlinks are blamed on `/`
+**Lenses 1 and 3.** `find dist -type l` at `ci.yml:401` descends into `dist/stable`.
+Fail-closed, path printed, one line from the truth. Cosmetic.
+
+### M5 · `ci.yml:167-178` describes a mode that no longer exists
+**Lens 5.** It asserts *"On a pull request this job cannot run at all"* — twenty lines
+above `# RUNS ON PULL REQUESTS TOO, AND THAT IS THE POINT` and the `if:` that does
+exactly that. Architecture §5: a wrong comment is a claim.
+
+### M6 · `ci.yml:500-504` asserts coverage the builder has already written down as false
+**Lens 2.** The per-copy rationale states *"check 6 is the only thing that catches it"*;
+`docs/feedback/PUP-WO-0103.md:459` says plainly *"`ci.yml`'s own written reasoning …
+is wrong in the file."* It is still wrong in the frozen file.
+
+---
+
+## LIVENESS AND PRECISION — real, none of them a merge blocker
+
+### O1 · `pages-publish` is one slot shared by pull requests and pushes
+**Lenses 1, 4 and 5, all reasoned; none could execute it without CI.** GitHub keeps
+one RUNNING plus one PENDING member per group, and a newly queued run evicts the
+pending one **regardless of `cancel-in-progress: false`** — the mechanism this file's
+own header at `ci.yml:42-57` documents, because it is how `922c2dc` lost its verdict.
+
+The pair that loses work: push `main` → publish A running. Human fast-forwards
+`stable` → publish B pending. Anyone pushes to any pull request → publish C queues →
+**B is evicted** → B's `deploy` never runs. C is a PR, so it never deploys, and **no
+later run rescues the promotion**, because the idempotence mitigation requires a
+PUSH and a PR is not one.
+
+The job comment at `:226-227` — *"Never cancelled in flight"* — is true and
+irrelevant to a PENDING job. Adding `publish` to `pull_request`, correct for
+demonstrating the refusals, is what put non-deploying runs into the deploying group.
+
+Lens 4 found a documented one-line fix the artifact's long concurrency analysis
+predates: the `queue` property, `max: Up to 100 jobs or workflow runs can be pending`,
+legal with `cancel-in-progress: false` and illegal with `true`. **Unverified against
+live docs by the builder — treat as a lead, not a fact.** The independent and
+certainly-correct half is to keep PR verification out of the deploy group:
+
+    group: ${{ github.event_name == 'push' && 'pages-publish'
+               || format('pages-verify-{0}', github.ref) }}
+
+### O2 · the workflow-level group collides for the promotion flow specifically
+**Lens 4.** `ci-${{ ...github.sha }}` is the same for push-to-`main` and
+push-to-`stable` **of the same commit** — which is exactly what a promotion is, since
+the fast-forward moves `stable` to a commit already on `main`. So the stated guarantee
+*"every commit that lands gets a verdict"* fails for the one flow it most matters for.
+
+### O3 · every deployment rewrites `/stable/build-stamp.json`
+**Lens 1, reasoned from the workflow with the stamp behaviour reproduced.** A push to
+`main` deploys the whole artifact including `./stable/`. The promoted copy's APP bytes
+are unchanged — rebuilt from `refs/heads/stable`, `CACHE_NAME` does not move, the
+stamp is not in `urlsToCache`, so nothing reaches the tablet. But `ci.yml:575` names
+this file as the instrument for **roadmap P1 gate item 3**, and that gate is worded as
+a falsification of invariant 4: *"Land any commit through the automated path; observe
+the promoted copy change without a human action."* An auditor curling that file before
+and after a `main` merge sees the promoted copy change. Either drop `built_at`/`run`
+from the promoted stamp, or state that gate 3 compares `.sha`.
+
+### O4 · a PR based on `stable` is verified in the root position, never the promoted one
+**Lens 1, reasoned.** `pull_request:` has no `branches:` filter, and `ci.yml:264` makes
+the root copy the PR head unconditionally. A PR targeting `stable` is checked as "what
+`/` would serve" and never once as "what `/stable/` would serve" — including
+`check-two-trees`, which pairs the PR head against the CURRENT stable rather than
+against `main`. No hole: the push-to-`stable` that merges it IS checked in the promoted
+position. But the PR's green is weaker than it reads.
+
+### O5 · until today, no adversarial pass existed against this artifact
+**Lens 5, and it is the finding that triggers §7.** See the divider at the top of this
+section. Additionally, the feedback file's ACCEPTANCE section still offers, as its
+evidence, CI output from the DELETED dispatch surface — `VERIFY against hypothetical
+promoted copy`, `is NOT an ancestor of refs/heads/stable`, `mode = verify` — none of
+which exist in the frozen `ci.yml`. And acceptance item **8a** (*"a cancelled or absent
+run does not publish, demonstrated — not reasoned"*) is neither demonstrated, flagged,
+nor waived; on an actual cancellation the GATE step is SKIPPED, so the work order's
+*"fail closed AND SAY SO"* says nothing.
+
+---
+
+## WHAT FIVE REVIEWERS ATTACKED AND COULD NOT BREAK
+
+Recorded so the empty results carry weight. All reproduced unless marked.
+
+- **No path from anything to `/stable/`.** Lens 1 enumerated the full event × job
+  matrix rather than the intended ones. `on:` admits exactly four situations — PR from
+  a same-repo branch, PR from a fork, push to `main`, push to `stable`. There is no
+  `workflow_dispatch`, `workflow_run`, `deployment`, `repository_dispatch`, `schedule`
+  or `pull_request_target`, and `ls .github/workflows/` shows **one file**, so nothing
+  listens on the deployment events this one emits. On every PR shape `deploy`'s `if:`
+  is false and `DRY_RUN` is `'true'`. A re-run preserves the originating event. Fork
+  PRs get a read-only token and no secrets.
+- **The workflow cannot move `stable` or any ref.** `grep -nE 'git +push|GITHUB_TOKEN|
+  secrets\.|GH_TOKEN|token:'` across `ci.yml` and all of `.github/ci/**` returns only
+  comments and the `id-token: write` line. Workflow-level `contents: read`; `publish`
+  re-states it; `deploy` widens only to `pages: write` + `id-token: write`, neither of
+  which can write a ref.
+- **The PR-head checkout cannot supply the promoted copy.** `ci.yml:275` is
+  `refs/heads/stable` with checkout's default `repository:`, which on a `pull_request`
+  is the BASE repo. `:279-308` then asserts the checkout equals what `git ls-remote`
+  says the server holds, with no fallback, and the `awk '$2 == r'` exact match at `:301`
+  genuinely closes the `decoy/refs/heads/main` tail-match. The PR exemption applies to
+  `main` only; `stable` is asserted on every event.
+- **Nothing downstream of the byte assertion writes into `dist`** except the Stamp
+  step, deliberately. Lens 1 ran the entire downstream chain and re-ran the byte
+  assertion verbatim: `root tree=7e44d8eb… published=7e44d8eb…`, `promoted tree=…
+  published=…`, `rc=0`, and a file-level diff showed NO FILE ADDED/REMOVED/RESIZED.
+  Every check writes to `mkdtemp`; no write target derives from `argv[2]`.
+- **`permissions: contents: read` on publish is correct and complete.** Lens 4 traced
+  it: `upload-pages-artifact@v4` → `upload-artifact@v4.6.2`, which uses the Actions
+  Results service with `ACTIONS_RUNTIME_TOKEN`, not `GITHUB_TOKEN`. What publication
+  needs beyond read is exactly `pages: write` + `id-token: write`, and it lives only on
+  the job that deploys. **Nothing publish legitimately needs is missing.**
+- **The GATE / `continue-on-error` / conditional chain is sound.** Full inventory:
+  `ci.yml:197, 448, 484, 485, 536, 595, 604, 628`. **No `always()` anywhere.**
+  Enumerating all four `outcome` values against documented semantics, lens 2 found no
+  way for a skip to be reported as a pass or a failure as a skip. `per_copy` keys on
+  `.conclusion` (masked by `continue-on-error`) while GATE keys on `.outcome` (the real
+  failure) — that asymmetry is deliberate and correct. Both `if: env.DRY_RUN …` steps
+  inherit the implicit `success()`, so the upload cannot fire past a failed GATE.
+- **The two DELETED assertions are honest.** Both `NOT ASSERTED:` lines actually print
+  in a real green run — verified, not read. Nothing in `ci.yml`, the work order, the
+  roadmap or the northstar reclaims either. Lens 2 checked the sharpest candidate:
+  `demo-two-path-caches.mjs:177` cites roadmap P1 gate 4, and gate 4 is explicitly
+  *"after force-activating the root worker"* — the SECOND activation, still asserted.
+  The deleted assertion covered the FIRST, which the gate does not claim.
+- **ROUND 3's demo-PR table reproduces exactly**, against the real commits:
+  `pr-refuse-gitattributes ca69327` and `pr-refuse-symlink 4a54db5` both fail at
+  *"Reject trees that can publish something other than their own bytes"*;
+  `pr-refuse-stable-path 33b8c8f` fails at *"Build the site from the COMMITS"*. All
+  three precede the byte assertion, so ROUND 3's *"the byte assertion was SKIPPED in
+  all three"* is correct.
+- **The B1/B6 claim survived attack from both sides.** Lens 3 confirmed that with both
+  positive controls intact, B1's only failures are the two controls; and that with both
+  neutered to ORDINARY SUCCESS values, B1 and B6 both return to `CHECK 5 PASSED` with
+  the origin-wide read present. The controls are exactly what turned them loud.
+- **The `-z` C-quoting fix works on both refusal greps**, including a `.gitattributes`
+  inside a non-ASCII directory. `^stable(/|$)` correctly catches a `stable` file, a
+  `stable` directory and a submodule named `stable` in `main`, and correctly passes
+  `stable.txt` and `stablemates/`. A legitimate nested `stable/` inside the PROMOTED
+  tree passes cleanly — the F13(a) fix is real.
+- **`export-ignore` in `stable` would empty the promoted copy** (0 files) and the byte
+  assertion catches it as a backstop. Defence in depth is real.
+- **The array-prune fix holds.** Empty-array expansion under `set -u` is fine on
+  bash ≥ 4.4; interior spaces and `$` in filenames pass. Lens 3 attacked it directly
+  and could not break it.
+- **Timeouts are not tight:** check-load 4.12s, demo-two-path-caches 5.39s,
+  check-two-trees 3.96s, check-mutations 7.5s, against `timeout-minutes: 20`.
+- All four pinned actions resolve; `v4`/`v4` is a compatible pairing.
+
+---
+
+## DISAGREEMENTS BETWEEN REVIEWERS — surfaced, not averaged
+
+1. **`find | head` SIGPIPE.** Lens 1: did not reproduce at 300 symlinks. Lens 3:
+   reproduced at 6000. Both correct; it is a pipe-buffer threshold. See B6.
+2. **Item 6's mechanism.** Lens 5 and the builder: a dead assertion, out of scope.
+   Lens 3: wrong — interception is by controlling client, and the real defect is a
+   race it measured at 3-caught-in-10. **Lens 3 wins on evidence.** See G5.
+3. **The third M-family member.** Lens 1 nominates the shipped `sw.js:337`; lens 5
+   nominates the harness/mutation-coverage gap; lens 2 reports finding none. Not
+   actually a conflict — lens 1 found the DEFECT, lens 5 found the BLINDNESS that hides
+   it, and lens 2 searched a different surface. Both nominations stand, as one finding
+   with two halves.
+4. **The flip verdict, and this one would have been dangerous to average.** Lens 3
+   answered *"safe, and I could not break the architect's claim."* Lenses 1, 4 and 5
+   answered unsafe. Lens 3's verdict is scoped to PUBLICATION MECHANICS, and it says so
+   — it explicitly notes the pipeline is inert until the fast-forward, and it never
+   considered the live worker. **The scope of an answer is part of the answer.** A
+   majority vote would have produced 3-1 unsafe and lost the reason; a naive averaging
+   would have produced "mostly unsafe" and lost the fact that lens 3 is not
+   contradicting anything.
+5. **`upload-pages-artifact` tar flags.** Lens 1 caveated its flags as v3's, from
+   memory. Lens 3 fetched and read v4 and found the additional `--exclude=".[^/]*"`.
+   Lens 3 has the better evidence and lens 1 flagged its own uncertainty, which is
+   exactly what made the conflict cheap to resolve.
+
+---
+
+## WHAT THE DISPATCHER GOT WRONG DURING THIS PASS
+
+Recorded because the pass caught them and because two are the same shape as the
+findings above.
+
+**1. I relayed lens 5's item-6 mechanism after "verifying" it, and it was wrong.**
+I read `demo-two-path-caches.mjs:186`, saw the probe fetch a URL outside the root
+worker's scope, concluded the worker never sees it, and called the assertion dead.
+Service-worker interception is by controlling client, not URL scope — `sw.js:232`
+returns `true` for cross-origin in this very worker, which I had read. I confirmed the
+hypothesis I arrived with instead of testing it. Lens 3 tested it and measured a race
+where I had asserted a certainty. **Verified against the failure I imagined**, which is
+a memory this project already carries, and the second instance of it in one day.
+
+**2. My pointer resolver produced a false red on its first use.** It reported the
+prompt's quotation of northstar invariant 4 as missing — 0 matches. The invariant is
+present and materially identical at `docs/northstar.md:62`; my grep was case-sensitive
+and the prompt embeds the quote mid-sentence with a lowercase "the". Member 3 inside
+the check built to enforce member 4, about thirty seconds after member 4 was ratified.
+
+The generalisation, now recorded in architecture: **member 4's enforcement is itself
+subject to member 3, and not incidentally.** A pointer resolver's whole job is to turn
+absence into red, so *every bug in it presents as a dangle* — it is the one check whose
+false positives are indistinguishable from its true positives without opening the file.
+Mitigation, one line: **when the resolver reports a miss, print the surrounding lines
+of the cited file, not the count.**
+
+**3. The freeze this pass ran against was six merges stale, and every freeze check
+passed.** Head, clean tree, protected-surface diffs and green checks are four checks,
+none of which opens a path the prompt names. Two of the prompt's twelve pointers —
+`PUP-WO-0104.md` and architecture `§6.2` — existed on `main` and not on the branch, so
+the M9/M7 fence was inert and the authority that removed the rollback lever was
+unreadable. Caught by the architect before dispatch. This is §6.1 member 4 and it is
+where the rule came from.
+
+**4. I closed F15 "by construction" on evidence that could not have exercised it.**
+See the flip section. Thirteen real CI runs, none of which ever pushed to `stable`.
+
+---
+
+## VERDICT
+
+**Disqualifying for MERGING PR #10: nothing.** Five reviewers, one of them working the
+full event × job matrix, found **no path** by which `main`'s content, a pull request's
+head, a fork, a re-run, or any other event places unpromoted bytes on `/stable/`. Every
+defect found in the publish path is fail-CLOSED. The central rule of the artifact
+holds.
+
+**Disqualifying for FLIPPING Pages today: three things, none of them code.**
+
+1. `refs/heads/stable` must be fast-forwarded — **before PR #10 merges**, not merely
+   before the flip, because `ci.yml:471` has no event guard and every PR in the repo
+   goes red at that call site the moment #10 lands.
+2. The `github-pages` environment's deployment branch policy must include `stable`, or
+   promotion pushes will never deploy and the human will be told they did.
+3. The tablet must be off or in airplane mode across the flip window, until both
+   `/PupPad/` and `/PupPad/stable/` are verified 200 — because the LIVE worker caches
+   whatever the origin returns, including a 404.
+
+**Real, and blocking the next `sw.js` change reaching publication rather than this
+merge:** G1, G2, G4, G5, G6, G7 and the F-LIVE blindness. The gate is weaker than the
+feedback file claims, in ways that matter for the regression it exists to catch.
+
+**Real-but-tolerable:** B1-B5, O1-O4, G3, G8.
+**Cosmetic:** B6, M4, M5.
+**Message quality, and worth more than its severity suggests:** M1, M2, M3 — a refusal
+a human cannot diagnose is a refusal that gets deleted rather than satisfied.
+
+**§7 IS INVOKED ON THREE COUNTS:** a need to modify `sw.js` (F-LIVE); repository
+settings that publication depends on (the environment policy, and `refs/heads/stable`);
+and the builder's own standing condition that **a third pass finding serious defects on
+one work order is a scope signal to report rather than absorb.** Lens 5 reached that
+conclusion independently and filed it as O5.
+
