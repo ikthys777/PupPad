@@ -301,6 +301,28 @@ happens when scope is added to a work order already in flight.*
 artifact was correct when it stopped**, and a stale baseline passes every freeze
 check there is.
 
+**A PER-CHANGE SAFETY ARGUMENT DOES NOT COMPOSE ACROSS CHANGES IN ONE COMMIT.**
+*(`PUP-WO-0105`'s builder, against its own accepted decision.)* Two individually-safe
+changes in one commit are not a safe commit, **and the per-change analysis is what
+makes that invisible.**
+
+Concretely: a four-class response matrix measured a cache-write guard and showed
+exactly one cell moving — sound, and the basis on which a UI test was waived. The
+same commit also bumped `CACHE_VERSION`. The matrix **varied the response and
+nothing else**, so it could not see that the bump discarded every runtime-cached
+asset; invariant 3's own falsification test then rendered **0 of 24 map tiles**
+against 24 of 24. **The argument offered for not running the UI test is what
+concealed the defect the UI test finds.**
+
+Two rules follow, and the second is the cheaper one:
+
+- **Ask of every claim what was actually VARIED to produce it.** A measurement's
+  scope is a property of the fixture, not of the confidence in the sentence.
+- **The author of a claim can check its scope by opening the file; a reviewer can
+  only infer it.** Those are different duties and the record should say so rather
+  than split fault evenly — but the reviewer's share is real whenever a waiver was
+  granted on the claim's strength.
+
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
 contradicted — is worth its cost here, because §6.1 exists precisely because a defect
@@ -548,6 +570,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §5 gains: red is not a demonstration — assert the commit that ran and the failing step's name, never the conclusion alone. | Four times in `PUP-WO-0103` a red run was read as a successful refusal demonstration, each red for the wrong reason, the last of them a stale run for a superseded commit. The builder named it as one missing habit rather than four mistakes and observed it was mechanisable, which is what makes it a ruling. It completes a pair with §6.1: a green run certifying nothing and a red run proving nothing are the same defect — the verdict read instead of what produced it. |
 | 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
 | 2026-09-01 | §6.1: member 4's rule gains its second clause — print the cited file's surrounding lines on a miss, never the count — because **member 4's enforcement is itself subject to member 3**. | The builder's, found while running member 4's first real enforcement, about a minute after it was ratified: a case-sensitive grep reported a quoted invariant as missing when it was present and materially identical. A pointer resolver exists to turn absence into red, so every bug in it presents as a dangle — making it the one check whose false positives are indistinguishable from its true positives without opening the file. The tool built to enforce *read what produced the verdict* did not obey it. |
+| 2026-09-01 | §6.1 gains: **a per-change safety argument does not compose across changes in one commit**, with the varied-what rule and the author/reviewer scope asymmetry. | `PUP-WO-0105`'s builder, against a decision CC-A had already accepted. A response matrix measured the guard, CC-A extended it to the whole commit, and a `CACHE_VERSION` bump in the same commit discarded every runtime-cached asset — 0 of 24 map tiles under invariant 3's own falsification test. The waiver of the UI test rested on the argument that concealed what the UI test finds. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
