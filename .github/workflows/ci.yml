@@ -1,4 +1,4 @@
-# PupPad CI — six checks, each of which can go red for exactly one reason.
+# PupPad CI — seven checks, each of which can go red for exactly one reason.
 #
 # This workflow REPORTS. It does not publish, deploy, or write to any branch
 # (northstar invariant 4). Publication is PUP-WO-0103's.
@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Six checks
+    name: Seven checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -108,3 +108,17 @@ jobs:
         # no published trees, which is why it is this work order's and not
         # PUP-WO-0103's.
         run: node .github/ci/demo-two-path-caches.mjs .
+
+      # ---------------------------------------------------------------- 7 ----
+      - name: "Check 7 — the checks themselves can fail"
+        # Answers a different question from the six above: not "is sw.js correct?"
+        # but "would we know if it weren't?". It restores each defect in turn and
+        # requires check 5 to go red, then neuters each harness stub in turn and
+        # requires the resulting blindness to be contradicted by some other
+        # assertion. Architecture §6.1 exists because an origin-wide read shipped
+        # under a fully green gate; this is the step that makes green mean something.
+        #
+        # It also keeps itself honest: its mutations are anchored to exact source
+        # text, so a legitimate edit to sw.js breaks an anchor and turns this red
+        # rather than letting the mutation set rot unnoticed.
+        run: node .github/ci/check-mutations.mjs .

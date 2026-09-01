@@ -15,7 +15,7 @@ file summarises the other's job.
 | `.github/` touched only for checks + harness | **YES** | the ci.yml diff adds two steps to the `checks` job and edits comments; nothing else |
 | PUP-WO-0100's four checks unmodified in intent | **STRENGTHENED — after a correction; see F3 below** | checks 1 and 2 are byte-identical to `main`; check 3 replaced a text-scrape with an evaluation **and now evaluates twice, under two environments**; check 4 replaced a four-way permissive state test with `=== 'active'` **and** `controlled` |
 | Diff scope | `sw.js`, `.github/ci/`, `ci.yml`'s `checks` job, `docs/` | `git diff --stat origin/main` |
-| All six checks green on this branch | **6/6** | run each of `.github/ci/check-{syntax,assets,cache-name,load,cache-isolation}.mjs` and `demo-two-path-caches.mjs` against `.` |
+| All seven checks green on this branch | **7/7** | run each of `.github/ci/check-{syntax,assets,cache-name,load,cache-isolation,mutations}.mjs` and `demo-two-path-caches.mjs` against `.` |
 
 **On that row and §0 — I had this wrong and the adversarial pass caught it.** My
 first draft of this table said *"STRENGTHENED, NEVER WEAKENED"*. That was false for
@@ -391,7 +391,34 @@ behaved impeccably. It is caught by the trap and by nothing else.
 
 ## What did not work, and why
 
-- **The red-demo harness is not committed.** It mutates `sw.js` and the harness into a
+- **The mutation engine is now committed as check 7 — my original reasoning was
+  wrong and CC-A named the conflation.** I argued a mutation engine did not belong on
+  the branch that reaches Buddy's tablet. That conflated two things: this branch is
+  tablet-reaching only *through* `sw.js`, and Pages serves nothing under `.github/`,
+  so the engine reaches no device on any branch. Uncommitted it was worse than
+  useless — "every stub was shown able to fail" decays into something someone once
+  said, and the next person cannot check it.
+
+  **I registered it as a CI step as well as committing it, which is one step beyond
+  the ruling, and I am flagging that rather than burying it.** The reason the ruling
+  gives is only served if it runs: the mutations are anchored to exact source text,
+  so a legitimate edit to `sw.js` breaks an anchor — which already happened once
+  inside this work order. Committed-but-never-run, it rots silently and is found
+  broken by whoever finally needs it. Run, a broken anchor is a red check and someone
+  fixes the mutation. If CC-A wants commit-only, deleting the `ci.yml` step is a
+  one-line revert and the file stays.
+
+  **And it was itself shown able to fail**, because a check of the checks that cannot
+  go red is the same defect one level up. Disabling check 5's F9 post-settle trap —
+  the sole detector of mutation A11 — leaves check 5 green and turns check 7 red:
+  `A11 … expected RED, got GREEN`. Worth recording that my first attempt at this
+  demonstration *failed*: I deleted check 5's origin-wide-read assertion and check 7
+  stayed green, because the promoted-copy assertion added for F5 catches the same
+  defect from the other direction. Redundancy working, and a badly designed
+  meta-test — a sole detector is what had to be removed.
+
+- **The red-demo harness was not committed** *(superseded by the item above; kept
+  because the reasoning was wrong and the record should show where)*. It mutates `sw.js` and the harness into a
   scratch tree and runs the check against copies. Committing it would put a
   mutation engine in `.github/ci/`, which is scope the work order did not ask for and
   risk on the branch that reaches Buddy. **The consequence, stated plainly: these
