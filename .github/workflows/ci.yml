@@ -30,23 +30,6 @@ on:
     # either ref rebuilds BOTH copies from their own refs, so publication is
     # idempotent and neither copy goes stale because the other moved.
     branches: [main, stable]
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: "verify = run the whole publish pipeline and STOP before deploying. rollback = publish with stable pinned to an explicit commit."
-        type: choice
-        options: [verify, rollback]
-        default: verify
-        required: true
-      main_sha:
-        description: "verify ONLY: full 40-char commit SHA to treat as the ROOT copy. Lets a refusal be demonstrated against a real commit instead of argued. Cannot deploy."
-        type: string
-        required: false
-      stable_sha:
-        description: "Full 40-char commit SHA to treat as the promoted copy. REQUIRED for rollback (a human names it; nothing infers it). Optional for verify, where it selects a hypothetical /stable/ and cannot deploy anything."
-        type: string
-        required: false
-
 # Minimal by construction. A workflow that inherits write scope it does not use is
 # a credential sitting in the blast radius of every future edit to this file.
 permissions:
@@ -77,17 +60,13 @@ concurrency:
   #   pull_request      -> by ref. A newer push to a PR supersedes the older run; that
   #                        is the one case where cancelling is what you want.
   #   push              -> by COMMIT. Every commit that lands gets its own verdict.
-  #   workflow_dispatch -> by RUN. Each dispatch is a deliberate act and none may
-  #                        evict another.
   #
-  # The dispatch case is a correction to this fix, found by it happening again.
-  # Keying pushes by github.sha looked like it covered everything — but for a
-  # workflow_dispatch github.sha is the SHA OF THE BRANCH HEAD, identical across
-  # every dispatch on that branch. Three refusal demonstrations were dispatched
-  # seconds apart against one branch; they shared a group, and the middle one was
-  # cancelled while pending. Same mechanism, same silent outcome, one event kind
-  # over: a run that is neither green nor red and reads as "not finished yet".
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'workflow_dispatch' && github.run_id || github.sha) }}
+  # A third case existed while this workflow had a workflow_dispatch surface, and it
+  # is worth keeping the lesson now the surface is gone: github.sha for a dispatch is
+  # the SHA of the BRANCH HEAD, identical across every dispatch on one branch, so
+  # three dispatches seconds apart shared a group and the middle was evicted while
+  # pending — the same mechanism, one event kind over.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -201,9 +180,23 @@ jobs:
   publish:
     name: Publish both copies
     needs: checks
+    # RUNS ON PULL REQUESTS TOO, AND THAT IS THE POINT.
+    #
+    # It used to run only on a push to main/stable — so on a PR none of it executed,
+    # and the archive refusals below (a .gitattributes, a committed symlink, a
+    # `stable/` path colliding with the promoted copy's mount point) could not be
+    # demonstrated on the path that actually publishes. A bespoke `workflow_dispatch`
+    # mode was built to exercise them, and that mode became a SECOND PATH TO
+    # PUBLICATION whose only guard was one boolean — invariant 4's own category of
+    # worry, introduced by the machinery for testing invariant 4.
+    #
+    # Building and verifying on a PR costs nothing and needs nothing: this job is
+    # `contents: read`, and every credential that could publish lives on the `deploy`
+    # job, which is unreachable from a pull request. So the demo/refuse-* branches now
+    # demonstrate refusals through the ordinary path, and the dispatch surface is gone.
     if: >-
-      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable'))
-      || github.event_name == 'workflow_dispatch'
+      github.event_name == 'pull_request'
+      || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # PUP-WO-0103 §7 requires the permissions to be stated rather than assumed.
@@ -235,62 +228,9 @@ jobs:
       group: pages-publish
       cancel-in-progress: false
     env:
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'verify' }}
+      # A pull request builds and verifies; it never uploads and can never deploy.
+      DRY_RUN: ${{ github.event_name == 'pull_request' }}
     steps:
-      - name: "Named-commit input — a human names it, and only rollback can publish it"
-        # PUP-WO-0103 §1.7 and §7. The lever exists because a promoted copy nobody
-        # can roll back is a safety mechanism welded shut in the emergency it was
-        # built for. It must never become a path by which content reaches /stable/
-        # without a human naming the commit, so: a full 40-hex SHA only. No branch
-        # names, no tags, no "latest", no abbreviations that could resolve
-        # ambiguously, and no default. The SHA is verified to exist and to be an
-        # ancestor of a real ref further down, before anything is built from it.
-        # RUNS ON EVERY DISPATCH, not only when a SHA was named (F7). The guard below
-        # that forbids `rollback` with no stable_sha was unreachable: the step's own
-        # `if:` required a named SHA to run at all, so the one case it existed to
-        # reject could never enter it. A guard whose precondition excludes its subject
-        # is a check that cannot go red.
-        if: github.event_name == 'workflow_dispatch'
-        # F6 — INPUTS ARRIVE AS ENV, NEVER AS AN EXPRESSION INSIDE run:.
-        # An expression is pasted into the script AS TEXT before bash parses it, so a
-        # single quote in a form field ends the quoting and the rest executes. It did:
-        # `x'; touch /tmp/PWNED; :'` ran on the runner. And the 40-hex validation that
-        # makes the input safe sits BELOW the line that interpolated it — a check that
-        # cannot protect the step which has already executed its input.
-        env:
-          MODE:       ${{ github.event.inputs.mode }}
-          MAIN_SHA:   ${{ github.event.inputs.main_sha }}
-          STABLE_SHA: ${{ github.event.inputs.stable_sha }}
-        run: |
-          set -euo pipefail
-          if [ -n "$MAIN_SHA" ] && [ "$MODE" != verify ]; then
-            echo "::error::main_sha is accepted in verify mode ONLY. It substitutes the ROOT copy so a"
-            echo "::error::refusal can be demonstrated against a real commit, and verify cannot deploy."
-            exit 1
-          fi
-          for sha in "$MAIN_SHA" "$STABLE_SHA"; do
-            [ -n "$sha" ] || continue
-            case "$sha" in
-              *[!0-9a-f]*) echo "::error::a named SHA must be 40 lowercase hex characters."; exit 1 ;;
-            esac
-            [ "${#sha}" -eq 40 ] || { echo "::error::a named SHA must be exactly 40 characters; got ${#sha}."; exit 1; }
-          done
-          # rollback REQUIRES a stable_sha; verify may name either, both, or neither.
-          # The leftover copy of this test rejected an EMPTY stable_sha unconditionally,
-          # so a verify naming only main_sha died here instead of reaching the refusal
-          # it was dispatched to demonstrate — a validation step failing the run it was
-          # meant to let through.
-          if [ "$MODE" = rollback ] && [ -z "$STABLE_SHA" ]; then
-            echo "::error::rollback requires stable_sha: a human must name the commit to publish."
-            exit 1
-          fi
-          echo "mode=$MODE main_sha=$MAIN_SHA stable_sha=$STABLE_SHA by ${{ github.actor }}"
-          if [ "$MODE" = verify ]; then
-            echo "VERIFY: this names a HYPOTHETICAL promoted copy so the rest of the"
-            echo "pipeline can be exercised while refs/heads/stable is still behind."
-            echo "The deploy job cannot run in verify mode, so nothing reaches the site."
-          fi
-
       - name: Check out the CI tooling from the triggering ref
         uses: actions/checkout@v7
 
@@ -308,7 +248,7 @@ jobs:
       - name: Check out main
         uses: actions/checkout@v7
         with:
-          ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.main_sha != '') && github.event.inputs.main_sha || 'refs/heads/main' }}
+          ref: refs/heads/main
           path: src/main
           fetch-depth: 0
 
@@ -319,9 +259,7 @@ jobs:
           # satisfied by a TAG of the same name, and invariant 4 says the promoted
           # copy advances only when a human promotes it.
           #
-          # On a rollback the human-named SHA wins, and it is checked below for both
-          # existence and ancestry before a byte of it is published.
-          ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.stable_sha != '') && github.event.inputs.stable_sha || 'refs/heads/stable' }}
+          ref: refs/heads/stable
           path: src/stable
           fetch-depth: 0
 
@@ -331,17 +269,9 @@ jobs:
         # `rev-parse HEAD` of the checkout under test. Both are gone. `git ls-remote`
         # asks the SERVER, and there is no fallback — if the remote tip cannot be
         # established, publication fails.
-        env:
-          MODE:       ${{ github.event.inputs.mode }}
-          MAIN_SHA:   ${{ github.event.inputs.main_sha }}
-          STABLE_SHA: ${{ github.event.inputs.stable_sha }}
         run: |
           set -euo pipefail
           remote="https://github.com/${GITHUB_REPOSITORY}.git"
-          named_sha=''; named_main=''; mode=''
-          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            named_sha="$STABLE_SHA"; named_main="$MAIN_SHA"; mode="$MODE"
-          fi
           for ref in main stable; do
             head_sha=$(git -C "src/$ref" rev-parse HEAD)
             # Exact-match the ref: `ls-remote <pattern>` matches on path-component
@@ -351,51 +281,6 @@ jobs:
                           | awk -v r="refs/heads/${ref}" '$2 == r { print $1; exit }')
             [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
             echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
-
-            if [ "$ref" = main ] && [ -n "$named_main" ] && [ "$mode" = verify ]; then
-              # Same reasoning as the stable branch below: verify cannot deploy, so
-              # this names a copy to CHECK. It exists so acceptance item 3's refusals
-              # are demonstrated against REAL commits carrying the real defect, rather
-              # than argued from the shell source.
-              [ "$head_sha" = "$named_main" ] || {
-                echo "::error::src/main is ${head_sha}, not the requested ${named_main}."; exit 1; }
-              echo "main: VERIFY against hypothetical root copy ${named_main:0:12} (real tip ${remote_sha:0:12}); this run cannot deploy"
-              continue
-            fi
-
-            if [ "$ref" = stable ] && [ -n "$named_sha" ]; then
-              # F2 — THE ANCESTRY GATE APPLIES TO ANY NAMED PROMOTED COMMIT, IN EVERY
-              # MODE. It used to apply only to `rollback`; `verify` took a separate
-              # branch that skipped the equality test, justified as "safe because
-              # verify cannot deploy" — a claim about a DIFFERENT JOB, asserted here
-              # and enforced here by nothing.
-              #
-              # What that allowed: verify with stable_sha = refs/heads/main's tip built
-              # MAIN'S BYTES into dist/stable, passed the named /stable/ call site,
-              # every per-copy check on both copies, both browser loads and the
-              # two-tree check — and was stopped by one boolean on the deploy job. The
-              # entire verification stack certified the exact state northstar invariant
-              # 4 forbids. §7's bar is "found, suspected, or merely NOT RULED OUT", and
-              # it was ruled out by one predicate with nothing behind it.
-              #
-              # Costs the demonstrations nothing: refs/heads/stable's own tip is an
-              # ancestor of itself, so acceptance item 5's refusal against 2952aa1's
-              # real origin-wide reaper still runs. And a verify that builds a /stable/
-              # which could never legitimately be published is not a dry run of
-              # anything — it is a rehearsal of a forbidden state.
-              [ "$head_sha" = "$named_sha" ] || {
-                echo "::error::src/stable is ${head_sha}, not the requested ${named_sha}."; exit 1; }
-              git -C src/stable fetch --quiet origin "refs/heads/stable:refs/remotes/origin/stable-tip"
-              tip=$(git -C src/stable rev-parse refs/remotes/origin/stable-tip)
-              [ "$tip" = "$remote_sha" ] || {
-                echo "::error::fetched stable tip ${tip} disagrees with ls-remote ${remote_sha}."; exit 1; }
-              git -C src/stable merge-base --is-ancestor "$named_sha" "$tip" || {
-                echo "::error::${named_sha} is NOT an ancestor of refs/heads/stable (${remote_sha})."
-                echo "::error::A named promoted copy may only be a commit a human has already"
-                echo "::error::promoted. REFUSING — northstar invariant 4."; exit 1; }
-              echo "stable: named copy ${named_sha:0:12} (mode=$mode), verified an ancestor of ${tip:0:12}"
-              continue
-            fi
 
             [ "$head_sha" = "$remote_sha" ] || {
               echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}"
@@ -663,15 +548,14 @@ jobs:
           stamp dist/stable stable /stable/
           cat dist/build-stamp.json dist/stable/build-stamp.json
 
-      - name: "verify mode — everything above ran; stop before publishing"
+      - name: "pull request — everything above ran; stop before publishing"
         if: env.DRY_RUN == 'true'
         run: |
-          echo "VERIFY ONLY — the whole publication pipeline ran and passed."
+          echo "PULL REQUEST — the whole publication pipeline ran and passed."
           echo "Nothing was uploaded and nothing was deployed."
-          echo "What a verify run does NOT exercise, stated so nobody reads more into"
-          echo "a green than is there: actions/upload-pages-artifact and"
-          echo "actions/deploy-pages. Those first execute on the first push to main"
-          echo "after this merges."
+          echo "What a PR run does NOT exercise, stated so nobody reads more into a"
+          echo "green than is there: actions/upload-pages-artifact and"
+          echo "actions/deploy-pages. Those execute only on a push to main or stable."
 
       - name: Upload the site
         if: env.DRY_RUN != 'true'
@@ -693,12 +577,12 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: publish
-    # Never on a verify dispatch, and never on a pull request. A rollback dispatch
-    # DOES deploy — that is what the lever is for — and its commit was named by a
-    # human and proven an ancestor of refs/heads/stable in the publish job above.
-    if: >-
-      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable'))
-      || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'rollback')
+    # PUSH TO main OR stable, AND NOTHING ELSE. Never a pull request, never a fork,
+    # and there is no dispatch surface left to reach it by. The promoted copy advances
+    # only when a human moves refs/heads/stable — which the branch ruleset permits to a
+    # repository admin and refuses to every token, so the human's promotion authority
+    # is structural rather than something this workflow grants.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The whole of what publication needs beyond read, and it lives only here:
