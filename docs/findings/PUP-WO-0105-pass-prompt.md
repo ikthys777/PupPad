@@ -1,5 +1,16 @@
 # PUP-WO-0105 — the adversarial pass prompt
 
+> **NOTE, ADDED AT MERGE.** This branch ships **`sw.js` alone**. The two test files it
+> describes — `.github/ci/check-error-caching.mjs` and `.github/ci/demo-error-poisoning.mjs`
+> — were **stripped and moved to `PUP-WO-0106`** by the architect's ruling after the
+> second pass, because the demonstration printed `DEMO GREEN` over a poisoned shell and
+> the check passed when the error response never existed. They are unwired today, but
+> `PUP-WO-0104` wires them, and shipping a check that will later be wired while it
+> prints green over the exact defect it names is the "looks like coverage" failure with
+> a delayed fuse. **Ship what is verified: the guard is, the evidence is not.**
+> References to those two paths below are therefore historical — they describe what was
+> reviewed, not what merges.
+
 Committed rather than held in a session, so it survives a context boundary as an
 artifact. Architecture §5 requires the verbatim exchange; this is the half that exists
 before the pass runs.

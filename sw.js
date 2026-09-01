@@ -73,8 +73,10 @@ var CACHE_PREFIX = SCOPE_PATH === null ? null : cachePrefixFor(SCOPE_URL);
  *     precached URLs, including the poisoned ones. Shipping a byte-different sw.js
  *     IS the re-fetch. Verified: poisoned /PupPad/index.html at 404, guard shipped
  *     with the version left alone, entry back to 200 and the runtime cache intact.
- *     There is no residual case — index.html has no relative `./` subresources, so
- *     addAll covers every same-origin asset that can be poisoned.
+ *     It repairs the five urlsToCache keys and nothing else: a poisoned same-origin
+ *     RUNTIME entry would survive, and no production URL is one today only because
+ *     index.html has no relative `./` subresources. That is a fact about today's
+ *     index.html, not a property of the design — see the LIMITS note below.
  *   - THE BUMP COST THE MAP PANEL ITS OFFLINE ASSETS. Everything cross-origin is
  *     runtime-cached into THIS SAME cache — leaflet, supabase, and every OSM tile —
  *     and the activate reap deletes the old cache whole, after which addAll restores
@@ -249,12 +251,34 @@ function servesRequest(requestUrl) {
   }
   /* Cross-origin. Not a subtree question — but saying only that understates what
    * happens next: the fetch handler CACHES what it serves, so third-party bytes land
-   * in the child's cache keyed by URL, with no allowlist. That is deliberate for the
-   * Map panel (leaflet must work offline; invariant 3), and it sits awkwardly beside
+   * in the child's cache keyed by URL, with no allowlist. It sits awkwardly beside
    * northstar §5's third non-goal. The three CDN loads themselves are PUP-WO-0600's
    * to remove; whether a worker should cache cross-origin responses AT ALL is an
    * architect's call, raised in docs/feedback/PUP-WO-0102.md. Recorded here so the
-   * behaviour is a decision rather than a side effect of a comment about scoping. */
+   * behaviour is a decision rather than a side effect of a comment about scoping.
+   *
+   * THIS LINE DOES NOT MAKE LEAFLET WORK OFFLINE, AND AN EARLIER VERSION OF THIS
+   * COMMENT SAID IT DID — "deliberate for the Map panel (leaflet must work offline;
+   * invariant 3)". That was a guarantee stated at the line that would have to provide
+   * it, and the line does not provide it. What happens here is OPPORTUNISTIC: a
+   * cross-origin asset is cached only if some earlier ONLINE load happened to fetch
+   * it successfully. It is not precached, not asserted by any check, and has no
+   * fallback. urlsToCache is same-origin only.
+   *
+   * WHAT THAT COSTS THE CHILD, measured rather than supposed: with leaflet absent,
+   * index.html:1361 appends a full-screen overlay and index.html:1368 then throws
+   * `ReferenceError: L is not defined` — 182 lines before its CLOSE button is wired
+   * at :1550. The overlay stays up with no listeners, CLOSE is inert, and Draw and
+   * Camera stop responding because it swallows every tap. Northstar invariant 5,
+   * word for word: a state that ends play with no one-tap way back.
+   *
+   * And the route there is ordinary rather than exotic: Chrome charges ~8 MB of quota
+   * per OPAQUE entry regardless of body size, so a plain load with the map never
+   * opened already costs ~25 MB, opening it once costs ~178 MB, nothing calls
+   * navigator.storage.persist(), and an eviction is followed by exactly this. The
+   * quota cost and the trap are one failure. PUP-WO-0106 guards the panel;
+   * PUP-WO-0600 vendoring leaflet into urlsToCache dissolves it, because install
+   * would then fail loudly instead of half-provisioning the device. */
   if (u.origin !== self.location.origin) return true;
 
   var canon = canonicalPath(u.pathname);
@@ -392,6 +416,27 @@ self.addEventListener('fetch', function(event) {
        * has already been returned, so there is nothing to recover, but an
        * unhandled rejection in a worker is a CI failure and an unguarded one here
        * would make routine traffic look like a defect. */
+      /* WHAT THIS GUARD DOES NOT COVER — written here because the next person to
+       * read it will otherwise assume it covers more, which is how the defect it
+       * fixes survived a rewrite of this very handler.
+       *
+       * IT REFUSES AN EXPLICIT 4xx OR 5xx. That is all it can do.
+       *
+       * A 200 WHOSE BODY IS AN ERROR PAGE IS NOT COVERED, AND CANNOT BE BY ANY
+       * STATUS TEST — it is 2xx, so `ok` is true and it is stored. A soft-404 host,
+       * an SPA catch-all, an ISP interception page: all indistinguishable here from
+       * the real app. Catching that class needs CONTENT validation, which is a
+       * different mechanism and a different work order.
+       *
+       * AND `install` IS A SECOND WRITE PATH INTO THIS SAME CACHE THAT THIS GUARD
+       * DOES NOT SEE. `cache.addAll(urlsToCache)` accepts any 2xx, so a soft-404
+       * received during install writes the error body over the app shell through a
+       * SUCCESSFUL update. Measured. It is not permanent — this handler caches any
+       * `ok` response, so one healthy online load overwrites it, and recovery is no
+       * worse than before this guard existed — but the guard does not stop it, and
+       * an earlier draft of this comment claimed there was no residual case at all.
+       *
+       * The opaque arm below is a third gap and is stated at its own line. */
       if (response.ok || response.type === 'opaque') {
         var clone = response.clone();
         caches.open(CACHE_NAME).then(function(cache) {
