@@ -66,7 +66,17 @@ concurrency:
   # the SHA of the BRANCH HEAD, identical across every dispatch on one branch, so
   # three dispatches seconds apart shared a group and the middle was evicted while
   # pending — the same mechanism, one event kind over.
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  #
+  # ROUND 5, O2 — KEYING A PUSH BY SHA ALONE COLLIDES ON EXACTLY ONE EVENT, AND
+  # THAT EVENT IS A PROMOTION. Fast-forwarding `stable` to a commit already on
+  # `main` pushes THE SAME SHA to a second ref, so both pushes landed in group
+  # `ci-<sha>` — and since GitHub keeps only ONE PENDING run per group, whichever
+  # was still pending was evicted. The promotion is the one push in this repo that
+  # is guaranteed to carry a SHA another ref already published, so the collision is
+  # not a corner case: it is the normal path, and it loses the promotion silently.
+  # The ref is now part of the push key, which keeps "every commit that lands gets
+  # its own verdict" and adds "on every ref it lands on".
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -276,10 +286,20 @@ jobs:
     # (§7). The fix is on this side: verification here, unbound; deployment in its
     # own job below, bound.
     concurrency:
-      # Shared across every ref deliberately: two publications must serialise even
-      # though their runs no longer share a workflow-level concurrency group (see
-      # the group at the top of this file). Never cancelled in flight.
-      group: pages-publish
+      # Real publications must serialise: two of them writing the Pages artifact at
+      # once is the one thing this group exists to prevent. Never cancelled in flight.
+      #
+      # ROUND 5, O1 — BUT PULL REQUESTS USED TO SHARE THAT SLOT AND THEY PUBLISH
+      # NOTHING. Every PR run enters this job with DRY_RUN=true, verifies, and stops
+      # before the upload; it still occupied `pages-publish`. With only ONE PENDING
+      # run permitted per group, a promotion's publish job waiting behind a running
+      # one could be EVICTED by an unrelated PR queued after it — and nothing rescues
+      # it, because the promotion push has already happened and will not happen again.
+      # A lost publication with a green tick on the push that was supposed to cause it.
+      # Pushes still all share one group and serialise. Each PR ref now gets its own,
+      # so PR churn cannot contend with a publication at all; superseded PR runs are
+      # still cancelled by the workflow-level group above.
+      group: pages-publish-${{ github.event_name == 'pull_request' && github.ref || 'push' }}
       cancel-in-progress: false
     env:
       # A pull request builds and verifies; it never uploads and can never deploy.
@@ -773,6 +793,23 @@ jobs:
         # published-bytes assertion so that comparison stays exact rather than
         # carrying an exception for this file. It makes P1 gate item 3 two curls and
         # keeps invariant 4 auditable afterwards rather than only at the gate.
+        #
+        # ROUND 5, O3 — THE INSTRUMENT USED TO FALSIFY THE THING IT MEASURES.
+        # This wrote `built_at` and `run` into BOTH stamps, and a push to `main`
+        # redeploys the whole artifact including ./stable/. So /stable/build-stamp.json
+        # changed on every deployment, with no promotion and no change to the promoted
+        # copy's app bytes. Roadmap P1 exit gate item 3 reads that exact file to
+        # establish that the promoted copy does NOT move when main does — northstar
+        # invariant 4 — so an auditor curling it before and after a main merge saw it
+        # change and would have read the gate as FAILED while the property held.
+        #
+        # The stamp is now a PURE FUNCTION OF THE COMMIT IT DESCRIBES: ref, sha, path,
+        # and nothing else. Byte-identical across any number of redeployments of the
+        # same commit, which is what makes it usable as evidence. The volatile
+        # deployment metadata has not been dropped — it moved to /deploy-stamp.json at
+        # the root, where it belongs: there is exactly ONE deployment per run and it is
+        # a property of the run, not of the promoted copy. Nothing in CI reads either
+        # file; the consumers are the P1 gate and a human with curl.
         run: |
           set -euo pipefail
           stamp() {
@@ -784,12 +821,30 @@ jobs:
             local sha
             sha=$(git -C "src/$2" rev-parse HEAD)
             [ -n "$sha" ] || { echo "::error::could not resolve HEAD for src/$2"; exit 1; }
-            printf '{"ref":"%s","sha":"%s","path":"%s","built_at":"%s","run":"%s"}\n' \
-              "$2" "$sha" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GITHUB_RUN_ID}" > "$1/build-stamp.json"
+            printf '{"ref":"%s","sha":"%s","path":"%s"}\n' "$2" "$sha" "$3" > "$1/build-stamp.json"
           }
           stamp dist        main   /
           stamp dist/stable stable /stable/
-          cat dist/build-stamp.json dist/stable/build-stamp.json
+
+          # The volatile half, at the root only, where one deployment is described once.
+          root_sha=$(git -C src/main rev-parse HEAD)
+          stable_sha=$(git -C src/stable rev-parse HEAD)
+          printf '{"run":"%s","built_at":"%s","root_sha":"%s","stable_sha":"%s"}\n' \
+            "${GITHUB_RUN_ID}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$root_sha" "$stable_sha" \
+            > dist/deploy-stamp.json
+
+          cat dist/build-stamp.json dist/stable/build-stamp.json dist/deploy-stamp.json
+
+          # P1 gate item 3 says the promoted copy's commit DIFFERS from the root's
+          # after a merge to main with no promotion. Print the comparison it will make
+          # so the run that publishes is also the run that records it.
+          if [ "$root_sha" = "$stable_sha" ]; then
+            echo "P1 gate 3: both copies are at $root_sha — identical, so the gate is not"
+            echo "           yet falsifiable from this deployment. Expected right after a"
+            echo "           promotion; land a commit on main without promoting to separate."
+          else
+            echo "P1 gate 3: root=$root_sha  promoted=$stable_sha  (they differ, as invariant 4 requires)"
+          fi
 
       - name: "pull request — everything above ran; stop before publishing"
         if: env.DRY_RUN == 'true'
