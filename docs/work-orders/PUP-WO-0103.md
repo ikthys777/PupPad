@@ -89,6 +89,29 @@ Required:
 published `stable` unchecked. "A red check means nothing publishes" was false in
 both directions, and no check ever read the stable copy at all.
 
+**A cancelled run is neither green nor red, and one already happened.** *(Found by
+CC-A 2026-09-01, after this work order was authored.)* Three merges landed back to
+back and the push run for `922c2dc` — **the merge that put the new service worker on
+Buddy's tablet** — is `cancelled`. That commit has no green verdict of its own on
+`main`.
+
+The cause is not what the config suggests, so do not "fix" the flag.
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}` is `false` for a
+push and it works — it stops a new run cancelling an **in-progress** main run. But
+GitHub permits only **one pending run per concurrency group**, and a newly queued
+run cancels an already-pending one *regardless of that flag*. In-progress
+`8a510f3`, pending `922c2dc`, `30036e9` arrives, the pending run dies.
+
+`PUP-WO-0100`'s F10 fix is therefore **incomplete, not broken**, and the outcome is
+precisely what its own comment was written to prevent — *"two quick pushes must not
+leave the live commit with no verdict at all"* — including its closing line, *"matters
+more once `PUP-WO-0103` gates publication on this."* It does now.
+
+**Required:** publication must have an explicit answer for a run that is neither
+green nor red, and it must **fail closed and say so** rather than treating absence as
+failure by accident. Whether the queueing itself should change is yours to judge and
+justify.
+
 **Fix the general property, not the instance.** Every copy in the deployment is
 checked in the same run that publishes it.
 
@@ -207,6 +230,8 @@ as one writer per tree.
 7. **§1.8 demonstrated red:** a worker that hangs in `installing` fails check 4.
 8. **Every new assertion demonstrated RED**, each by its own break, each reverted,
    each with captured output and the failing step name.
+8a. **A cancelled or absent run does not publish**, demonstrated — not reasoned.
+   `922c2dc` is a real instance to reason from.
 9. **Every stub shown able to fail** (architecture §6.1).
 
 **P1 gate items 3 and 4 need a live site and are CC-A's and Scotty's to run after
