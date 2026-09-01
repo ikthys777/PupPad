@@ -1,0 +1,10 @@
+{
+  "name": "puppad-ci",
+  "private": true,
+  "type": "module",
+  "description": "CI tooling only. Deliberately NOT at the repository root: the root is the deployed artifact, and a package manifest there would make 'no build step, no dependencies' false for the thing that ships (architecture §5).",
+  "engines": { "node": ">=24" },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}
