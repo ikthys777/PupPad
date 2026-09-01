@@ -17,6 +17,7 @@
  * token is present, not that a foreign cache is still there afterwards — and the
  * defect is one line of rewriting away from passing such a grep.
  */
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeCacheStorage, loadWorker, swRequest, REQUEST_SHAPES } from './lib/sw-harness.mjs';
 
@@ -52,8 +53,13 @@ const noVerdict = (what, err) => {
   console.error(`::error::CHECK 5 COULD NOT REACH A VERDICT — ${what}`);
   console.error(`::error::This is NOT a finding about the copy under test. Do NOT fast-forward`);
   console.error(`::error::any ref in response to it, and do not read it as invariant 4 or 7.`);
+  /* "The failure follows" used to be followed by NOTHING whenever err was falsy —
+   * Promise.reject(), reject(0), reject('') all reach here with nothing to print. And
+   * the handler swallowed Node's code frame (the source line and the caret), which is
+   * the most useful part of an uncaught throw. Print something in every case. */
   console.error(`::error::REMEDY: fix the check. The failure follows.`);
-  if (err) console.error(err.stack || String(err));
+  if (err && (err.stack || String(err))) console.error(err.stack || String(err));
+  else console.error(`  (the rejection carried no value: ${Object.prototype.toString.call(err)})`);
   process.exit(3);
 };
 process.on('uncaughtException', (e) => noVerdict('the check threw', e));
@@ -83,7 +89,46 @@ const stablePrefix = readOr(stableW, 'CACHE_PREFIX');
 const rootName = readOr(rootW, 'CACHE_NAME');
 const stableName = readOr(stableW, 'CACHE_NAME');
 
-if (rootPrefix === undefined || rootName === undefined) {
+/* ROUND 5 ADVERSARIAL PASS — THIS GUARD CHECKED TWO OF THE FOUR VALUES AND ONLY
+ * FOR `undefined`, AND BOTH GAPS TURNED A REAL VERDICT INTO A CRASH.
+ *   `var CACHE_PREFIX = null` is a legitimate thing for sw.js to end up with, and
+ *   `null === undefined` is false, so it sailed past — then `stableName.startsWith`
+ *   threw a TypeError twenty lines below. The run printed a genuine
+ *   "FAIL  the two deploy paths derive the SAME cache prefix" and then, one line
+ *   later, "::error::CHECK 5 COULD NOT REACH A VERDICT... Do NOT fast-forward" —
+ *   withdrawing the correct remedy from a correct finding.
+ *   stablePrefix and stableName were not checked AT ALL, so a worker whose prefix
+ *   derivation fails only at /stable/ — the realistic case, since sw.js branches on
+ *   scope — crashed with no FAIL line at all.
+ * Every value is now checked, for null as well as undefined, and a missing one is a
+ * VERDICT (exit 1) rather than a crash (exit 3). */
+const missing = Object.entries({ rootPrefix, rootName, stablePrefix, stableName })
+  .filter(([, v]) => v === undefined || v === null || typeof v !== 'string')
+  .map(([k]) => k);
+if (missing.length) {
+  /* And the message no longer fabricates its evidence. An EMPTY sw.js — a truncated
+   * archive, a failed copy — took this branch and asserted "predates PUP-WO-0102",
+   * quoting source it had never read. An empty file and the real 2952aa1 worker were
+   * indistinguishable to it. Distinguish them before diagnosing. */
+  /* Read the FILE, not the loaded worker: the harness object exposes no source, and
+   * an earlier draft of this guard used `rootW.source ?? ''` — always empty — which
+   * sent the GENUINE pre-0102 worker (the live refs/heads/stable) down the "not a
+   * service worker" branch and stripped the one remedy that actually applies to it.
+   * Caught by running the live case instead of trusting the branch. */
+  let swSource = '';
+  try { swSource = readFileSync(SW, 'utf8'); } catch { swSource = ''; }
+  const looksLikePre0102 = /caches\.keys\s*\(/.test(swSource) && /CACHE_NAME/.test(swSource);
+  console.error(`\nCHECK 5 FAILED — could not read ${missing.join(', ')} from this copy's sw.js.`);
+  if (!looksLikePre0102) {
+    console.error('  AND THIS DOES NOT LOOK LIKE A SERVICE WORKER AT ALL — no caches.keys(), no');
+    console.error('  CACHE_NAME. An empty or truncated sw.js reaches this branch too, and an');
+    console.error('  earlier version of this message asserted "predates PUP-WO-0102" for it,');
+    console.error('  quoting source it had never read.');
+    console.error('  REMEDY: check the file is non-empty and is the worker you think it is.');
+    console.error('  Do NOT fast-forward anything on the strength of this message.');
+    console.error('::error::CHECK 5 FAILED — this copy\'s sw.js is not a readable service worker.');
+    process.exit(1);
+  }
   console.error('\nCHECK 5 FAILED — this copy\'s sw.js defines no CACHE_PREFIX.');
   console.error('  That is the pre-PUP-WO-0102 worker, whose activate handler reaps by inequality:');
   console.error('      names.filter(function(name) { return name !== CACHE_NAME; })');

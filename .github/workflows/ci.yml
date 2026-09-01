@@ -429,6 +429,8 @@ jobs:
               # and I reintroduced it here while writing the remedy. Capture, then trim.
               sym=$(git -C "src/$ref" ls-tree -r HEAD | awk '$1 == "120000" { $1=$2=$3=""; sub(/^ +/,""); print }' || true)
               printf '%s\n' "$sym" | sed -n '1,5p' | sed 's/^/::error::  symlink: /'
+              n=$(printf '%s\n' "$sym" | grep -c . || true)
+              [ "${n:-0}" -le 5 ] || echo "::error::  ... and $((n - 5)) more not listed"
               echo "::error::REMEDY: replace each symlink above with a real committed file"
               echo "::error::(git rm the link, copy the target in, git add, push)."
               exit 1
@@ -457,6 +459,8 @@ jobs:
             echo "::error::REFUSING TO PUBLISH — the two copies would merge."
             hits=$(git -C src/main ls-tree -r -z --name-only HEAD | grep -zE '^stable(/|$)' | tr '\0' '\n' || true)
             printf '%s\n' "$hits" | sed -n '1,5p' | sed 's/^/::error::  /'
+            n=$(printf '%s\n' "$hits" | grep -c . || true)
+            [ "${n:-0}" -le 5 ] || echo "::error::  ... and $((n - 5)) more not listed"
             echo "::error::REMEDY: rename or remove those paths on main. /stable/ is the mount point"
             echo "::error::for the PROMOTED copy built from refs/heads/stable; main may not occupy it."
             exit 1
@@ -725,6 +729,18 @@ jobs:
         #     1  it is NOT — a real verdict, and the fast-forward remedy applies
         #     3  no verdict was reached; the check broke. Still refuses, and says
         #        plainly that nothing should be fast-forwarded.
+        #
+        # ONE CASE IS NOT COVERED, AND AN EARLIER VERSION OF THIS COMMENT CLAIMED IT
+        # WAS. It listed "ERR_MODULE_NOT_FOUND" among the crashes now separated. It is
+        # not: a failed module RESOLUTION is a LINK-time error, raised before any
+        # module in the graph is evaluated, so the uncaughtException handler inside
+        # check-cache-isolation.mjs has not been installed yet and Node exits 1 — the
+        # code that means "real verdict" and carries the fast-forward remedy. No
+        # in-module handler can catch it; it would need a wrapper process.
+        # Mitigated, not fixed: `publish: needs: checks` runs the same script on the
+        # same checkout first, so a missing import fails there. Recorded because a
+        # comment claiming uncovered coverage is how three of this project's false
+        # greens survived.
         run: |
           set -uo pipefail
           rc=0

@@ -85,6 +85,10 @@ function run(label, { sw = [], harness = [], expect, expectFail }) {
           console.error(`  Deleting the mutation removes the only evidence that the defect it`);
           console.error(`  restores would still be caught (architecture §6.1).\n`);
           console.error(`  anchor:\n${a}`);
+          /* rmSync the throwaway clone before exiting: this `process.exit` sits inside
+           * the try{} whose finally{} does the cleanup, so every anchor failure leaked
+           * one /tmp/puppad-red-* directory. Measured: exactly one per failure. */
+          try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
           process.exit(1);
         }
         s = s.replace(a, b);
