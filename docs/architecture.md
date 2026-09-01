@@ -53,7 +53,7 @@ Pages API. Commands cited.
 |---|---|
 | Repo contents | 5 files: `index.html` (1,942 lines), `sw.js` (43), `manifest.json`, two icons. No `.github/`, no tests, no docs. |
 | Cache identity | `sw.js:1` — `var CACHE_NAME = 'pup-pad-v16'`. A hardcoded constant. |
-| Cached assets | `sw.js:2-8` — `urlsToCache` lists five entries; anything not listed is not cached and will not work offline. |
+| Cached assets | `sw.js:2-8` — `urlsToCache` lists five entries. **It is the cold-install set, not the cache's contents.** `sw.js:31-43` is network-first with *unconditional* runtime caching and no status filter, so every response `fetch` resolves is cached — **including 404s**, which then serve offline as plausible hits. A mistyped `games/<id>.js` therefore fails silently rather than loudly. *(Corrected 2026-09-01 from `PUP-WO-0000` §6.2; the original row's "anything not listed is not cached" was false and is what made the §6 reap look survivable.)* |
 | Pages configuration | `gh api repos/ikthys777/PupPad/pages` → `build_type: legacy`, `source: {branch: main, path: /}`, `https_enforced: true`. |
 | Precision `gh` | Read-only for repositories by deliberate configuration. |
 | ntfy | Self-hosted, `http://127.0.0.1:8090`. `cortex-operator.service` subscribes by SSE. No ACL; topics are protected only by being unguessable. |
@@ -88,9 +88,16 @@ sw.js          asset manifest + cache identity
 
 **Seams, and which are boundaries:**
 
-- **Console shell ↔ game module** — *a contract, not a security boundary.* A game
-  receives a container element and a `close()` callback and owns nothing outside
-  it. It is what makes northstar invariant 6 hold.
+- **Console shell ↔ game module** — *a contract, not a security boundary.* **Now
+  concrete, and specified in `docs/findings/PUP-WO-0000.md` §8, which this section
+  defers to rather than restating.** The shape: `export default function mount(host,
+  api)` returning a `teardown` closure. `teardown` is *returned from* `mount` rather
+  than exported separately, so it shares scope with the setup that acquired the
+  handles — that is what makes northstar invariant 6 and §7 seam 1 structural rather
+  than reviewed. Closing is `api.close()`, which delegates to the shell's single
+  `endGameSession()`; it is not a second close path. *(Amended 2026-09-01 — the
+  earlier "a container element and a `close()` callback" predated the contract and
+  is superseded by it.)*
 - **Registry ↔ picker** — *a contract, not a boundary.* The picker renders whatever
   the registry lists and knows nothing about any specific game.
 - **`main` ↔ the promoted copy** — **a blast-radius boundary, and the important
@@ -115,6 +122,9 @@ sw.js          asset manifest + cache identity
 | Deploy topology | **Two paths, one site: root = newest, `/stable/` = promoted.** | Satisfies rapid on-device iteration and a protected baseline simultaneously, which one branch cannot. See §6. |
 | Cache identity under two paths | **`CACHE_NAME` is namespaced per deploy path; CI asserts they differ.** | §3.1 — measured collision, not hypothetical. Invariant 7. |
 | Adversarial pass ownership | **CC-B runs it itself, as a black-box task in its own dynamic workflow** — fresh context, sees only the artifact, no knowledge of the builder's reasoning. `FEEDBACK.md` records the exchange **verbatim**: the exact prompt given and the unedited output, never a summary. | *Amended 2026-08-31 — reverses the original ruling; see §11.* Independence is a property of **context isolation**, not of who issues the call. A fresh-context subagent that sees only the artifact is more independent than one CC-A dispatches and then hands a summary. CC-A's own independence is already structural: it is a separate session with separate context. The verbatim requirement is what makes CC-B's dispatch auditable — CC-A reviews whether the pass *was any good*, not merely what it concluded, and a summary written by the party being audited is where a weak pass hides. |
+| Where does the adversarial record live? | **Two artifacts.** `docs/FEEDBACK.md` carries the **summary** — findings, dispositions, what was disputed and why. The **verbatim** exchange — exact prompt, unedited output — goes to `docs/findings/<WO-id>-adversarial.md`, committed. Neither summarises the other's job. **And the artifact is frozen before the pass is dispatched.** | *Amended 2026-09-01 — refines, does not reverse, the verbatim ruling above.* In `PUP-WO-0000` the transcript was 341 of `FEEDBACK.md`'s 582 lines and buried the upward findings under the evidence for them; the reviewer is not served by a summary and the architect is not served by a wall of transcript, and one file cannot be both. The freeze rule is separate and was paid for: that pass reviewed a ~1,150-line document that was 1,437 lines when recorded. CC-B declared the drift, which is why it cost nothing — but a reviewer whose subject moved cannot answer "did it see the whole artifact," which is the question the record exists to settle. |
+| `FEEDBACK.md` at the repo root or under `docs/`? | **`docs/FEEDBACK.md`.** | Ratified at `PUP-WO-0000` review. A root file fails the `docs/`-only gate, and §6's bootstrap exception makes that gate *the property that makes a P0/P1 merge safe* — so the placement is a safety question, not hygiene. Found by `PUP-WO-0000`'s adversarial pass (F24). |
+| Can a game make a sound the bank does not have? | **Yes — `api.tone(hz, ms, wave)` joins the module contract.** The twelve-cue bank stays for console cues; `api.tone` is the primitive. | Found by `PUP-WO-0000`'s adversarial pass and escalated rather than self-granted, correctly. `api.sound` offers twelve fixed cues with no pitch and no duration, so a xylophone, a lullaby or an aquarium — plausibly the next toy after a drawing pad — is **inexpressible**, and the only escape was editing a switch table ~1,500 lines from the registry, which is structurally the defect §2 condemns in `attachEvents` and makes invariant 6's "nothing else" false. **Corrected cost:** the findings estimate this at one shell function over existing helpers; `mk()` and `sw()` are declared *inside* `doSound`'s try block (`index.html:62-68`, `:69-75`), not at module scope, so the real cost is lifting both out and adding one function. Still cheap; not one line. *(Cost corrected by CC-A, 2026-09-01.)* |
 | A third review layer? | **No — add a check that can go red instead.** | Two judgment-based reviewers already share a context and a disposition; a third correlates with them, inflating findings-count while lowering real detection. CI cannot be persuaded. |
 | Realtime co-op | **Do not build. Wire the seams, spike it later.** | See §7. |
 
@@ -180,12 +190,28 @@ phase 2 is "move existing state across a channel" rather than "invent multiplaye
 Four seams, all cheap now and expensive later:
 
 1. **The engine stays pure and player-agnostic** — no module-level singleton state.
-2. **Trays are an array keyed by player, not a single tray.** `classic` needs this
-   regardless, which is why it is the cheapest seam to install.
+2. **Trays are an array keyed by player, not a single tray.**
 3. **All board mutations flow through one reducer taking `{playerId, action}`**, so
    a network layer replays actions rather than syncing state.
+
+   **Cost correction, 2026-09-01 — seams 2 and 3 are net-new construction, not
+   preserved structure.** The ruling stands; the estimate under it did not. Block
+   Pop's source contains **zero** occurrences of `player`, `players` or `playerId`,
+   and mutates the board from **five** separate actions, only one of which is
+   reducer-shaped. "The cheapest seam to install" and "`classic` needs this
+   regardless" both described a refactor the source had already half-done. It has
+   not. This changes **P4's shape, not merely its estimate** — `PUP-WO-0400` is
+   building these seams, not preserving them, and must be scoped and reviewed as
+   such. *(Found by `PUP-WO-0000`; the original claim was made from a chat-session
+   reading of the source.)*
 4. **Registry entries declare `players`**, so the picker can show a two-player
-   badge without knowing how it works.
+   badge without knowing how it works — **and the module can read it.** `players`
+   reaches the game through `api.entry` (`docs/findings/PUP-WO-0000.md` §8.3), so
+   this is a seam into the game rather than a label on a tile. *(Amended 2026-09-01:
+   as originally specified there was no channel from a registry entry into a module
+   at all, so this seam terminated at the picker. Found by `PUP-WO-0000`'s
+   adversarial pass — the single defect most likely to have produced built-wrong
+   work in P4.)*
 
 **Local co-op on one tablet is the first proof** — two trays, one board, no network
 at all. If that does not feel good, the networked version will not either.
@@ -231,6 +257,9 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | ntfy ACL — Scotty reports it is imminent for another build. | Scotty | Any inbound action button; §8 |
 | Cold-start budget on Buddy's actual tablet: what number counts as too slow? | Scotty, from measurement | P2's exit gate has a measured threshold or a subjective one |
 | Whether `classic` appears in Buddy's picker or only under an adult affordance. | Scotty | P4 scope |
+| **Northstar §5 forbids third-party network calls as a category, and `index.html:11-13` make three of them unconditionally** (Supabase via jsdelivr, Leaflet CSS and JS via cdnjs), plus OSM tiles at `index.html:1373`. Either the non-goal is narrowed to exclude the pre-existing console, or the loads are vendored. **This is a northstar re-ratification, not an architecture amendment** (§1), and CC-A has deliberately not written it. | **Scotty — re-ratify** | `PUP-WO-0600`'s scope, and how much of P6 exists |
+| The Supabase **anon key** renders into a cleartext input at `index.html:1818`, persisted at `:173`, and Settings is reachable while the console is "locked" (`:1736-1737`, unconditional). What is the intended containment, given §3.1 says the lock contains nothing? | Scotty | `PUP-WO-0601` |
+| The service worker is **network-first** (`sw.js:31-43`), so an online cold start waits on the network before rendering. Does that survive P2's cold-start gate, or does the worker become cache-first for the install set? | Scotty, from measurement | P2 gate item 5; `PUP-WO-0600` |
 
 ## 11. Amendments
 
@@ -240,6 +269,10 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-08-31 | §5 adversarial-pass ownership reversed: CC-B runs it as a black-box task; `FEEDBACK.md` records the exchange verbatim. §9 traceability updated to match. | The original ruling located independence in *who dispatches*. It is actually a property of *context isolation*, which a black-box subagent achieves directly and more cheaply. The verbatim requirement closes the gap the original ruling was reaching for — it makes the quality of the builder's own adversarial pass reviewable rather than taken on trust. Raised by Scotty; the superseded ruling was Claude's. |
 | 2026-08-31 | §6 cache-hazard fix corrected: namespacing `CACHE_NAME` is insufficient because `caches.keys()` is origin-scoped; the activate reap must be prefix-bounded. §2 corrected — only three of eight buttons open panels, and `attachEvents()` is an id `if`-chain, not a router. | All three found by CC-A reading the code against the documents, before dispatch. The cache error would have shipped a `/stable/` split that silently destroyed Buddy's offline cache — the exact failure the split exists to prevent. The §2 errors were mine, from a chat-session reading. |
 | 2026-08-31 | §6 gains the bootstrap exception: P0 and P1 merges reach the live path by necessity, and are safe on the narrower `docs/`-only property rather than on the firebreak. | Found by CC-A on its first read. Recorded so it does not later read as a violated rule. |
+| 2026-09-01 | §6's bootstrap exception extends from `docs/` to `.github/`. | `PUP-WO-0100` must add a workflow before the firebreak it builds exists. Pages under `build_type: legacy` serves `main:/` as static files and does not serve `.github/`, so the same narrow property holds. Stated because the exception is what makes the merge safe, and an unstated extension of a safety property is indistinguishable from a violation of it. |
+| 2026-09-01 | §4's console↔module seam replaced with the concrete contract; §5 gains `api.tone`; §7 seam 4 becomes a real channel and seams 2–3 are re-costed as net-new construction; §3's cached-assets row corrected. | All from `PUP-WO-0000` and the seven load-bearing defects its adversarial pass found. The two that mattered most were **invisible from the two games the contract was demonstrated against** — configuration and sound — which is the finding of that work order above either specification it produced. §3's row was wrong in a way that made the §6 reap look survivable. |
+| 2026-09-01 | §5 gains the two-artifact adversarial record and the freeze-before-dispatch rule; `docs/FEEDBACK.md` placement ratified. | A 341-line transcript inside a 582-line `FEEDBACK.md` buries the findings it evidences. The freeze rule closes the one question `PUP-WO-0000`'s record could not answer about itself. Placement was found by that pass's own reviewer (F24) and matters because §6's exception rests on the `docs/`-only property. |
+| 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
 

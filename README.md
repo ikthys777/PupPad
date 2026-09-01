@@ -3,10 +3,13 @@
 A pretend command console for a three-year-old — a tablet PWA he can operate on his
 own, without reading and without reaching anything that isn't his.
 
-**Status:** shipped and in daily use. The console and its eight panels work. A games
-surface is being added: the Power button becomes Games, opening a picker for
-Gyre (a particle field) and Block Pop (a block-placing puzzle). As of 2026-08-31
-that work is planned but not built.
+**Status:** shipped and in daily use. Eight buttons flank the radar; three of them
+open a panel (Map, Draw, Camera) and the other five play a sound and show a toast.
+A games surface is being added: the Power button becomes Games, opening a picker
+for Gyre (a particle field) and Block Pop (a block-placing puzzle). As of
+2026-09-01 the investigation (P0) is merged and the contracts are specified; no
+games code is built. The investigation also found defects in the shipped console
+— see `docs/roadmap.md` P6 — which are scheduled ahead of the games work.
 
 ## What's here
 
