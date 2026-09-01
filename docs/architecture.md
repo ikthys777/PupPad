@@ -301,6 +301,27 @@ happens when scope is added to a work order already in flight.*
 artifact was correct when it stopped**, and a stale baseline passes every freeze
 check there is.
 
+**A SCHEDULING DECISION IS ONLY AS GOOD AS THE TRIGGER LIST IT WAS MADE AGAINST,
+AND A NEW TRIGGER FOR A KNOWN DEFECT IS A NEW DECISION, NOT A DUPLICATE FINDING.**
+*(`PUP-WO-0105`'s builder.)* The un-closable Map overlay was found in `PUP-WO-0000`
+§1.6 and scheduled into `PUP-WO-0600` at phase P6 — defensible, because the only
+known trigger was a blocked CDN: rare, external, self-healing. Then quota eviction
+was measured (~25 MB on a plain load, ~8 MB per opaque entry, no `storage.persist`),
+which turns that rare external trigger into **an ordinary internal one**, and the
+next offline cold start becomes the trap. **Nothing in either record joined them.**
+What nearly buried it is that it *looked like a re-find of something already
+scheduled* — and a re-find is exactly what gets closed as "known."
+
+**Both of this project's near-misses are failures of DISPOSITION, not of
+discovery.** Here, and the round-1 recommendation ("give the fake cache a `puts`
+counter and assert zero write attempts") that was written into the findings file
+under *Recommendation* and never applied, whose exact predicted vacuity round 2 then
+found. **The pass worked, the record worked, and the loop did not close** — because
+every control this project has built checks whether a finding was *written down*,
+and none checks whether it was *acted on*. Two instances is a pattern and it wants a
+control; **none is proposed here**, deliberately, by both parties who have each
+shipped a mechanism today for a problem that turned out not to exist.
+
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
 contradicted — is worth its cost here, because §6.1 exists precisely because a defect
@@ -548,6 +569,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §5 gains: red is not a demonstration — assert the commit that ran and the failing step's name, never the conclusion alone. | Four times in `PUP-WO-0103` a red run was read as a successful refusal demonstration, each red for the wrong reason, the last of them a stale run for a superseded commit. The builder named it as one missing habit rather than four mistakes and observed it was mechanisable, which is what makes it a ruling. It completes a pair with §6.1: a green run certifying nothing and a red run proving nothing are the same defect — the verdict read instead of what produced it. |
 | 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
 | 2026-09-01 | §6.1: member 4's rule gains its second clause — print the cited file's surrounding lines on a miss, never the count — because **member 4's enforcement is itself subject to member 3**. | The builder's, found while running member 4's first real enforcement, about a minute after it was ratified: a case-sensitive grep reported a quoted invariant as missing when it was present and materially identical. A pointer resolver exists to turn absence into red, so every bug in it presents as a dangle — making it the one check whose false positives are indistinguishable from its true positives without opening the file. The tool built to enforce *read what produced the verdict* did not obey it. |
+| 2026-09-01 | §6.1 gains the trigger-list rule and the disposition gap: a new trigger for a known defect is a new decision, and this project's near-misses are failures of disposition rather than discovery. | The builder's, stating properly why CC-A's P6 scheduling of the Map trap was defensible when made and wrong once quota eviction was measured. Paired with the round-1 `puts`-counter recommendation that was recorded and not applied — every control here checks that a finding was written down, none checks that it was acted on. Named as wanting a control; none proposed, by two parties who each shipped an unnecessary mechanism today. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
