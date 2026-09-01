@@ -33,7 +33,10 @@ the root copy. A broken worker does not degrade the app; it can leave the tablet
 unable to load it at all.
 
 **That risk is the reason for the split.** `PUP-WO-0103` touches `.github/` only and
-cannot reach him (architecture §6's bootstrap exception). So the entire
+cannot reach him (architecture §6's bootstrap exception). **This work order also
+touches `.github/ci/`** — for the checks and harness that prove `sw.js` correct (§2)
+— but `sw.js` is the only byte in it that Pages serves, and therefore the only byte
+that reaches a tablet. So the entire
 tablet-reaching surface of this phase is now this one file — small, single-concern,
 and attackable in a bounded way. Nothing else in P1 needs to be reviewed at this
 level of paranoia, and this does.
@@ -118,7 +121,17 @@ branches from this one's merge, so there is never a second writer.
 
 ## 3. Acceptance — proven, not asserted
 
-1. `git fetch origin && git diff origin/main --stat` shows `sw.js` and `docs/` only.
+1. `git fetch origin && git diff origin/main --stat` shows **`sw.js`,
+   `.github/ci/`, `.github/workflows/ci.yml`, and `docs/`** only. Changes to
+   `ci.yml` must be confined to the `checks` job — the publish job and every
+   publication script are `PUP-WO-0103`'s and must read unchanged in the diff.
+   *(Corrected 2026-09-01: this criterion still said "`sw.js` and `docs/` only",
+   which **acceptance-fails the very `.github/ci/` files §2 requires**. Third copy of
+   one wrong belief. §2 and §7 were fixed on 2026-09-01 by searching for the string
+   `.github/` — and this line states the same fence **positively**, as an allowlist,
+   so it contains no such string and the search could not see it. **Searching for the
+   token finds the copies that name it; only searching for the belief finds the
+   rest.** CC-A's miss, both times.)*
 2. All `PUP-WO-0100` checks green, unmodified and un-special-cased.
 3. **Invariant 7's own falsification test, run and failed-then-passed.** Cache the
    test build, load the promoted copy offline, and show no asset is served from the
