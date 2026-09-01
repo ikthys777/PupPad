@@ -90,7 +90,18 @@ published `stable` unchecked. "A red check means nothing publishes" was false in
 both directions, and no check ever read the stable copy at all.
 
 **Fix the general property, not the instance.** Every copy in the deployment is
-checked in the same run that publishes it. Also verify that every check is actually
+checked in the same run that publishes it.
+
+**And name the call site, because a principle without one is prose again — the H1
+lesson.** *(Ruled 2026-09-01 from `PUP-WO-0102` F1.)* **Check 5 must be run against
+the `/stable/` copy specifically**, as a named acceptance item, not merely against
+whatever ref triggered the run. The concrete case is live: `refs/heads/stable @
+2952aa1` carries `var CACHE_NAME = 'pup-pad-v16'` — **the exact literal the root
+worker deletes** — and that deletion is **not one-time. It runs on every
+activation, forever**, so a stale `/stable/` could never hold an offline cache at
+all. Not "loses its cache once": never has one. It cannot happen today only because
+Pages is still `legacy`; §1.4 already rules the mechanism, and this is the thing
+that calls it. Also verify that every check is actually
 in the publish path: `PUP-WO-0101` had one check missing from the publish loop,
 leaving the sandbox hole open on exactly the path that publishes, while the report
 said all six ran.
@@ -135,6 +146,22 @@ back is a safety mechanism you cannot use in the emergency it was built for.
 **Mechanism is yours to design.** It must not become a path by which anything
 reaches `/stable/` without a human naming the commit — see §7.
 
+### 1.7a Carried from `PUP-WO-0102`: make check 7's anchor error self-explaining
+
+**A documented exception to the seam, not a drift.** `check-mutations.mjs` is
+worker-check territory and therefore `PUP-WO-0102`'s by §2's seam. It rides here
+because that review is closed, changing a reviewed artifact would put something
+unreviewed in front of the merge, and the hazard cannot bite before someone next
+edits `sw.js`. Raised by the builder, who offered it rather than acting on it.
+
+`check-mutations.mjs:68` raises a bare `anchor not found` with a stack trace and an
+anchor string. Architecture §6.1 now rules that **an anchor break is maintenance,
+not flakiness** — but the ruling lives in a document and the decision gets made at
+2am in front of the error. Make the error say it: updating the mutation is the
+correct response, deleting the check is not, and the anchor broke *because* `sw.js`
+changed. Two lines. **The architecture entry is where the ruling lives; the error
+message is where it is obeyed.**
+
 ### 1.8 Check 4 asserts the state it measures — MOVED to `PUP-WO-0102` §1.5
 
 `.github/ci/check-load.mjs:265` fails only when the worker state is none of
@@ -172,6 +199,9 @@ as one writer per tree.
    for each copy independently.
 5. **§1.4 demonstrated:** a copy carrying the origin-wide reaper — `refs/heads/stable
    @ 2952aa1` is a real one — is refused.
+5a. **Check 5 demonstrably runs against the `/stable/` copy**, and a stable copy
+   whose worker reaps or reads outside its own prefix blocks the deployment. Show it
+   red using `2952aa1`'s worker, which is a real artifact and not a constructed one.
 6. **§1.5:** the two published workers exercised as a pair, with the copies
    deliberately differing, as they do during promotion lag.
 7. **§1.8 demonstrated red:** a worker that hangs in `installing` fails check 4.
@@ -217,7 +247,12 @@ Recorded so it is auditable; §1.4 exists so it is not load-bearing.
 4. **Scotty flips Pages to the Actions build type.** Flipping before step 2 leaves
    the site with no publishing workflow at all.
 5. P1 gate items 3 and 4 run against the live site; P1 closes.
-6. Scotty re-points Buddy's tablet at `/stable/`, the test device at root.
+6. Scotty re-points Buddy's tablet at `/stable/`, the test device at root — and
+   **opens `/stable/` online once on that tablet, confirming the cache populated,
+   before handing it back.** A PWA cannot cache what was never fetched, so `/stable/`
+   has no offline capability until it has been loaded online exactly once. Inherent,
+   not a defect, and therefore a runbook step rather than something code can enforce.
+   *(Ruled 2026-09-01 from `PUP-WO-0102` F8.)*
 
 ## 7. Flag-and-stop
 

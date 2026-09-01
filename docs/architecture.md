@@ -129,6 +129,9 @@ sw.js          asset manifest + cache identity
 | Can a game make a sound the bank does not have? | **Yes — `api.tone(hz, ms, wave)` joins the module contract.** The twelve-cue bank stays for console cues; `api.tone` is the primitive. | Found by `PUP-WO-0000`'s adversarial pass and escalated rather than self-granted, correctly. `api.sound` offers twelve fixed cues with no pitch and no duration, so a xylophone, a lullaby or an aquarium — plausibly the next toy after a drawing pad — is **inexpressible**, and the only escape was editing a switch table ~1,500 lines from the registry, which is structurally the defect §2 condemns in `attachEvents` and makes invariant 6's "nothing else" false. **Corrected cost:** the findings estimate this at one shell function over existing helpers; `mk()` and `sw()` are declared *inside* `doSound`'s try block (`index.html:62-68`, `:69-75`), not at module scope, so the real cost is lifting both out and adding one function. Still cheap; not one line. *(Cost corrected by CC-A, 2026-09-01.)* |
 | How is deploy ordering enforced? | **By the workflow, never by prose.** Publication refuses any copy whose worker reaps or reads outside its own prefix, and **every copy a run publishes is checked in that same run.** | *Ruled 2026-09-01.* `PUP-WO-0101` §6 recorded the required order — merge, fast-forward `stable`, then flip Pages — in a paragraph, and a paragraph is not a mechanism. `refs/heads/stable` still carries the origin-wide reaper, so flipping Pages between the merge and the fast-forward publishes a worker that deletes the root cache on every activation. Restating it as a *property* rather than a *sequence* is what makes it survive: properties hold, sequences get performed wrong once, at 2am. The second clause comes from the same finding — the checks job saw only the triggering ref while publication carried both, so a push to `main` published `stable` unchecked, and "a red check means nothing publishes" was false in both directions. |
 | After fixing a defect, what else must be asked? | **What legitimate behaviour does this fix now refuse?** | *Ruled 2026-09-01, as standing discipline.* Three times this project has been bitten by verifying a fix against the failure that was imagined and stopping there: `PUP-WO-0000`'s contract passed a two-game demonstration while holding two defects invisible from those games; `PUP-WO-0101`'s invariant-4 step gained a third assertion while both tautologies it was meant to remove still shipped; and an encoding fix closed an attack by refusing anything non-canonical, which also refused `/my%20photo.png` — working online, silently absent offline, invariant 3. **A fix that introduces a violation while closing one is the normal outcome of testing only the attack you thought of.** The question above is cheap and catches all three. |
+| Before dispatching a work order, what must be checked? | **Map it against the real artifacts and ask whether its instructions are SATISFIABLE.** | *Ruled 2026-09-01.* Distinct from the after-fixing question above, and it fires earlier: that one asks what a fix now refuses, this one asks whether the work order can be obeyed at all. `PUP-WO-0102` §2 forbade touching `.github/` while §3.3 and §3.7 required a committed harness that has nowhere else to live — the builder would have correctly flag-and-stopped on day one, on the document rather than on its reading of it. Found by mapping the work order against the builder's actual parked tree before dispatch. Cheap there; a wasted cycle anywhere later. |
+| When correcting a belief that appears in several places, what do you search for? | **The belief, not its wording.** | *Ruled 2026-09-01, after the same wrong belief survived two corrections.* `PUP-WO-0102`'s fence was fixed in §2 and §7 by searching for the string `.github/`. §3.1 stated the same fence **positively** — an allowlist of `sw.js` + `docs/` — so it contained no such string and the search could not see it. **Searching for the token finds the copies that name the thing; only searching for the belief finds the rest.** A constraint written as an allowlist and the same constraint written as a denylist share no vocabulary. |
+| A discipline keeps having to be remembered. Then what? | **Find the mutation that makes CI remember it instead.** Any rule whose violation has a concrete shape can be moved out of memory and into a check that goes red. | *Ruled 2026-09-01; the builder's, and it generalises past the case that produced it.* `PUP-WO-0102` turned the after-fixing question — *what legitimate behaviour does this fix now refuse?* — into mutation A6, a regression test. The discipline stopped depending on a builder recalling it under time pressure and started depending on CI. This is the same reasoning as §5's "add a check that can go red instead of a third reviewer", applied to **process rules rather than to code**: a rule that must be remembered is a rule that will eventually not be. |
 | A third review layer? | **No — add a check that can go red instead.** | Two judgment-based reviewers already share a context and a disposition; a third correlates with them, inflating findings-count while lowering real detection. CI cannot be persuaded. |
 | Realtime co-op | **Do not build. Wire the seams, spike it later.** | See §7. |
 
@@ -224,6 +227,40 @@ it owns — on read and on write, not only on reap.**
    touch what it does not own. Proximity to a correct principle is not compliance
    with it.
 
+**Three refinements to point 2, all earned by `PUP-WO-0102` and all the builder's.**
+Point 2 said a stub that cannot fail is not a test. Each of these is a way that is
+true while looking nothing like a degenerate stub:
+
+- **A stub that cannot POSE the question is not a test either**, and it is harder to
+  catch because nothing about it looks broken. A fake request that is `{ url }` and
+  nothing else cannot express a navigation, so a worker exempting top-level
+  navigations from a decline is *structurally invisible* to it. Same defect in
+  another costume: a check that runs the **mirror** of an invariant's stated test —
+  seeding stable and reading from root — never exercises the promoted copy's own
+  read, which is the thing the invariant is about.
+- **The dangerous stub value is not always the degenerate one; it can be ordinary
+  success.** The rule "a stub fails silently exactly when its neutered return value
+  is also a legitimate one" is right about a class — it found two real instances —
+  and incomplete at the boundary. A *resolving* `fetch` is not degenerate at all; it
+  is what an online browser hands the worker on every request. Neuter it and the
+  worker never reaches its offline branch, so **the assertion passes by not
+  running.** That phrase is the general hazard: an assertion that is never evaluated
+  is indistinguishable, in a green run, from one that passed.
+- **Proving a detector is load-bearing requires removing a SOLE detector, not one of
+  two.** An attempt to show one assertion mattered came back green because a second
+  assertion caught the same defect from the other direction. Two true things at
+  once — redundancy working, and a badly designed meta-test. *(Recorded because the
+  failed first attempt is what makes the second worth anything.)*
+
+**And the standing consequence:** a check that verifies the checks — restoring each
+defect and requiring red, then neutering each stub and requiring the blindness to be
+contradicted — is worth its cost here, because §6.1 exists precisely because a defect
+shipped under a fully green gate. Such a check **will** go red when a legitimate edit
+breaks a mutation's anchor. **That is not flakiness and must not be treated as it:**
+flaky means red for reasons *unrelated* to the change; an anchor break means red
+*precisely because of* the change, and updating the mutation is the correct response.
+Deleting it is how the gate goes quiet again.
+
 *(Found by `PUP-WO-0101`'s adversarial pass; confirmed at source by CC-A. All three
 points are the builder's, ratified here substantially as written.)*
 
@@ -268,6 +305,16 @@ at all. If that does not feel good, the networked version will not either.
   may treat it as containment.
 - **No third-party network calls from any games surface.** Northstar §5.
 - **No data about Buddy is collected, stored, or transmitted.** Northstar §5.
+- **A boundary heartbeat cannot distinguish stopped-because-done from
+  stopped-mid-work**, and that ambiguity has cost real hours. *(Found 2026-09-01: a
+  builder stalled mid-work, its last heartbeat had correctly reported a work-order
+  boundary, and from outside the stall was indistinguishable from a park.)*
+  `dual-cc-session-design-v2.md` §5's rule — silence must mean stopped — is
+  satisfied and insufficient: **silence is no longer the failure mode; an
+  indistinguishable signal is.** Standing requirement: a session that stops
+  mid-work says so explicitly and names its next step. The one stall that was cheap
+  to recover was cheap *only* because the builder's final line named where it had
+  stopped, which let it be resumed at that point instead of re-deriving it.
 - **The build loop's notification channel is notify-only** while the ntfy server has
   no ACL (§3). Topics are unguessable rather than authenticated, which is adequate
   for alerts and inadequate for anything that acts. The standing rule holds: an
@@ -319,6 +366,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §5 gains the two-artifact adversarial record and the freeze-before-dispatch rule; `docs/FEEDBACK.md` placement ratified. | A 341-line transcript inside a 582-line `FEEDBACK.md` buries the findings it evidences. The freeze rule closes the one question `PUP-WO-0000`'s record could not answer about itself. Placement was found by that pass's own reviewer (F24) and matters because §6's exception rests on the `docs/`-only property. |
 | 2026-09-01 | §5: feedback becomes per-work-order (`docs/feedback/<WO-id>.md`) and the freeze covers every file a work order names as a deliverable, not only code. `docs/FEEDBACK.md` migrated to `docs/feedback/PUP-WO-0100.md`; `PUP-WO-0000`'s transcript recovered to `docs/findings/PUP-WO-0000-adversarial.md`. | Two defects from `PUP-WO-0100`, one on each side. **The naming defect was CC-A's:** the two-artifact ruling made transcripts durable but left feedback a single rolling file, so the builder — following it exactly — destroyed the previous work order's record at the tip on the rule's first application. **The freeze defect was CC-B's**, self-reported and led with: it froze the code and rewrote its feedback mid-pass, so the red demonstrations and the determinism justification went unreviewed. Both are cases of a rule being right in intent and underspecified in scope. |
 | 2026-09-01 | **§6.1 added — the offline read is origin-wide too.** §5 gains two rulings: deploy ordering enforced by the workflow rather than by prose (with every published copy checked in the run that publishes it), and the standing question *"what legitimate behaviour does this fix now refuse?"* | `PUP-WO-0101`'s second adversarial pass. §6 documented only the *reap* and was incomplete in a way that **read as complete**, which is the more dangerous kind: it invited the conclusion that prefix-bounding the reap closed the hazard. The read makes the promoted copy serve the test build's bytes offline — invariant 7 falsified by the invariant's own stated test, with every check green. The ordering ruling comes from the same pass: `refs/heads/stable` still carries the origin-wide reaper, so a paragraph was the only thing standing between a flip and a deleted cache. All three points in §6.1 are the builder's, ratified substantially as written. |
+| 2026-09-01 | §6.1 point 2 gains three refinements (a stub that cannot *pose* the question; the dangerous value can be ordinary success, so the assertion passes by not running; proving a detector is load-bearing needs a *sole* detector removed) plus the anchor-break-is-not-flakiness rule. §5 gains map-before-dispatch and search-for-the-belief. §8 gains the heartbeat ambiguity. | All from `PUP-WO-0102`, and all but one are the builder's, including a correction to a rule the builder itself wrote and CC-A had ratified. The two §5 entries are CC-A's own defects: a work order whose §2 forbade what its §3 required, and one wrong belief surviving two corrections because the search matched its wording rather than its meaning. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
