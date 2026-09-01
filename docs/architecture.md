@@ -132,6 +132,7 @@ sw.js          asset manifest + cache identity
 | Before dispatching a work order, what must be checked? | **Map it against the real artifacts and ask whether its instructions are SATISFIABLE.** | *Ruled 2026-09-01.* Distinct from the after-fixing question above, and it fires earlier: that one asks what a fix now refuses, this one asks whether the work order can be obeyed at all. `PUP-WO-0102` §2 forbade touching `.github/` while §3.3 and §3.7 required a committed harness that has nowhere else to live — the builder would have correctly flag-and-stopped on day one, on the document rather than on its reading of it. Found by mapping the work order against the builder's actual parked tree before dispatch. Cheap there; a wasted cycle anywhere later. |
 | When correcting a belief that appears in several places, what do you search for? | **The belief, not its wording.** | *Ruled 2026-09-01, after the same wrong belief survived two corrections.* `PUP-WO-0102`'s fence was fixed in §2 and §7 by searching for the string `.github/`. §3.1 stated the same fence **positively** — an allowlist of `sw.js` + `docs/` — so it contained no such string and the search could not see it. **Searching for the token finds the copies that name the thing; only searching for the belief finds the rest.** A constraint written as an allowlist and the same constraint written as a denylist share no vocabulary. |
 | A discipline keeps having to be remembered. Then what? | **Find the mutation that makes CI remember it instead.** Any rule whose violation has a concrete shape can be moved out of memory and into a check that goes red. | *Ruled 2026-09-01; the builder's, and it generalises past the case that produced it.* `PUP-WO-0102` turned the after-fixing question — *what legitimate behaviour does this fix now refuse?* — into mutation A6, a regression test. The discipline stopped depending on a builder recalling it under time pressure and started depending on CI. This is the same reasoning as §5's "add a check that can go red instead of a third reviewer", applied to **process rules rather than to code**: a rule that must be remembered is a rule that will eventually not be. |
+| A check went red. Is that the demonstration? | **No. Red is not a demonstration — assert the COMMIT that ran and the NAME of the step that failed, never the conclusion alone.** | *Ruled 2026-09-01, after this happened **four times in one work order**.* Each time a red run was read as proof a refusal worked, and each time it was red for the wrong reason: an input validator rejected the very runs it existed to let through; a root-copy demonstration was masked by a different check failing first; three demo pull requests built `main`'s clean tree because the publish job checked out `refs/heads/main` unconditionally, so the defect in the PR head was never present; and a wait-loop filter that matched nothing exited immediately and returned a **stale run for an older commit**. Four occurrences, one missing habit. **Every one was caught by asking *which step* failed or *what commit ran* — never by looking harder at the conclusion.** It is mechanisable, and being mechanisable is why it is a ruling rather than advice: a demonstration asserts `head_sha` against the commit under test and the failing step's name against the refusal it claims to prove. Note the shape it shares with §6.1: a green run that certifies nothing and a red run that proves nothing are the same defect, because **in both the verdict was read instead of what produced it.** |
 | A third review layer? | **No — add a check that can go red instead.** | Two judgment-based reviewers already share a context and a disposition; a third correlates with them, inflating findings-count while lowering real detection. CI cannot be persuaded. |
 | Realtime co-op | **Do not build. Wire the seams, spike it later.** | See §7. |
 
@@ -252,6 +253,42 @@ true while looking nothing like a degenerate stub:
   once — redundancy working, and a badly designed meta-test. *(Recorded because the
   failed first attempt is what makes the second worth anything.)*
 
+**The family, stated once, because it now has four members and one shape.** Each is
+a run whose exit code is indistinguishable from a sound one:
+
+1. **An assertion that passes by not running** — neuter a stub with an *ordinary
+   success* value and the code never reaches the branch the assertion guards.
+2. **An assertion that passes and certifies the forbidden state** — the check ran,
+   compared what it was told to compare, and the thing it compared was the thing the
+   invariant forbids. `PUP-WO-0103`'s own headline evidence read *"root
+   tree=b00e76ad published=b00e76ad / promoted tree=b00e76ad published=b00e76ad"* —
+   two identical hashes, written down as proof the check works.
+3. **A failure whose cause is not the one under test** — red, and red for the wrong
+   reason. Four occurrences in one work order (§5's *red is not a demonstration*).
+4. **A pointer that resolves in the author's head and not in the reviewer's tree.**
+   **Every path a review prompt cites is an assertion that the file exists in the
+   tree the reviewer is given**, and nothing in a freeze checklist resolves one:
+   head, tree, protected-surface diffs and green checks are four checks, none of
+   which opens a path the prompt names. *(`PUP-WO-0103`'s frozen prompt cited
+   `PUP-WO-0104.md` and `§6.2`; both existed on `main` and neither existed on the
+   branch, so its M9/M7 fence was inert and the authority that removed the rollback
+   lever was unreadable — leaving a reviewer to read a removed surface as an
+   unexplained deviation from a work order that still demanded it.)*
+
+**In all four the verdict was read instead of what produced it.** Members 1–2 are
+green, 3 is red, 4 never runs at all — which is why "look harder at the result" has
+never been the fix for any of them.
+
+**Member 4 is one line, and being mechanisable makes it a rule rather than advice**
+(§5): before dispatching a pass, resolve every path and every section the prompt
+cites **against the frozen tree, not against `main`**. *Not assigned to a work order
+here — it belongs wherever CI is next opened, and this project has learned what
+happens when scope is added to a work order already in flight.*
+
+**A freeze verifies that the artifact stopped moving. It does not verify that the
+artifact was correct when it stopped**, and a stale baseline passes every freeze
+check there is.
+
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
 contradicted — is worth its cost here, because §6.1 exists precisely because a defect
@@ -263,6 +300,91 @@ Deleting it is how the gate goes quiet again.
 
 *(Found by `PUP-WO-0101`'s adversarial pass; confirmed at source by CC-A. All three
 points are the builder's, ratified here substantially as written.)*
+
+### 6.2 The `stable` ruleset — verified in both directions
+
+*Added 2026-09-01. Read from the ruleset API and re-proven with a real push; an
+earlier draft of this section asserted the opposite and was wrong, see below.*
+
+`Protect-stable` on `refs/heads/stable` carries **deletion**, **non_fast_forward**
+and **update**, and its `bypass_actors` carries **`RepositoryRole` id 5 —
+repository admin — at `bypass_mode: always`**, plus an `Integration` bypass that is
+**not** the App that mints this project's tokens.
+
+Both directions are established, which is the part that matters:
+
+- **It permits the human.** Repository admin bypasses `update` and
+  `non_fast_forward`, so Scotty can fast-forward-promote *and* force-push `stable`
+  backward. This was true from the day the ruleset was created.
+- **It refuses the token.** A minted installation token pushing to
+  `refs/heads/stable` returns `GH013 Cannot update this protected ref`, and `stable`
+  did not move — `2952aa1` before and after. **An installation token is not a
+  repository admin**, and that asymmetry is the firebreak.
+
+**Consequence for `PUP-WO-0103` §1.7: the rollback lever is removed, not hardened.**
+The human's promotion and rollback authority already exists structurally, verified in
+both directions. A workflow lever is a second and weaker mechanism for an authority
+already correctly implemented — and the pass showed it never moves the ref, so the
+next push to `main` silently republishes the tip. The **entire `workflow_dispatch`
+input surface** goes with it — but **only because the publish job gains a
+`pull_request` path first**, and that ordering is load-bearing.
+
+A bespoke verification mode that exists only to test is itself a second path to
+publication, needs its own gate, and that is exactly where `PUP-WO-0103`'s F2 lived.
+But the publish job's gate was `(push && (main || stable)) || workflow_dispatch`,
+with **no `pull_request` at all** — so the `demo/refuse-*` branches could not
+demonstrate anything through a PR, and all three archive refusals had in fact been
+exercised by dispatch. **Deleting the surface without adding the PR path would have
+made the archive refusals undemonstrable** — shipping the three steps between a
+poisoned tree and the child's tablet untested, permanently, which is the very
+failure a check-that-can-go-red exists to prevent.
+
+So the publish job runs on `pull_request` **without** the upload and deploy steps.
+It already needs nothing beyond `contents: read`; `pages: write` and `id-token:
+write` live on the `deploy` job alone, which stays gated to a push. The refusals are
+then demonstrated on **the path that actually publishes** — better evidence than a
+path built for demonstrating — and the dispatch surface is genuinely unnecessary
+rather than merely unwanted. *(CC-A's original ruling asserted the PR path already
+existed; the builder read the trigger and showed it did not, then proposed this.)*
+
+**The finding worth more than the fix: an instrument that cannot return a negative
+is not a test.** Two readings produced the wrong answer here, both incapable of the
+answer that would have corrected them:
+
+1. The read-only `gh` shim returned a ruleset response **with no `bypass_actors`
+   field at all**. A `KeyError` was read as *the list is empty* — **absence of the
+   field reported as absence of a value.** A response that omits a field cannot
+   distinguish "none" from "not shown."
+2. `git push --dry-run` printed `2952aa1..c0f3693 stable -> stable`, taken as proof
+   the token could reach `stable`. **`--dry-run` never sends the update, so the
+   server never evaluates the ruleset.** That line is git's *local prediction of what
+   it would attempt*, not a verdict. A dry run cannot fail the way a real push fails.
+
+This sharpens §8's rule rather than repeating it. It is not enough to ask the
+question — **the instrument must be capable of returning the answer you would need to
+hear.** Both of these could only ever produce the answer they produced. The
+correction came from a real push and a field-presence check, both of which could have
+come back the other way.
+
+**And P1 was never blocked by this.** An earlier draft of this section claimed
+`stable` was frozen against its owner and that P1 could not complete. That was
+false. P1 gate 3 is unsatisfiable today only because `PUP-WO-0103` has not merged and
+Pages has not been flipped — expected sequencing, not a defect.
+
+### 6.3 There is no `github-pages` branch, and there must not be one
+
+*Ruled 2026-09-01. Verified first: `git ls-remote --heads` shows no such ref.*
+
+Under the Actions build type Pages publishes by **artifact upload**, not by pushing a
+branch, so no `github-pages` ref is created and none is needed. Writing protection
+policy for it would protect nothing.
+
+**The policy is the inverse of the obvious one: the appearance of a `github-pages`
+branch is an alarm, not a thing to protect.** Its existence would mean someone
+introduced a branch-push deploy path — **a second route to publication that bypasses
+every gate `PUP-WO-0103` builds**, including the invariant-4 byte check and the
+prefix-bounded worker refusal. The question would be who created it and what
+publishes from it, not what ruleset to apply.
 
 ## 7. Deferred with intent — realtime co-op
 
@@ -315,6 +437,47 @@ at all. If that does not feel good, the networked version will not either.
   mid-work says so explicitly and names its next step. The one stall that was cheap
   to recover was cheap *only* because the builder's final line named where it had
   stopped, which let it be resumed at that point instead of re-deriving it.
+- **Ending a turn is not stalling, and no artifact can tell them apart.** A session
+  that finishes a turn with a status report and no abandoned action is idle *by
+  design*. A stalled one looks identical from outside — and so does one mid-subagent.
+  Three states, one appearance. *(Found 2026-09-01 across a false alarm and the
+  wrong correction to it.)*
+- **A liveness signal sampled only at turn boundaries cannot see work that happens
+  between them.** A watchdog reading a state file that advances only when a turn ends
+  reports a session running a long subagent as indistinguishable from a dead one. A
+  liveness check must take the newest of several independent clocks, at least one of
+  which advances *while* work happens, and require agreement before declaring a stall.
+- **Busy-versus-idle cannot answer "was this already underway?" — only a start time
+  can.** The distinguishing signal is *when the work began*, measured against *when it
+  was asked for*. This is the sharp one, because it is where the same defect recurred
+  **inside its own correction**: a watchdog false-positive was diagnosed as a stall on
+  evidence that could not separate stalled from working; the retraction then asserted
+  the session *"had been running the whole time"* on evidence that could not separate
+  *already running* from *started because it was told to*. Both were wrong the same
+  way. **In both cases a signal that could have settled it was available and unused.**
+  The instrument was not missing — **it was not asked the question.** Generalise from
+  that rather than from "the watchdog was wrong."
+- **Retract the false claim, not everything attached to it.** The same message that
+  wrongly asserted a stall also carried a correct finding — that the frozen artifact
+  omitted the builder's feedback file, putting the build-phase evidence outside what
+  the reviewer would see, which is the `PUP-WO-0101` failure the broadened freeze rule
+  exists to prevent. Acting on it produced a 203-line feedback file committed *as* the
+  freeze, so the pass read a complete artifact. A blanket "disregard my last message"
+  would have thrown that away. **And one data point survives the retraction:** the
+  `PUP-WO-0102` stall at the freeze-then-dispatch boundary was real. One instance is
+  not a pattern and does not justify a process change — but it is not zero, and it
+  stays on the record as an open one-off rather than being retracted alongside the
+  false one.
+- **Commit each coherent unit as it is completed — not before you stop.** *(Ruled
+  2026-09-01 after a builder stalled mid-fix on 172 uncommitted lines that were the
+  only copy.)* The obvious form of this rule is "commit before you stop", and **it
+  cannot be obeyed at the moment it matters**: a stall is precisely *not* choosing to
+  stop, so a rule that fires when you know you are finishing protects only the cases
+  that were already safe. The checkpoint has to be driven by **the work reaching a
+  coherent state**, because no session knows which turn is its last. A wip commit is
+  recoverable from the reflog; an unstaged change is one bad command from gone.
+  Detection already exists — the watchdog classifies *working-with-uncommitted*
+  correctly — but detection is after the fact, and nothing yet acts on it before.
 - **The build loop's notification channel is notify-only** while the ntfy server has
   no ACL (§3). Topics are unguessable rather than authenticated, which is adequate
   for alerts and inadequate for anything that acts. The standing rule holds: an
@@ -367,6 +530,11 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §5: feedback becomes per-work-order (`docs/feedback/<WO-id>.md`) and the freeze covers every file a work order names as a deliverable, not only code. `docs/FEEDBACK.md` migrated to `docs/feedback/PUP-WO-0100.md`; `PUP-WO-0000`'s transcript recovered to `docs/findings/PUP-WO-0000-adversarial.md`. | Two defects from `PUP-WO-0100`, one on each side. **The naming defect was CC-A's:** the two-artifact ruling made transcripts durable but left feedback a single rolling file, so the builder — following it exactly — destroyed the previous work order's record at the tip on the rule's first application. **The freeze defect was CC-B's**, self-reported and led with: it froze the code and rewrote its feedback mid-pass, so the red demonstrations and the determinism justification went unreviewed. Both are cases of a rule being right in intent and underspecified in scope. |
 | 2026-09-01 | **§6.1 added — the offline read is origin-wide too.** §5 gains two rulings: deploy ordering enforced by the workflow rather than by prose (with every published copy checked in the run that publishes it), and the standing question *"what legitimate behaviour does this fix now refuse?"* | `PUP-WO-0101`'s second adversarial pass. §6 documented only the *reap* and was incomplete in a way that **read as complete**, which is the more dangerous kind: it invited the conclusion that prefix-bounding the reap closed the hazard. The read makes the promoted copy serve the test build's bytes offline — invariant 7 falsified by the invariant's own stated test, with every check green. The ordering ruling comes from the same pass: `refs/heads/stable` still carries the origin-wide reaper, so a paragraph was the only thing standing between a flip and a deleted cache. All three points in §6.1 are the builder's, ratified substantially as written. |
 | 2026-09-01 | §6.1 point 2 gains three refinements (a stub that cannot *pose* the question; the dangerous value can be ordinary success, so the assertion passes by not running; proving a detector is load-bearing needs a *sole* detector removed) plus the anchor-break-is-not-flakiness rule. §5 gains map-before-dispatch and search-for-the-belief. §8 gains the heartbeat ambiguity. | All from `PUP-WO-0102`, and all but one are the builder's, including a correction to a rule the builder itself wrote and CC-A had ratified. The two §5 entries are CC-A's own defects: a work order whose §2 forbade what its §3 required, and one wrong belief surviving two corrections because the search matched its wording rather than its meaning. |
+| 2026-09-01 | §8 gains four entries on liveness: ending a turn is not stalling; turn-boundary sampling cannot see between turns; busy/idle cannot answer *was this already underway* — only a start time can; and retract the false claim rather than everything attached to it. **No cadence change was made**; §5's pass-dispatch step stands as ratified. | A watchdog false positive was reported as a second stall, CC-A drafted a process redesign on it before confirming the session had stopped, and then **the correction repeated the error one level up** — asserting the builder had been running all along, on a signal that could not distinguish that from *started because it was told to*. The builder produced the timings that settled it. Recorded because the recurrence inside the correction is the reusable part, not the original alarm. |
+| 2026-09-01 | §8 gains the checkpoint-commit rule, in the form that survives an unexpected stop. | A builder stalled mid-fix holding 172 uncommitted lines that existed nowhere else. The instinct — *commit before you stop* — is right and unenforceable, because the stop was not chosen; stated as *commit each coherent unit as it is completed*, it fires during the work rather than at an end nobody can predict. Recorded with the asymmetry that prompted it: the architect's own tree happened to be clean, which was luck rather than discipline, and is the argument for the rule rather than against needing one. |
+| 2026-09-01 | §6.2 records the `stable` ruleset verified in **both** directions and removes `PUP-WO-0103`'s rollback lever and its whole dispatch surface; §6.3 rules that no `github-pages` branch exists or should, and that its appearance is an alarm. | The ruleset permits repository admin and refuses installation tokens, both now proven — the second by a real push returning `GH013` with `stable` unmoved. The authority the lever was built to provide already existed structurally, so the lever is removed rather than hardened, taking F1 and F2 with it. **Ordering matters: the dispatch surface could only be removed once the publish job gained a `pull_request` path, or the archive refusals would have become undemonstrable.** **The reusable finding is an instrument that cannot return a negative:** a shim response omitting `bypass_actors` was read as an empty list, and a `--dry-run` push was read as a verdict though it never reaches the server. Both could only produce the answer they produced. |
+| 2026-09-01 | §5 gains: red is not a demonstration — assert the commit that ran and the failing step's name, never the conclusion alone. | Four times in `PUP-WO-0103` a red run was read as a successful refusal demonstration, each red for the wrong reason, the last of them a stale run for a superseded commit. The builder named it as one missing habit rather than four mistakes and observed it was mechanisable, which is what makes it a ruling. It completes a pair with §6.1: a green run certifying nothing and a red run proving nothing are the same defect — the verdict read instead of what produced it. |
+| 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance

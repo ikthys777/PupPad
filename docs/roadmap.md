@@ -63,7 +63,16 @@ stares at code:**
 - **Scotty flips Pages from `legacy` to GitHub Actions build type**, and later
   points Pages at the workflow. The Precision's `gh` is read-only and cannot
   (architecture §3). **P1 cannot complete without this.**
-- **Scotty creates the `stable` branch** and performs every promotion to it.
+- **Scotty creates the `stable` branch** and performs every promotion to it —
+  **verified possible**, not assumed: `Protect-stable` bypasses repository admin at
+  `bypass_mode: always` while refusing installation tokens (`GH013`, `stable`
+  unmoved). Rollback is the same authority in reverse, which is why
+  `PUP-WO-0103`'s workflow lever was removed rather than hardened. See
+  `docs/architecture.md` §6.2.
+- **Every human-track item above is an instruction, and gets the same
+  satisfiability test a work order gets** before it is relied on (architecture §5).
+  Test it with an instrument that could return the *other* answer: a dry run and a
+  response missing a field can each only confirm what you already believed.
 - **Scotty subscribes both ntfy topics** and confirms the decision tier is audibly
   distinct from the info tier.
 - **Scotty installs the `/stable/` copy** on Buddy's tablet as the home-screen icon
@@ -369,6 +378,13 @@ Stated because folding it into either was the obvious move and both are wrong.
   *(Added 2026-09-01 — `PUP-WO-0000` §3.1 and `PUP-WO-0100`'s first draft both
   carried the wrong form; CC-B happened to use the right one anyway, which is
   exactly why the rule belongs here rather than in one work order's memory.)*
+- **Every coherent unit of work: commit it.** Not at the end, and not "before you
+  stop" — a stall is not a chosen stop, so that rule never fires when it is needed.
+  A wip commit is recoverable; a dirty tree is not. *(Architecture §8, 2026-09-01.)*
+- **Every prove-it-red demonstration: assert the commit and the step, not the
+  conclusion.** A red run is not evidence until you know it ran on the commit under
+  test and failed at the step whose refusal is being claimed. *(Architecture §5,
+  2026-09-01, after four false demonstrations in one work order.)*
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.

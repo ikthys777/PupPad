@@ -89,6 +89,29 @@ Required:
 published `stable` unchecked. "A red check means nothing publishes" was false in
 both directions, and no check ever read the stable copy at all.
 
+**A cancelled run is neither green nor red, and one already happened.** *(Found by
+CC-A 2026-09-01, after this work order was authored.)* Three merges landed back to
+back and the push run for `922c2dc` — **the merge that put the new service worker on
+Buddy's tablet** — is `cancelled`. That commit has no green verdict of its own on
+`main`.
+
+The cause is not what the config suggests, so do not "fix" the flag.
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}` is `false` for a
+push and it works — it stops a new run cancelling an **in-progress** main run. But
+GitHub permits only **one pending run per concurrency group**, and a newly queued
+run cancels an already-pending one *regardless of that flag*. In-progress
+`8a510f3`, pending `922c2dc`, `30036e9` arrives, the pending run dies.
+
+`PUP-WO-0100`'s F10 fix is therefore **incomplete, not broken**, and the outcome is
+precisely what its own comment was written to prevent — *"two quick pushes must not
+leave the live commit with no verdict at all"* — including its closing line, *"matters
+more once `PUP-WO-0103` gates publication on this."* It does now.
+
+**Required:** publication must have an explicit answer for a run that is neither
+green nor red, and it must **fail closed and say so** rather than treating absence as
+failure by accident. Whether the queueing itself should change is yours to judge and
+justify.
+
 **Fix the general property, not the instance.** Every copy in the deployment is
 checked in the same run that publishes it.
 
@@ -139,12 +162,29 @@ all-or-nothing, so rolling `stable` **back** is blocked by the very copy being
 rolled back, and an urgent root fix is blocked by a stale `/stable/`. Fail-closed is
 correct and it welded the emergency exit shut.
 
-**Ruling: fail-closed stays the default, and a rollback lever must exist and must be
+~~**Ruling: fail-closed stays the default, and a rollback lever must exist and must be
 human-operated** — a manual dispatch taking an explicit, previously-verified
-`stable` ref. `/stable/` exists to protect Buddy; a promoted copy nobody can roll
-back is a safety mechanism you cannot use in the emergency it was built for.
-**Mechanism is yours to design.** It must not become a path by which anything
-reaches `/stable/` without a human naming the commit — see §7.
+`stable` ref.~~
+
+**SUPERSEDED 2026-09-01. THE LEVER IS REMOVED, ALONG WITH THE ENTIRE
+`workflow_dispatch` INPUT SURFACE.** `docs/architecture.md` §6.2 is the authority.
+
+The ruling above was made before the `stable` ruleset was read. `Protect-stable`
+bypasses **repository admin** at `bypass_mode: always` while refusing installation
+tokens — so **the human's promotion and rollback authority already existed
+structurally, verified in both directions.** The lever was a second and weaker
+mechanism for an authority already correctly implemented, and this work order's own
+adversarial pass showed it never moves `refs/heads/stable`, so the next push to
+`main` silently republishes the tip. A rollback the next merge erases is not a
+rollback. F1 and F2 are dissolved by the removal rather than fixed.
+
+**Precondition, and it is load-bearing:** the surface could only be removed once the
+publish job gained a `pull_request` path, because all three archive refusals had been
+demonstrated by dispatch and would otherwise have become undemonstrable.
+
+*(CC-A's defect: the removal was ruled into architecture §6.2 and this section was
+not amended with it — the same shape as `PUP-WO-0102`'s §2/§3.1 miss, a correction
+made where it was noticed and left standing elsewhere.)*
 
 ### 1.7a Carried from `PUP-WO-0102`: make check 7's anchor error self-explaining
 
@@ -207,6 +247,8 @@ as one writer per tree.
 7. **§1.8 demonstrated red:** a worker that hangs in `installing` fails check 4.
 8. **Every new assertion demonstrated RED**, each by its own break, each reverted,
    each with captured output and the failing step name.
+8a. **A cancelled or absent run does not publish**, demonstrated — not reasoned.
+   `922c2dc` is a real instance to reason from.
 9. **Every stub shown able to fail** (architecture §6.1).
 
 **P1 gate items 3 and 4 need a live site and are CC-A's and Scotty's to run after
@@ -228,8 +270,9 @@ workflow, the CI scripts, the harness, and your feedback file.**
 
 - **Get `main`'s content onto `/stable/`.** Highest value by a wide margin.
   Anything found here outranks the rest of the pass.
-- **Attack the rollback lever** (§1.7) as a publication path: can it put unnamed
-  content on the promoted copy?
+- **Confirm the dispatch surface is gone** (§1.7) — no `workflow_dispatch` inputs,
+  no verify/rollback modes, and no path by which anything reaches `/stable/` without
+  a human moving `refs/heads/stable`.
 - **Attack the archive** beyond `.gitattributes` and symlinks.
 - **Find a check that cannot go red**, and a check missing from the publish path.
 - **Ask of every fix: what legitimate behaviour does this now refuse?**
@@ -258,8 +301,9 @@ Recorded so it is auditable; §1.4 exists so it is not load-bearing.
 
 - **Any path by which `main`'s content could reach `/stable/`** — found, suspected,
   or merely not ruled out. Invariant 4, and the reason this phase exists. Not a
-  check to tune. Includes any rollback-lever path that does not require a human to
-  name the commit.
+  check to tune. The rollback lever is removed (§1.7), so this now includes any
+  **reintroduced** dispatch input or any path to `/stable/` that does not require a
+  human to move `refs/heads/stable`.
 - Any need to modify `sw.js`, `index.html`, `manifest.json`, or an icon.
 - **Publication requiring permissions beyond what it strictly needs.** It needs more
   than `contents: read`; state exactly what and why.
