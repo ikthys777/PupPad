@@ -10,8 +10,17 @@ spontaneously and caught the drift I had not declared.
 
 ## Frozen at
 
-    commit  273cb965d32c6deb4785c344fad2a493d3984c6c
     branch  build/wo-0105
+
+**THE COMMIT IS NOT RECORDED HERE, AND THAT IS DELIBERATE.** An earlier version wrote
+its own commit SHA into this line, which is structurally impossible to get right: the
+value is written before the commit exists, so it always names the PREVIOUS one. The
+round-3 pass caught it — one commit stale, every time, by construction. A field that
+can never be correct is worse than no field, because a reader trusts it.
+
+`git log -1 --format=%H -- docs/findings/PUP-WO-0105-r3-freeze.md` gives the commit
+that last touched this manifest. The HASHES are the identity, and they verify
+independently of any SHA written here.
 
 ## SHA-256 at freeze
 
