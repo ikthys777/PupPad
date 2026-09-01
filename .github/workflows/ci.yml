@@ -383,11 +383,23 @@ jobs:
             if git -C "src/$ref" ls-tree -r -z --name-only HEAD | tr '\0' '\n' | grep -qE '(^|/)\.gitattributes$'; then
               echo "::error::$ref carries a .gitattributes. git archive honours it, so the published"
               echo "::error::bytes need not be the committed bytes. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: delete the .gitattributes from that branch and push. If you need"
+              echo "::error::one for local diffs or merges, put it in .git/info/attributes, which is"
+              echo "::error::not committed and which git archive does not read. M3: a refusal with no"
+              echo "::error::remedy is one that gets deleted rather than satisfied."
               exit 1
             fi
             if git -C "src/$ref" ls-tree -r HEAD | awk '$1 == "120000" { found=1 } END { exit !found }'; then
               echo "::error::$ref contains a symlink. The Pages artifact is tarred with --dereference,"
               echo "::error::so its target would be published from the runner filesystem. REFUSING."
+              # NOT `... | head -5`: head closes the pipe, the writer dies of SIGPIPE
+              # with 141, pipefail aborts the step MUTE and the remedy below is never
+              # printed. That is B6, which this same round fixed forty lines away —
+              # and I reintroduced it here while writing the remedy. Capture, then trim.
+              sym=$(git -C "src/$ref" ls-tree -r HEAD | awk '$1 == "120000" { $1=$2=$3=""; sub(/^ +/,""); print }' || true)
+              printf '%s\n' "$sym" | sed -n '1,5p' | sed 's/^/::error::  symlink: /'
+              echo "::error::REMEDY: replace each symlink above with a real committed file"
+              echo "::error::(git rm the link, copy the target in, git add, push)."
               exit 1
             fi
           done
@@ -409,6 +421,10 @@ jobs:
           if git -C src/main ls-tree -r -z --name-only HEAD | tr '\0' '\n' | grep -qE '^stable(/|$)'; then
             echo "::error::main carries a 'stable/' path, which collides with the promoted copy's mount point."
             echo "::error::REFUSING TO PUBLISH — the two copies would merge."
+            hits=$(git -C src/main ls-tree -r -z --name-only HEAD | tr '\0' '\n' | grep -E '^stable(/|$)' || true)
+            printf '%s\n' "$hits" | sed -n '1,5p' | sed 's/^/::error::  /'
+            echo "::error::REMEDY: rename or remove those paths on main. /stable/ is the mount point"
+            echo "::error::for the PROMOTED copy built from refs/heads/stable; main may not occupy it."
             exit 1
           fi
           rm -rf dist && mkdir -p dist
@@ -618,17 +634,51 @@ jobs:
         # cache on every activation, and the root worker's legacy exception would
         # delete pup-pad-v16 — which IS stable's live cache — on every activation of
         # its own. Mutual destruction, forever, not once.
+        #
+        # ROUND 5, M1 — THIS SITE USED TO PRESCRIBE THE ACT INVARIANT 4 PROTECTS.
+        # It was `if node ...; else <NOT PREFIX-BOUNDED> ... fast-forward stable; fi`,
+        # so ANY nonzero exit produced that diagnosis and that instruction: a crash in
+        # the checker, a missing dist/stable, ERR_MODULE_NOT_FOUND, a bad argument.
+        # Fast-forwarding `stable` publishes main's content to /stable/ — the single
+        # act northstar invariant 4 exists to prevent — and the job was telling a
+        # human to do it in answer to an unrelated failure. A refusal that names the
+        # wrong cause is bad; one that prescribes the wrong remedy is worse than
+        # silence, because a human who follows it has done the damage himself.
+        #
+        # check-cache-isolation.mjs now separates the two, and check 7 ASSERTS the
+        # separation rather than trusting it (PART A must exit 1, never 3):
+        #     0  the promoted worker is prefix-bounded
+        #     1  it is NOT — a real verdict, and the fast-forward remedy applies
+        #     3  no verdict was reached; the check broke. Still refuses, and says
+        #        plainly that nothing should be fast-forwarded.
         run: |
-          set -euo pipefail
-          if node .github/ci/check-cache-isolation.mjs dist/stable; then
-            echo "the promoted copy's worker touches only what it owns."
-          else
-            echo "::error::THE /stable/ COPY'S WORKER IS NOT PREFIX-BOUNDED."
-            echo "::error::Publishing it would destroy the root copy's cache on every activation,"
-            echo "::error::and the root worker would destroy this one's. REFUSING TO PUBLISH."
-            echo "::error::If refs/heads/stable is still behind PUP-WO-0102, fast-forward it."
-            exit 1
-          fi
+          set -uo pipefail
+          rc=0
+          node .github/ci/check-cache-isolation.mjs dist/stable || rc=$?
+          case "$rc" in
+            0)
+              echo "the promoted copy's worker touches only what it owns."
+              ;;
+            1)
+              echo "::error::THE /stable/ COPY'S WORKER IS NOT PREFIX-BOUNDED."
+              echo "::error::Publishing it would destroy the root copy's cache on every activation,"
+              echo "::error::and the root worker would destroy this one's. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: this is the one failure the fast-forward answers. If"
+              echo "::error::refs/heads/stable is still behind PUP-WO-0102, fast-forward it."
+              exit 1
+              ;;
+            *)
+              echo "::error::CHECK 5 DID NOT REACH A VERDICT ON THE /stable/ COPY (exit $rc)."
+              echo "::error::Nothing has been established about the promoted worker, in either"
+              echo "::error::direction. REFUSING TO PUBLISH, because an unverified promoted copy"
+              echo "::error::is exactly what this job exists to stop."
+              echo "::error::REMEDY: fix the check — read its output above. Do NOT fast-forward"
+              echo "::error::refs/heads/stable to answer this; that would publish main's content"
+              echo "::error::to /stable/, which is northstar invariant 4, and it would not fix"
+              echo "::error::the check."
+              exit 1
+              ;;
+          esac
 
       - name: "Check EVERY published copy, in the run that publishes it"
         if: '!cancelled() && steps.stable_call_site.conclusion != ''skipped'''

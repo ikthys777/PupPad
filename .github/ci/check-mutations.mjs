@@ -61,26 +61,38 @@ function run(label, { sw = [], harness = [], expect, expectFail }) {
     cpSync(join(REPO, '.github/ci'), join(dir, 'ci'), {
       recursive: true, filter: (s) => !s.includes('node_modules'),
     });
-    const patch = (file, subs) => {
+    /* ROUND 5, M2 — THE BEST DIAGNOSTIC IN THE REPO WAS UNREADABLE WHERE IT FIRES.
+     * This text was thrown as an Error, so GitHub rendered it as a Node stack trace
+     * with no annotation, and `${file}` named the file INSIDE THE TEMPORARY COPY —
+     * a path that no longer exists by the time anyone reads the log, in a directory
+     * the human cannot edit. So the one message in the pipeline that exists to stop
+     * a maintainer deleting the check pointed at a file they could not open. It now
+     * annotates, names the path IN THE REPO, and exits instead of unwinding. */
+    const patch = (file, subs, realPath) => {
       if (!subs.length) return;
       let s = readFileSync(file, 'utf8');
       for (const [a, b] of subs) {
-        if (!s.includes(a)) throw new Error(
-          `${label}: anchor not found in ${file}\n\n` +
-          `  THIS IS MAINTENANCE, NOT FLAKINESS, AND THE FIX IS NOT TO DELETE THIS CHECK.\n` +
-          `  Mutations are anchored to exact source text. This anchor stopped matching\n` +
-          `  BECAUSE the file it points into was edited — red precisely because of the\n` +
-          `  change, which is the opposite of flaky. Update the anchor below to the\n` +
-          `  edited text, keeping the mutation's MEANING the same, and re-run.\n` +
-          `  Deleting the mutation removes the only evidence that the defect it\n` +
-          `  restores would still be caught (architecture §6.1).\n\n` +
-          `  anchor:\n${a}`);
+        if (!s.includes(a)) {
+          console.error(`::error file=${realPath}::${label}: mutation anchor no longer matches ${realPath} — update the anchor, do not delete the mutation.`);
+          console.error(`\n${label}: anchor not found in ${realPath}`);
+          console.error(`  (searched the working copy at ${file}, which is a throwaway clone of ${realPath})\n`);
+          console.error(`  THIS IS MAINTENANCE, NOT FLAKINESS, AND THE FIX IS NOT TO DELETE THIS CHECK.`);
+          console.error(`  Mutations are anchored to exact source text. This anchor stopped matching`);
+          console.error(`  BECAUSE the file it points into was edited — red precisely because of the`);
+          console.error(`  change, which is the opposite of flaky. Update the anchor in`);
+          console.error(`  .github/ci/check-mutations.mjs to the edited text, keeping the mutation's`);
+          console.error(`  MEANING the same, and re-run.`);
+          console.error(`  Deleting the mutation removes the only evidence that the defect it`);
+          console.error(`  restores would still be caught (architecture §6.1).\n`);
+          console.error(`  anchor:\n${a}`);
+          process.exit(1);
+        }
         s = s.replace(a, b);
       }
       writeFileSync(file, s);
     };
-    patch(join(dir, 'sw.js'), sw);
-    patch(join(dir, 'ci/lib/sw-harness.mjs'), harness);
+    patch(join(dir, 'sw.js'), sw, 'sw.js');
+    patch(join(dir, 'ci/lib/sw-harness.mjs'), harness, '.github/ci/lib/sw-harness.mjs');
 
     let out = '', code = 0;
     try {
@@ -371,7 +383,31 @@ console.log('\n' + '='.repeat(78));
 const escaped = results.filter((r) => !r.pass);
 for (const r of results) console.log(`  ${r.pass ? 'ok          ' : 'MISPREDICTED'} ${r.expect.padEnd(6)} ${r.label}`);
 const silent = results.filter((r) => r.got === 'SILENT');
+
+/* ROUND 5, M1 — THE EXIT CODE CONVENTION IS ASSERTED HERE, NOT PROMISED IN A COMMENT.
+ * check-cache-isolation.mjs now distinguishes 1 (the property is VIOLATED — a real
+ * verdict) from 3 (NO VERDICT — the check itself broke), because ci.yml's /stable/
+ * call site reads nothing but the exit code and used to print "NOT PREFIX-BOUNDED"
+ * plus "fast-forward stable" for both. That convention is only worth anything if a
+ * defect actually produces 1, so PART A asserts it: a mutation that CRASHES the check
+ * is not demonstrating that the assertion under test fires — it is demonstrating that
+ * the harness fell over, which is the §6.1 member-3 defect (a failure whose cause is
+ * not the one under test) wearing a green tick.
+ * A baseline of 0 and PART B are excluded: B-mutations blind the harness deliberately
+ * and may legitimately reach no verdict. */
+const partA = results.filter((r) => /^A\d/.test(r.label));
+const crashedA = partA.filter((r) => r.code === 3);
+console.log(`\n  exit codes observed — PART A: ${[...new Set(partA.map((r) => r.code))].sort().join(', ')}` +
+            `  |  PART B: ${[...new Set(results.filter((r) => /^B\d/.test(r.label)).map((r) => r.code))].sort().join(', ')}`);
+if (crashedA.length) {
+  console.error(`::error::CHECK 7 FAILED — ${crashedA.length} PART A mutation(s) CRASHED check 5 (exit 3)`);
+  console.error('  rather than making it reach a verdict. Each proves only that the harness broke:');
+  for (const r of crashedA) console.error(`    ${r.label}`);
+  process.exit(1);
+}
+
 if (escaped.length) {
+  console.error(`::error::CHECK 7 FAILED — ${escaped.length} mutation(s) did not behave as predicted.`);
   console.error(`\nCHECK 7 FAILED — ${escaped.length} mutation(s) did not behave as predicted:`);
   for (const r of escaped) console.error(`  ${r.label}: expected ${r.expect}, got ${r.got}`);
   process.exit(1);

@@ -26,6 +26,39 @@ const SW = join(REPO, 'sw.js');
 const ROOT_SCOPE = 'https://ikthys777.github.io/PupPad/';
 const STABLE_SCOPE = 'https://ikthys777.github.io/PupPad/stable/';
 
+/* ROUND 5, M1/M2 — THE EXIT CODE IS THE ONLY THING THE CALL SITE CAN READ, AND
+ * IT USED TO SAY THE SAME THING FOR TWO OPPOSITE EVENTS.
+ * Every failure here exited 1, and Node also exits 1 on an uncaught exception. So
+ * `if node check-cache-isolation.mjs; else ...` in ci.yml could not tell "the
+ * promoted worker is NOT prefix-bounded" from "this script crashed", and the call
+ * site printed the former for both — then PRESCRIBED FAST-FORWARDING `stable`,
+ * which is the exact act northstar invariant 4 exists to prevent, in answer to an
+ * unrelated crash. A wrong remedy is worse than no remedy.
+ *
+ * The convention, now readable from outside:
+ *     0  the property HOLDS
+ *     1  the property is VIOLATED — a real verdict, assertions failed
+ *     3  NO VERDICT WAS REACHED — the check itself broke. Fail closed, but do not
+ *        diagnose the subject from it.
+ * Nothing in check 7 changes: it judges `code !== 0`, so a crash is still RED, and
+ * PART A additionally requires a matching FAIL line, which a crash cannot produce.
+ *
+ * The ::error:: annotations are the M2 half: 0 of 22 annotations in the workflow
+ * were inside a check script, so the most-likely-to-fire refusal in the whole
+ * pipeline arrived as an unannotated stack trace. They are emitted unconditionally
+ * rather than behind GITHUB_ACTIONS, so that check 7 exercises them too — a line
+ * only CI ever runs is a line nobody has watched work. */
+const noVerdict = (what, err) => {
+  console.error(`::error::CHECK 5 COULD NOT REACH A VERDICT — ${what}`);
+  console.error(`::error::This is NOT a finding about the copy under test. Do NOT fast-forward`);
+  console.error(`::error::any ref in response to it, and do not read it as invariant 4 or 7.`);
+  console.error(`::error::REMEDY: fix the check. The failure follows.`);
+  if (err) console.error(err.stack || String(err));
+  process.exit(3);
+};
+process.on('uncaughtException', (e) => noVerdict('the check threw', e));
+process.on('unhandledRejection', (e) => noVerdict('a promise rejected unhandled', e));
+
 const failures = [];
 const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m, detail) => { failures.push({ m, detail }); console.log(`  FAIL  ${m}`); };
@@ -58,6 +91,7 @@ if (rootPrefix === undefined || rootName === undefined) {
   console.error('  means each deletes the other\'s cache on every activation — northstar invariants');
   console.error('  3 and 7 (architecture §6).');
   console.error('\n  If this is the PROMOTED copy: fast-forward `stable` before publishing it.');
+  console.error('::error::CHECK 5 FAILED — this copy\'s sw.js predates PUP-WO-0102 (no CACHE_PREFIX).');
   process.exit(1);
 }
 
@@ -415,6 +449,7 @@ if (failures.length) {
   console.error(`\nCHECK 5 FAILED — ${failures.length} assertion(s):\n`);
   for (const f of failures) console.error(`  ${f.m}\n    ${f.detail}`);
   console.error('\n  northstar invariant 7: a device serves exactly one build\'s assets, never a mixture.');
+  console.error(`::error::CHECK 5 FAILED — ${failures.length} assertion(s); see the FAIL lines above.`);
   process.exit(1);
 }
 console.log('\nCHECK 5 PASSED — prefixes differ and do not nest; the reap is bounded to its own prefix;');
