@@ -246,12 +246,16 @@ jobs:
             esac
             [ "${#sha}" -eq 40 ] || { echo "::error::a named SHA must be exactly 40 characters; got ${#sha}."; exit 1; }
           done
-          sha='${{ github.event.inputs.stable_sha }}'
-          case "$sha" in
-            *[!0-9a-f]* | "") echo "::error::stable_sha must be a full 40-character lowercase hex commit SHA."; exit 1 ;;
-          esac
-          [ "${#sha}" -eq 40 ] || { echo "::error::stable_sha must be exactly 40 characters; got ${#sha}."; exit 1; }
-          echo "mode=${{ github.event.inputs.mode }} stable_sha=$sha requested by ${{ github.actor }}"
+          # rollback REQUIRES a stable_sha; verify may name either, both, or neither.
+          # The leftover copy of this test rejected an EMPTY stable_sha unconditionally,
+          # so a verify naming only main_sha died here instead of reaching the refusal
+          # it was dispatched to demonstrate — a validation step failing the run it was
+          # meant to let through.
+          if [ '${{ github.event.inputs.mode }}' = rollback ] && [ -z '${{ github.event.inputs.stable_sha }}' ]; then
+            echo "::error::rollback requires stable_sha: a human must name the commit to publish."
+            exit 1
+          fi
+          echo "mode=${{ github.event.inputs.mode }} main_sha=${{ github.event.inputs.main_sha }} stable_sha=${{ github.event.inputs.stable_sha }} by ${{ github.actor }}"
           if [ "${{ github.event.inputs.mode }}" = verify ]; then
             echo "VERIFY: this names a HYPOTHETICAL promoted copy so the rest of the"
             echo "pipeline can be exercised while refs/heads/stable is still behind."
