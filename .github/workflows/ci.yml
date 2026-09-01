@@ -303,7 +303,10 @@ jobs:
         run: |
           set -euo pipefail
           for ref in main stable; do
-            if git -C "src/$ref" ls-tree -r --name-only HEAD | grep -qE '(^|/)\.gitattributes$'; then
+            # -z: ls-tree C-QUOTES any path with a non-ASCII or special character, so
+            # "dokument\303\266/.gitattributes" does not match an anchored grep and the
+            # gate silently allows it. NUL-delimited output is never quoted.
+            if git -C "src/$ref" ls-tree -r -z --name-only HEAD | tr '\0' '\n' | grep -qE '(^|/)\.gitattributes$'; then
               echo "::error::$ref carries a .gitattributes. git archive honours it, so the published"
               echo "::error::bytes need not be the committed bytes. REFUSING TO PUBLISH."
               exit 1
@@ -329,7 +332,7 @@ jobs:
           # promoted copy's mount point too, and `^stable/` missed both. They were
           # fail-closed via the byte assertion — whose message says nothing about a
           # collision and sends the reader to the wrong place.
-          if git -C src/main ls-tree -r --name-only HEAD | grep -qE '^stable(/|$)'; then
+          if git -C src/main ls-tree -r -z --name-only HEAD | tr '\0' '\n' | grep -qE '^stable(/|$)'; then
             echo "::error::main carries a 'stable/' path, which collides with the promoted copy's mount point."
             echo "::error::REFUSING TO PUBLISH — the two copies would merge."
             exit 1
@@ -357,7 +360,18 @@ jobs:
           set -euo pipefail
           fail=0
           check_copy() {
-            local dir="$1" src="$2" label="$3" prune="$4"
+            # The prune arrives as TRAILING ARGS into a bash array, never as a string.
+            # It was `local prune="$4"` expanded unquoted as `find . -type f $prune`,
+            # and because the expansion happens AFTER `cd "$dir"`, the shell glob-
+            # expanded `./stable/*` against dist/ — which by then always contains the
+            # promoted copy. Every run died with
+            #     find: paths must precede expression: './stable/icon-192.png'
+            # before either copy was compared. Not a false refusal of one input: the
+            # publish job could never reach a check again, on any trigger, forever.
+            # Quoting "$prune" does not fix it either — find then sees one argument
+            # and reports `unknown predicate`. It has to be an array.
+            local dir="$1" src="$2" label="$3"; shift 3
+            local -a prune=("$@")
             local expected actual links
             # F10(a) — SYMLINKS FIRST. `find -type f` cannot see them, and
             # upload-pages-artifact tars with --dereference, so a symlink at a path
@@ -378,7 +392,7 @@ jobs:
             # inside the PROMOTED tree from the hash, and the mismatch was reported as
             # `REFUSING TO PUBLISH — northstar invariant 4` — a false alarm naming the
             # gravest invariant in the project.
-            actual=$(cd "$dir" && find . -type f $prune -printf '%P\n' \
+            actual=$(cd "$dir" && find . -type f "${prune[@]}" -printf '%P\n' \
                      | LC_ALL=C sort \
                      | while read -r f; do printf '%s %s\n' "$f" "$(git hash-object "$f")"; done \
                      | sha256sum | cut -d' ' -f1)
@@ -388,8 +402,8 @@ jobs:
               echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
               fail=1; }
           }
-          check_copy dist        src/main   "root (/)"           "-not -path ./stable/*"
-          check_copy dist/stable src/stable "promoted (/stable/)" ""
+          check_copy dist        src/main   "root (/)"            -not -path './stable/*'
+          check_copy dist/stable src/stable "promoted (/stable/)"
           [ "$fail" = 0 ] || exit 1
           echo "OK: both published copies are byte-for-byte their own commit's tree."
 
@@ -447,7 +461,7 @@ jobs:
           fi
 
       - name: "Check EVERY published copy, in the run that publishes it"
-        if: always() && steps.stable_call_site.conclusion != 'skipped'
+        if: '!cancelled() && steps.stable_call_site.conclusion != ''skipped'''
         continue-on-error: true
         id: per_copy
         # PUP-WO-0103 §1.3. The rule an earlier version got wrong: the checks job only
@@ -497,12 +511,21 @@ jobs:
       - name: "GATE — refuse publication if either copy failed"
         # The two steps above are continue-on-error so both copies are always judged.
         # This is where that becomes a refusal again. Fail-closed: an outcome that is
-        # neither success nor failure (cancelled, skipped) refuses too.
-        if: always()
+        # neither success nor failure refuses too. `!cancelled()` rather than
+        # `always()` so a cancelled job does not run eight Node checks to no purpose.
+        if: '!cancelled()'
         run: |
           set -euo pipefail
           s='${{ steps.stable_call_site.outcome }}'; p='${{ steps.per_copy.outcome }}'
           echo "/stable/ call site: $s    per-copy checks: $p"
+          if [ "$s" = skipped ] || [ "$p" = skipped ]; then
+            # Distinguished, because conflating them is the F13 defect again: an
+            # earlier step failing left this printing "a published copy did not pass
+            # its checks" when NO COPY WAS EVER CHECKED, sending the reader to
+            # fast-forward stable over what might be a shell bug three steps up.
+            echo "::error::REFUSING TO PUBLISH — the copies were never checked; an earlier step failed."
+            exit 1
+          fi
           [ "$s" = success ] && [ "$p" = success ] || {
             echo "::error::REFUSING TO PUBLISH — a published copy did not pass its checks."
             exit 1; }
