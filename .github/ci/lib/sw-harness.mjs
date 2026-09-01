@@ -134,7 +134,15 @@ export class FakeCacheStorage {
   _size() { let n = 0; for (const [, st] of this.entries) n += st.size; return n; }
 
   /** Throw QuotaExceededError if admitting one more entry would exceed capacity.
-   *  An overwrite of an existing key costs nothing, matching real storage. */
+   *
+   *  AN OVERWRITE IS TREATED AS FREE HERE AND THAT IS NOT WHAT A BROWSER DOES.
+   *  Measured in Chromium with the quota capped at usage+8KB: writing 2 MB over a
+   *  1-byte entry REJECTS with QuotaExceededError. A real quota charges the new body,
+   *  not the delta. An earlier version of this comment claimed the opposite as if it
+   *  had been measured; it had not. The simplification is kept because this model
+   *  counts ENTRIES rather than bytes and cannot express a size at all — which is
+   *  itself the limit worth knowing: no defect whose trigger is SIZE is visible here.
+   *  PUP-WO-0108 needs a byte-aware model. */
   _admit(store, url, pending = 0) {
     if (this.capacityEntries === null) return;
     if (store.has(url)) return;

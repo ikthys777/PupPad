@@ -241,13 +241,6 @@ async function install(opts) {
   for (const [url, res] of opts.seed || []) await c.put(url, res);
   if (opts.capacity !== undefined) cs.capacityEntries = opts.capacity;
   if (opts.httpFail) cs.httpFailFor = new Set(opts.httpFail);
-  if (opts.httpFailAfterReclaim) {
-    /* arm the HTTP failure only once a delete has happened, i.e. on the retry */
-    const armed = new Set(opts.httpFailAfterReclaim.map((u) => new URL(u, SCOPE).href));
-    const origDelete = cs.entryDeletes;
-    Object.defineProperty(cs, 'httpFailFor', {
-      get() { return origDelete.length ? armed : null; }, configurable: true });
-  }
   let rejected = null;
   try { await w.dispatch('install', {}); } catch (e) { rejected = e; }
   const keys = await (await cs.open(name)).keys();
@@ -262,26 +255,23 @@ function urlsToCacheAbs() {
 const SHELL = ABS('./index.html');
 const RUNTIME = [`${ORIGIN}/cdn/leaflet.js`, `${ORIGIN}/cdn/tile-1.png`, `${ORIGIN}/cdn/tile-2.png`];
 
-/* 5a. squeezed quota: the update must still arrive */
+/* 5a. SQUEEZED QUOTA — A KNOWN OPEN DEFECT (PUP-WO-0108), NOT AN ASSERTION.
+ *
+ * Round 3 asserted here that a squeezed device still completes install. That fix was
+ * REVERTED: its reclaim was total rather than sufficient, and resolving on a second
+ * quota failure let the worker ACTIVATE over an unprovisioned cache, at which point
+ * the activate handler's legacy deletion removed the device's last good shell.
+ * Failing to install is a reach limitation; activating over nothing is a harm.
+ *
+ * So the behaviour is CHARACTERISED, not asserted. An assertion here would either
+ * point at code that no longer exists or encode a defect as correct. */
 {
   const seed = RUNTIME.map((u) => [u, new Response('opaque-ish', { status: 200 })]);
   seed.push([SHELL, new Response('POISONED', { status: 404 })]);
-  /* room for the 5 precache entries only if the 3 runtime entries are reclaimed */
   const r = await install({ seed, capacity: 6 });
-  if (r.rejected) {
-    bad('INSTALL FAILED ON A SQUEEZED DEVICE — the fix cannot reach the tablet it was written for',
-        `${r.rejected.name}: ${r.rejected.message}. The old unguarded worker stays activated.`);
-  } else {
-    const have = r.keys.map((k) => (typeof k === 'string' ? k : k.url));
-    const missing = urlsToCacheAbs().filter((u) => !have.includes(u));
-    if (missing.length) bad('install resolved but the precache did not land', JSON.stringify(missing));
-    else ok('a squeezed device still completes install — reclaim freed room and the precache landed');
-    const survivedRuntime = RUNTIME.filter((u) => have.includes(u));
-    if (survivedRuntime.length === RUNTIME.length)
-      bad('nothing was reclaimed, yet install resolved — the quota was not actually binding',
-          'this assertion tested nothing');
-    else ok(`reclaim freed ${RUNTIME.length - survivedRuntime.length} runtime entr(ies) to make room`);
-  }
+  console.log('  NOT ASSERTED: whether a squeezed device receives the fix at all.');
+  console.log(`                install ${r.rejected ? 'REJECTED (' + r.rejected.name + ')' : 'resolved'}` +
+              ' — the new worker is discarded and the OLD one keeps serving. PUP-WO-0108.');
 }
 
 /* 5b. THE OTHER HALF: a bad deploy must still fail loudly */
@@ -297,67 +287,12 @@ const RUNTIME = [`${ORIGIN}/cdn/leaflet.js`, `${ORIGIN}/cdn/tile-1.png`, `${ORIG
   }
 }
 
-/* 5c. the reclaim must never delete a thing it is provisioning */
-{
-  /* The scenario must FORCE a reclaim, or "it never deleted a precache entry" is
-   * trivially true of a worker that has no reclaim at all — which is how this
-   * printed ok against origin/main, whose install cannot reclaim anything.
-   * Seed 2 of the 5 precache entries plus 4 runtime entries at capacity 6: the
-   * three new precache writes cannot fit until the runtime entries go. */
-  const abs = urlsToCacheAbs();
-  const seed = abs.slice(0, 2).map((u) => [u, new Response('old', { status: 200 })]);
-  const runtime4 = [...RUNTIME, `${ORIGIN}/cdn/tile-3.png`];
-  for (const u of runtime4) seed.push([u, new Response('x', { status: 200 })]);
-  const r = await install({ seed, capacity: 6 });
-  const have = r.keys.map((k) => (typeof k === 'string' ? k : k.url));
-  const lost = urlsToCacheAbs().filter((u) => !have.includes(u));
-  /* POSITIVE CONTROL. "Nothing was wrongly deleted" is also true when the reclaim
-   * never ran — which is exactly what happened on the first run of this assertion,
-   * where install threw before deleting anything and this printed ok. */
-  const reclaimed = runtime4.filter((u) => !have.includes(u));
-  if (r.rejected) {
-    bad('the reclaim never ran, so this assertion tested nothing',
-        `install rejected first: ${r.rejected.name}: ${r.rejected.message}`);
-  } else if (reclaimed.length === 0) {
-    bad('NO RECLAIM OCCURRED, so this assertion tested nothing',
-        'the quota was not binding or the worker cannot reclaim; "never deleted a precache entry" is vacuous here');
-  } else {
-    /* ASSERT THE ACT, NOT THE RESIDUE. `lost` reads the FINAL cache, and addAll
-     * re-provisions every precache entry a moment after the reclaim runs — so a
-     * reclaim that deleted all five still leaves `lost` empty. The property is
-     * "no keep-list entry was ever deleted", and only the delete log can say. */
-    const wronglyDeleted = urlsToCacheAbs().filter((u) => r.entryDeletes.includes(u));
-    if (wronglyDeleted.length) {
-      bad('THE RECLAIM DELETED A PRECACHE ENTRY — it freed room by removing what it must provide',
-          JSON.stringify(wronglyDeleted));
-    } else if (lost.length) {
-      bad('a precache entry is missing after install', JSON.stringify(lost));
-    } else ok(`the reclaim ran (freed ${reclaimed.length}) and deleted no urlsToCache entry`);
-    /* F4: this was OUTSIDE the guard above, so it printed ok in the very runs where
-     * the branch above said "this assertion tested nothing". */
-    if (r.deleted.length) bad('the reclaim deleted a whole CACHE, not entries — the origin-wide reap returning',
-                              JSON.stringify(r.deleted));
-    else ok('the reclaim stays inside CACHE_NAME — no cache was deleted');
-  }
-}
-
-/* 5d. quota FIRST, then a bad deploy on the retry — sw.js's second `throw err2`.
- * Nothing exercised it: 5b and demo scenario B both fail on the FIRST addAll, so
- * deleting that line was green everywhere. It is reachable in the field as a network
- * drop mid-install on a squeezed device, and it is the same load-bearing rule as the
- * first rethrow: quota survivable, a fetch failure never. */
-{
-  const seed = RUNTIME.map((u) => [u, new Response('x', { status: 200 })]);
-  const r = await install({ seed, capacity: 6, httpFailAfterReclaim: ['./icon-512.png'] });
-  if (!r.rejected) {
-    bad('A BAD DEPLOY ON THE RETRY INSTALLED SILENTLY — the second rethrow is missing',
-        'a 404 that appears after the reclaim would activate over an unprovisioned cache');
-  } else if (r.rejected.name === 'TypeError') {
-    ok('a fetch failure on the RETRY still fails install loudly');
-  } else {
-    bad('the retry failed, but not as a fetch failure', `got ${r.rejected.name}: ${r.rejected.message}`);
-  }
-}
+/* 5c and 5d ARE GONE WITH THE CODE THEY TESTED. They asserted that the reclaim never
+ * deleted a urlsToCache entry, and that a fetch failure on the RETRY still failed
+ * install loudly. After the revert there is no reclaim and no retry, so both would
+ * pass BY NOT RUNNING — the exact shape this file exists to prevent. They travel to
+ * PUP-WO-0108 with the code, along with the finding that the keep-list resolved
+ * against registration.scope while addAll resolves against the script URL. */
 
 console.log('  NOT ASSERTED: whether an opaque 200 and an opaque 404 can be told apart.');
 console.log('                They cannot — both are status 0, type opaque, body unreadable —');

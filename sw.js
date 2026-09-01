@@ -322,92 +322,42 @@ var urlsToCache = [
   './icon-512.png'
 ];
 
-/* Is this rejection a QUOTA failure, as opposed to a fetch or HTTP failure?
- *
- * THE DISCRIMINATION IS THE WHOLE POINT AND IT WAS MEASURED, NOT ASSUMED. Both
- * shapes were driven through `cache.addAll` in real Chromium against this worker,
- * with the origin quota capped over CDP:
- *
- *   a 404 on a urlsToCache entry -> TypeError            "…'addAll'…: Request failed"
- *   quota exhausted              -> QuotaExceededError   "Quota exceeded."
- *                                   (a DOMException; isTypeError false)
- *
- * They are cleanly separable through addAll, so the per-URL fetch+put fallback the
- * work order allows for is not needed. `name` is the predicate rather than
- * `instanceof DOMException`, because name survives a cross-realm rejection and the
- * legacy numeric `code` for this error is deprecated. */
-function isQuotaError(err) {
-  return !!err && err.name === 'QuotaExceededError';
-}
-
-/* Every urlsToCache entry, absolute, so the reclaim below can refuse to touch one.
- * cache.keys() yields absolute Request URLs; urlsToCache is relative to the scope. */
-function precacheUrls() {
-  var out = [];
-  for (var i = 0; i < urlsToCache.length; i++) {
-    try { out.push(new URL(urlsToCache[i], SCOPE_URL).href); } catch (e) { /* skip */ }
-  }
-  return out;
-}
-
-/* RECLAIM — delete this worker's own RUNTIME entries to make room for the precache.
- *
- * Bounded three ways, and every bound is load-bearing (architecture §6,
- * PUP-WO-0102 §1.3): an unbounded reclaim is how the origin-wide reap comes back
- * wearing cleanup's clothes.
- *   1. ONE cache, by name. Never caches.keys(); nothing outside CACHE_NAME is even
- *      enumerable from here.
- *   2. NEVER a urlsToCache entry. Those are the thing being provisioned — deleting
- *      one to make room for itself is the trade this function exists to avoid.
- *   3. The caller retries exactly once. */
-function reclaimRuntimeEntries(cache) {
-  var keep = precacheUrls();
-  return cache.keys().then(function(requests) {
-    var doomed = requests.filter(function(req) { return keep.indexOf(req.url) === -1; });
-    return Promise.all(doomed.map(function(req) { return cache.delete(req); }))
-      .then(function() { return doomed.length; });
-  });
-}
-
 self.addEventListener('install', function(event) {
   if (CACHE_PREFIX === null) return;      /* unusable scope: cache nothing */
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
-      return cache.addAll(urlsToCache).catch(function(err) {
-        /* A FETCH OR HTTP FAILURE MUST STILL FAIL LOUDLY, and this is the half a
-         * bare .catch(){} would destroy. A 404 on a precached URL, or a network
-         * drop mid-install, means a bad deploy — activating over a cache that was
-         * never provisioned would half-provision the device SILENTLY, which is the
-         * failure this file's own cross-origin note argues vendoring would prevent.
-         * Rethrow: install fails, the new worker is discarded, the OLD one keeps
-         * serving, and someone finds out. */
-        if (!isQuotaError(err)) throw err;
-
-        /* QUOTA IS DIFFERENT, AND IT IS WHY THIS BLOCK EXISTS. Without it the
-         * install fails, the worker goes `redundant`, and THE OLD UNGUARDED WORKER
-         * STAYS ACTIVATED — so the fix cannot reach the devices that most need it,
-         * because a poisoned device is a USED device and use is what fills the
-         * quota (~7 MB per opaque entry; see the cross-origin note). Measured A/B
-         * varying only remaining quota: with headroom `statechange -> installed`
-         * and the shell returns to 200; squeezed, `-> redundant` and it stays 404. */
-        return reclaimRuntimeEntries(cache).then(function() {
-          return cache.addAll(urlsToCache).catch(function(err2) {
-            if (!isQuotaError(err2)) throw err2;
-            /* Still no room after reclaiming everything reclaimable. Give up on the
-             * PRECACHE, not on the UPDATE: resolve so the guarded worker activates.
-             * addAll is atomic, so the cache is exactly as it was — no half-write.
-             * The shell may still be poisoned and will be repaired opportunistically
-             * on the next healthy online fetch, but the GUARD is now installed, so
-             * nothing new can poison it. That is strictly better than leaving the
-             * old unguarded worker in place, which is the only other option here.
-             * This swallow is reachable ONLY for quota and ONLY after a reclaim. */
-          });
-        });
-      });
+      return cache.addAll(urlsToCache);
     })
   );
   self.skipWaiting();
 });
+
+/* THE FIX CANNOT REACH A DEVICE WITH NO QUOTA HEADROOM, AND THAT IS A KNOWN OPEN
+ * DEFECT RATHER THAN AN OVERSIGHT — PUP-WO-0108.
+ *
+ * `addAll` rejects with QuotaExceededError, `waitUntil` rejects, install fails, the
+ * new worker goes `redundant`, and the OLD worker keeps serving. So the guard above
+ * does not arrive on a squeezed device — and the devices most likely to be squeezed
+ * are the most-used, because Chrome charges ~7 MB of quota per OPAQUE cross-origin
+ * entry regardless of body size.
+ *
+ * PUP-WO-0105 ROUND 3 TRIED TO FIX THIS HERE AND THE FIX WAS REVERTED. It discriminated
+ * quota from a fetch failure, reclaimed this worker's runtime entries, retried once,
+ * and on a second quota failure resolved anyway so the worker would activate. Measured
+ * consequences, all in a real browser:
+ *   - the reclaim was TOTAL, not sufficient: ~18.8 MB deleted to write a ~200 KB
+ *     precache, taking leaflet and supabase with it — the same loss that got the v18
+ *     CACHE_VERSION bump reversed earlier the same day;
+ *   - and resolving on the second failure let the worker ACTIVATE, at which point the
+ *     activate handler's legacy deletion removed the only cache still holding a good
+ *     shell. Measured: shell NULL, versus a working app under both predecessors.
+ *
+ * FAILING TO INSTALL IS A REACH LIMITATION. ACTIVATING OVER AN UNPROVISIONED CACHE IS
+ * A HARM. Between the two, the reach limitation is correct here, and it is why this
+ * handler is deliberately left as it was.
+ *
+ * `.github/ci/demo-quota-install.mjs` reproduces the squeeze; it characterises this
+ * defect rather than demonstrating a fix. */
 
 self.addEventListener('activate', function(event) {
   /* A worker registered at a NON-CANONICAL scope — e.g. the "//stable/" a single

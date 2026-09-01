@@ -1,6 +1,20 @@
 #!/usr/bin/env node
 /**
- * DEMONSTRATION — can the fix ARRIVE? PUP-WO-0105 §0a, acceptance 7.
+ * CHARACTERISATION — can the fix ARRIVE? It cannot. PUP-WO-0108.
+ *
+ * THIS NO LONGER DEMONSTRATES A FIX; IT REPRODUCES AN OPEN DEFECT, which is why it is
+ * kept. Round 3 built an install-path fix and it was REVERTED: the reclaim was total
+ * rather than sufficient (~18.8 MB deleted to write a ~200 KB precache, taking leaflet
+ * and supabase with it), and resolving on a second quota failure let the worker
+ * ACTIVATE over an unprovisioned cache — at which point the activate handler's legacy
+ * deletion removed the device's last good shell. Measured `shell NULL`, against a
+ * working app under both predecessors.
+ *
+ * Scenario A therefore CHARACTERISES and does not assert: it prints what a squeezed
+ * device actually does, so PUP-WO-0108 inherits a working reproduction instead of
+ * rebuilding one. What it DOES assert is the harm boundary — the device must never be
+ * left with an activated worker and no app shell. Failing to install is a reach
+ * limitation and is tolerated; activating over nothing is a harm and is not.
  *
  * check-error-caching.mjs asserts this class in a Node sandbox, which is fast and
  * mutation-testable. It cannot see the one thing that actually decides whether a
@@ -162,22 +176,27 @@ console.log(`  [A] shell     ${JSON.stringify(a.shell)}`);
  * every assertion below is then satisfied by nothing having happened — which is what
  * the first version of this demo did: three `ok`s over `lifecycle []`. */
 if (a.life.seen.length === 0) {
-  say(false, 'A: NO UPDATE OCCURRED — this scenario tested nothing',
-      'the browser saw no new worker, so "did not go redundant" is vacuously true');
+  say(false, 'A: NO UPDATE OCCURRED — this scenario characterised nothing',
+      'the browser saw no new worker, so nothing below describes a squeezed install');
 } else {
-  say(!a.life.seen.some((x) => x.endsWith(':redundant')),
-      'A: a squeezed device installs the update — the worker did not go redundant',
-      'redundant means the update was discarded and the OLD unguarded worker still serves');
-  /* `reg.active.state === 'activated'` is TRUE OF THE OLD WORKER TOO — it printed ok
-   * in the red run, where the update had been discarded and the old worker was still
-   * serving. The property needed is that THE NEW worker activated, which is the
-   * statechange the update itself emitted. Asserting the state of "whatever is
-   * active" cannot distinguish the fix arriving from the fix being discarded. */
-  say(a.life.seen.includes('statechange:activated'),
-      'A: the NEW worker reached activated (not merely: some worker is active)',
-      `lifecycle was ${JSON.stringify(a.life.seen)}`);
-  say(a.shell.status === 200 && a.shell.isApp === true,
-      'A: the poisoned shell was repaired on a squeezed device', `got ${JSON.stringify(a.shell)}`);
+  const arrived = a.life.seen.includes('statechange:activated');
+  console.log(`  CHARACTERISED: on a squeezed device the update ${arrived ? 'ARRIVES' : 'DOES NOT ARRIVE'}` +
+              ` — lifecycle ${JSON.stringify(a.life.seen)}`);
+  console.log(`  CHARACTERISED: the shell afterwards is ${JSON.stringify(a.shell)}.` +
+              ' PUP-WO-0108 is where this becomes an assertion.');
+  /* THE HARM BOUNDARY, AND THIS IS ASSERTED. A worker that activates while the device
+   * holds no app shell is worse than one that never installs: the reach limitation
+   * leaves the child a working offline app; this leaves nothing. It is the state the
+   * reverted round-3 fix produced, so it is the one thing that must stay impossible. */
+  const activatedWithNoShell = arrived && !(a.shell.status === 200 && a.shell.isApp === true);
+  /* AND WHAT THIS CANNOT PRODUCE, so the ok is not read as coverage: the measured
+   * harm needed a LEGACY cache (pup-pad-v16) holding the only good shell, which
+   * activate then deleted. This scenario's predecessor shares CACHE_NAME, so it cannot
+   * construct that state — the assertion is a guard against a regression it has not
+   * itself exercised. PUP-WO-0108 owns building the fixture that can. */
+  say(!activatedWithNoShell,
+      'A: the device is never left with an activated worker and no app shell',
+      `lifecycle ${JSON.stringify(a.life.seen)} but shell ${JSON.stringify(a.shell)}`);
 }
 
 /* ---- B. bad deploy: install must still fail loudly ---- */
