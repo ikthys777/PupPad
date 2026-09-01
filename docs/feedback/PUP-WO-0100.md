@@ -327,3 +327,33 @@ declared, but this one leaves `sw.js` — the file northstar invariant 3 depends
 because the workflow is green and the gap is narrow. That is exactly the shape of
 "looks like coverage" this work order exists to prevent, and it is worth a ruling
 rather than an omission, ideally while `PUP-WO-0101` has `sw.js` open anyway.
+
+---
+
+## Correction appended 2026-09-01 by CC-A — F16 overstated what check 4 verifies
+
+Appended rather than edited into the text above, so the record shows the claim was
+made and corrected rather than silently reading as if it had always been right.
+
+**F16 states that "the page is now verified to end up *controlled* by the worker."
+It is not verified. It is measured and printed, never used in a conditional.**
+
+Confirmed at source: `.github/ci/check-load.mjs:265` fails only when the worker
+state is none of `active`, `registered`, `installing`, or `waiting` — which is
+effectively never. **A worker stuck in `installing`, with offline capability dead,
+passes check 4 green.** `:234` computes the state and the run reports it, but no
+branch consumes it.
+
+This matters beyond a wording slip, because F16 was the finding that argued the
+residual `sw.js` gap was *narrow*. It is wider than F16 claimed: not just "a runtime
+error inside a handler that does not prevent activation," but also a worker that
+never finishes activating at all.
+
+- **The code fix** — check 4 asserting the state it measures — is ruled into
+  `PUP-WO-0102`/`PUP-WO-0103` by where the check lives, not deferred.
+- **Found by** `PUP-WO-0101`'s builder while extending check 4, and reported
+  upward against its own merged deliverable rather than quietly patched.
+- **Standing point:** a value that is measured and printed reads, in a green run,
+  exactly like a value that is asserted. `PUP-WO-0100` F2's own retraction —
+  "the comment named the gap and the code did nothing" — is the same failure, one
+  layer up, and it recurred inside the fix for it.
