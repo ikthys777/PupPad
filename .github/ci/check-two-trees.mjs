@@ -36,6 +36,21 @@ import { chromium } from 'playwright';
 
 const ROOT_TREE = resolve(process.argv[2] || 'dist');
 const STABLE_TREE = resolve(process.argv[3] || 'dist/stable');
+/* F0 — THE REAL DEPLOYED PATHS, not '/' and '/stable/'.
+ *
+ * This harness served the two copies at '/' and '/stable/', deriving prefixes
+ * `puppad|%2F|` and `puppad|%2Fstable%2F|`. The site serves /PupPad/ and
+ * /PupPad/stable/, whose prefixes are `puppad|%2FPupPad%2F|` and
+ * `puppad|%2FPupPad%2Fstable%2F|`. So this check — and check 6 — exercised paths that
+ * DO NOT EXIST, while check 5 used the real ones. A reap keyed to the real path
+ * literal was invisible to all three.
+ *
+ * And the real shape is the one sw.js singles out as load-bearing: "/PupPad/" IS a
+ * prefix of "/PupPad/stable/", which is the whole reason the trailing-| delimiter
+ * exists. Testing at '/' and '/stable/' skipped the nesting case entirely. */
+const BASE = '/PupPad/';
+const STABLE_BASE = BASE + 'stable/';
+
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.json':'application/json',
                '.png':'image/png', '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json' };
 
@@ -57,6 +72,19 @@ try {
   const rootSw = await readFile(join(ROOT, 'sw.js'), 'utf8');
   const stableSw = await readFile(join(STABLE, 'sw.js'), 'utf8');
 
+  /* F4 — BOTH COPIES ARE MARKED, ALWAYS. The cross-serving assertions used to be
+   * gated on `manufactured`, which was true only when the two workers were
+   * BYTE-IDENTICAL — so in the deployment's normal state, which this file's own
+   * docblock calls "the state that matters", the titles were computed, printed and
+   * dropped. A value measured and printed reads, in a green run, exactly like a value
+   * asserted. Marking both copies in the scratch trees makes the test unconditional. */
+  const html = async (dir, mark) => {
+    const f = join(dir, 'index.html');
+    await writeFile(f, (await readFile(f, 'utf8')).replace('</title>', ` ${mark}</title>`));
+  };
+  await html(ROOT, 'ROOTBUILD');
+  await html(STABLE, 'STABLEBUILD');
+
   let manufactured = false;
   if (rootSw === stableSw) {
     /* Advance the root copy the way a merge would: a cached asset changes, and
@@ -68,8 +96,6 @@ try {
     } else {
       await writeFile(join(ROOT, 'sw.js'),
         rootSw.replace(m[0], `var CACHE_VERSION = '${m[1]}-rootlag';`));
-      const html = await readFile(join(ROOT, 'index.html'), 'utf8');
-      await writeFile(join(ROOT, 'index.html'), html.replace('</title>', ' ROOTBUILD</title>'));
       manufactured = true;
       console.log(`  promotion lag manufactured: root CACHE_VERSION ${m[1]} -> ${m[1]}-rootlag`);
     }
@@ -81,14 +107,14 @@ try {
   const server = createServer(async (req, res) => {
     try {
       let p = decodeURIComponent(req.url.split('?')[0]);
-      const underStable = p.startsWith('/stable/');
+      if (p === BASE + '__seed.html') { res.writeHead(200, {'Content-Type':'text/html'}).end('<!doctype html><title>seed</title>'); return; }
+      const underStable = p.startsWith(STABLE_BASE);
       const base = underStable ? STABLE : ROOT;
-      if (underStable) p = p.slice('/stable'.length);
-      if (p === '/__seed.html') { res.writeHead(200, {'Content-Type':'text/html'}).end('<!doctype html><title>seed</title>'); return; }
+      p = underStable ? '/' + p.slice(STABLE_BASE.length) : '/' + p.slice(BASE.length);
       if (p.endsWith('/')) p += 'index.html';
       const body = await readFile(join(base, p));
       res.writeHead(200, { 'Content-Type': MIME[extname(p)] || 'application/octet-stream',
-                           'Service-Worker-Allowed': '/' }).end(body);
+                           'Service-Worker-Allowed': BASE }).end(body);
     } catch { res.writeHead(404).end('not found'); }
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -118,17 +144,46 @@ try {
   };
 
   /* ---- bring both published copies up, in the order a device meets them ---- */
-  const rootPage = await context.newPage();
-  await register(rootPage, `${ORIGIN}/index.html`);
+  /* F0 — THE ORDER IS THE TEST.
+   *
+   * This used to register root first, then stable, then sample the baseline. So the
+   * root worker's only `activate` ran when /stable/'s cache DID NOT YET EXIST, and it
+   * never activated again. A root worker that deletes the promoted copy's cache on
+   * every activation passed — here and in check 6 — while check 5 caught it. The
+   * harness built to backstop check 6 had check 6's defect.
+   *
+   * So: the PROMOTED copy comes up first and its cache exists. Only then does the root
+   * worker register and activate, with the thing it might eat already on the origin.
+   * The baseline is sampled BEFORE that activation, so a cache destroyed during it is
+   * inside the observation window rather than never having been seen. */
   const stablePage = await context.newPage();
-  await register(stablePage, `${ORIGIN}/stable/index.html`);
+  await register(stablePage, `${ORIGIN}${STABLE_BASE}index.html`);
+  const baseline = await keys(stablePage);
+  console.log('  promoted copy up first; caches before the root worker exists:', baseline.join(', '));
+  if (baseline.length) ok('the promoted copy created its cache before the root worker registered');
+  else bad('the promoted copy created no cache', 'nothing for the root worker to threaten — this check would prove nothing');
 
-  const names = await keys(rootPage);
+  const rootPage = await context.newPage();
+  await register(rootPage, `${ORIGIN}${BASE}index.html`);
+
+  /* THE ASSERTION F0 EXISTS FOR: everything the promoted copy had must still be here
+   * after the root worker has installed, activated and claimed. */
+  const afterRoot = await keys(rootPage);
+  for (const n of baseline) {
+    if (afterRoot.includes(n)) ok(`the promoted copy's cache survived the root worker activating: ${n}`);
+    else bad('THE ROOT WORKER DESTROYED THE PROMOTED COPY\'S CACHE', `${n} is gone — invariant 3 on the copy the child uses, and invariant 7 for the pair`);
+  }
+
+  const names = afterRoot;
   console.log('  caches after both published workers installed:', names.join(', '));
   if (names.length >= 2) ok(`both published workers created caches (${names.length} on the origin)`);
   else bad('the two published copies did not produce two caches', names.join(', ') || '(none)');
-  const distinct = new Set(names).size === names.length;
-  if (distinct) ok('the two published copies\' cache names are distinct');
+  /* `>= 2` matters: Set(one).size === 1 === length, so this printed `ok ... distinct`
+   * on the very input where one build's cache had been destroyed. */
+  if (names.length >= 2 && new Set(names).size === names.length)
+    ok('the two published copies\' cache names are distinct');
+  else if (names.length < 2)
+    bad('fewer than two caches exist, so distinctness is vacuous', names.join(', ') || '(none)');
   else bad('the two published copies COLLIDE on a cache name', names.join(', '));
 
   /* ---- invariant 7, in its own stated words, with two genuinely different builds ----
@@ -142,9 +197,9 @@ try {
   const offlineStable = await context.newPage();
   let rootTitle = null, stableTitle = null, err = null;
   try {
-    await offlineRoot.goto(`${ORIGIN}/index.html`, { waitUntil: 'load', timeout: 15000 });
+    await offlineRoot.goto(`${ORIGIN}${BASE}index.html`, { waitUntil: 'load', timeout: 15000 });
     rootTitle = await offlineRoot.title();
-    await offlineStable.goto(`${ORIGIN}/stable/index.html`, { waitUntil: 'load', timeout: 15000 });
+    await offlineStable.goto(`${ORIGIN}${STABLE_BASE}index.html`, { waitUntil: 'load', timeout: 15000 });
     stableTitle = await offlineStable.title();
   } catch (e) { err = e.message.split('\n')[0]; }
 
@@ -152,14 +207,12 @@ try {
   if (rootTitle && stableTitle) ok('both copies load offline, each from its own worker');
   else bad('a copy failed to load offline — invariant 3', err || `root=${rootTitle} stable=${stableTitle}`);
 
-  if (manufactured) {
-    /* The root tree was advanced and the promoted one was not, so the marker is
-     * present on exactly one side. If either copy shows the other's, a device is
-     * serving a mixture of two builds — invariant 7 falsified. */
+  {
+    /* Each copy carries its own marker, so a mixture is always detectable. */
     if (rootTitle && !rootTitle.includes('ROOTBUILD'))
       bad('the ROOT copy served the PROMOTED build\'s bytes offline — invariant 7', `title=${JSON.stringify(rootTitle)}`);
     else if (rootTitle) ok('the root copy served its own build offline');
-    if (stableTitle && stableTitle.includes('ROOTBUILD'))
+    if (stableTitle && !stableTitle.includes('STABLEBUILD'))
       bad('THE PROMOTED COPY SERVED THE ROOT BUILD\'S BYTES OFFLINE — invariant 7 by its own stated test',
           `/stable/ returned ${JSON.stringify(stableTitle)}, which is the newer build`);
     else if (stableTitle) ok('the promoted copy served its own build offline, not the root\'s');

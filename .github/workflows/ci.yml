@@ -245,15 +245,30 @@ jobs:
         # names, no tags, no "latest", no abbreviations that could resolve
         # ambiguously, and no default. The SHA is verified to exist and to be an
         # ancestor of a real ref further down, before anything is built from it.
-        if: github.event_name == 'workflow_dispatch' && (github.event.inputs.stable_sha != '' || github.event.inputs.main_sha != '')
+        # RUNS ON EVERY DISPATCH, not only when a SHA was named (F7). The guard below
+        # that forbids `rollback` with no stable_sha was unreachable: the step's own
+        # `if:` required a named SHA to run at all, so the one case it existed to
+        # reject could never enter it. A guard whose precondition excludes its subject
+        # is a check that cannot go red.
+        if: github.event_name == 'workflow_dispatch'
+        # F6 — INPUTS ARRIVE AS ENV, NEVER AS AN EXPRESSION INSIDE run:.
+        # An expression is pasted into the script AS TEXT before bash parses it, so a
+        # single quote in a form field ends the quoting and the rest executes. It did:
+        # `x'; touch /tmp/PWNED; :'` ran on the runner. And the 40-hex validation that
+        # makes the input safe sits BELOW the line that interpolated it — a check that
+        # cannot protect the step which has already executed its input.
+        env:
+          MODE:       ${{ github.event.inputs.mode }}
+          MAIN_SHA:   ${{ github.event.inputs.main_sha }}
+          STABLE_SHA: ${{ github.event.inputs.stable_sha }}
         run: |
           set -euo pipefail
-          if [ -n '${{ github.event.inputs.main_sha }}' ] && [ '${{ github.event.inputs.mode }}' != verify ]; then
+          if [ -n "$MAIN_SHA" ] && [ "$MODE" != verify ]; then
             echo "::error::main_sha is accepted in verify mode ONLY. It substitutes the ROOT copy so a"
             echo "::error::refusal can be demonstrated against a real commit, and verify cannot deploy."
             exit 1
           fi
-          for sha in '${{ github.event.inputs.main_sha }}' '${{ github.event.inputs.stable_sha }}'; do
+          for sha in "$MAIN_SHA" "$STABLE_SHA"; do
             [ -n "$sha" ] || continue
             case "$sha" in
               *[!0-9a-f]*) echo "::error::a named SHA must be 40 lowercase hex characters."; exit 1 ;;
@@ -265,12 +280,12 @@ jobs:
           # so a verify naming only main_sha died here instead of reaching the refusal
           # it was dispatched to demonstrate — a validation step failing the run it was
           # meant to let through.
-          if [ '${{ github.event.inputs.mode }}' = rollback ] && [ -z '${{ github.event.inputs.stable_sha }}' ]; then
+          if [ "$MODE" = rollback ] && [ -z "$STABLE_SHA" ]; then
             echo "::error::rollback requires stable_sha: a human must name the commit to publish."
             exit 1
           fi
-          echo "mode=${{ github.event.inputs.mode }} main_sha=${{ github.event.inputs.main_sha }} stable_sha=${{ github.event.inputs.stable_sha }} by ${{ github.actor }}"
-          if [ "${{ github.event.inputs.mode }}" = verify ]; then
+          echo "mode=$MODE main_sha=$MAIN_SHA stable_sha=$STABLE_SHA by ${{ github.actor }}"
+          if [ "$MODE" = verify ]; then
             echo "VERIFY: this names a HYPOTHETICAL promoted copy so the rest of the"
             echo "pipeline can be exercised while refs/heads/stable is still behind."
             echo "The deploy job cannot run in verify mode, so nothing reaches the site."
@@ -316,14 +331,16 @@ jobs:
         # `rev-parse HEAD` of the checkout under test. Both are gone. `git ls-remote`
         # asks the SERVER, and there is no fallback — if the remote tip cannot be
         # established, publication fails.
+        env:
+          MODE:       ${{ github.event.inputs.mode }}
+          MAIN_SHA:   ${{ github.event.inputs.main_sha }}
+          STABLE_SHA: ${{ github.event.inputs.stable_sha }}
         run: |
           set -euo pipefail
           remote="https://github.com/${GITHUB_REPOSITORY}.git"
           named_sha=''; named_main=''; mode=''
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            named_sha='${{ github.event.inputs.stable_sha }}'
-            named_main='${{ github.event.inputs.main_sha }}'
-            mode='${{ github.event.inputs.mode }}'
+            named_sha="$STABLE_SHA"; named_main="$MAIN_SHA"; mode="$MODE"
           fi
           for ref in main stable; do
             head_sha=$(git -C "src/$ref" rev-parse HEAD)
@@ -346,33 +363,26 @@ jobs:
               continue
             fi
 
-            if [ "$ref" = stable ] && [ -n "$named_sha" ] && [ "$mode" = verify ]; then
-              # VERIFY against an explicitly named promoted commit. The equality test
-              # below is deliberately NOT applied: the point is to stand in a commit
-              # that is not the current tip, so the rest of this pipeline can be
-              # exercised at all while refs/heads/stable is still behind PUP-WO-0102.
-              # Otherwise every step after the /stable/ check is unreachable until a
-              # human fast-forwards stable, which happens only AFTER this merges.
-              # Safe because verify cannot deploy: the deploy job requires
-              # mode == rollback. This names a copy to CHECK, never one to publish,
-              # and it is checked exactly as a real one would be.
-              [ "$head_sha" = "$named_sha" ] || {
-                echo "::error::src/stable is ${head_sha}, not the requested ${named_sha}."; exit 1; }
-              echo "stable: VERIFY against hypothetical promoted copy ${named_sha:0:12} (real tip ${remote_sha:0:12}); this run cannot deploy"
-              continue
-            fi
-
-            if [ "$ref" = stable ] && [ -n "$named_sha" ] && [ "$mode" = rollback ]; then
-              # A rollback deliberately publishes something OTHER than the current
-              # tip, so equality is the wrong test. Two things are required instead,
-              # and together they are strictly narrower than "any commit in the repo":
-              #   1. the checkout is exactly the SHA the human typed;
-              #   2. that SHA is an ANCESTOR of refs/heads/stable as the SERVER
-              #      reports it — so the lever can only move the promoted copy
-              #      BACKWARD along its own history. It cannot be used to promote
-              #      main, a PR head, or any commit a human has not already promoted.
-              # That is what keeps §7's "no path by which main's content reaches
-              # /stable/ without a human naming the commit" true of the lever itself.
+            if [ "$ref" = stable ] && [ -n "$named_sha" ]; then
+              # F2 — THE ANCESTRY GATE APPLIES TO ANY NAMED PROMOTED COMMIT, IN EVERY
+              # MODE. It used to apply only to `rollback`; `verify` took a separate
+              # branch that skipped the equality test, justified as "safe because
+              # verify cannot deploy" — a claim about a DIFFERENT JOB, asserted here
+              # and enforced here by nothing.
+              #
+              # What that allowed: verify with stable_sha = refs/heads/main's tip built
+              # MAIN'S BYTES into dist/stable, passed the named /stable/ call site,
+              # every per-copy check on both copies, both browser loads and the
+              # two-tree check — and was stopped by one boolean on the deploy job. The
+              # entire verification stack certified the exact state northstar invariant
+              # 4 forbids. §7's bar is "found, suspected, or merely NOT RULED OUT", and
+              # it was ruled out by one predicate with nothing behind it.
+              #
+              # Costs the demonstrations nothing: refs/heads/stable's own tip is an
+              # ancestor of itself, so acceptance item 5's refusal against 2952aa1's
+              # real origin-wide reaper still runs. And a verify that builds a /stable/
+              # which could never legitimately be published is not a dry run of
+              # anything — it is a rehearsal of a forbidden state.
               [ "$head_sha" = "$named_sha" ] || {
                 echo "::error::src/stable is ${head_sha}, not the requested ${named_sha}."; exit 1; }
               git -C src/stable fetch --quiet origin "refs/heads/stable:refs/remotes/origin/stable-tip"
@@ -381,9 +391,9 @@ jobs:
                 echo "::error::fetched stable tip ${tip} disagrees with ls-remote ${remote_sha}."; exit 1; }
               git -C src/stable merge-base --is-ancestor "$named_sha" "$tip" || {
                 echo "::error::${named_sha} is NOT an ancestor of refs/heads/stable (${remote_sha})."
-                echo "::error::The rollback lever can only move the promoted copy backward along its own"
-                echo "::error::history. REFUSING — northstar invariant 4."; exit 1; }
-              echo "stable: ROLLBACK to ${named_sha:0:12}, verified an ancestor of ${tip:0:12}"
+                echo "::error::A named promoted copy may only be a commit a human has already"
+                echo "::error::promoted. REFUSING — northstar invariant 4."; exit 1; }
+              echo "stable: named copy ${named_sha:0:12} (mode=$mode), verified an ancestor of ${tip:0:12}"
               continue
             fi
 
@@ -408,7 +418,7 @@ jobs:
         run: |
           set -euo pipefail
           for ref in main stable; do
-            if git -C "src/$ref" ls-tree -r --name-only HEAD | grep -q '\.gitattributes$'; then
+            if git -C "src/$ref" ls-tree -r --name-only HEAD | grep -qE '(^|/)\.gitattributes$'; then
               echo "::error::$ref carries a .gitattributes. git archive honours it, so the published"
               echo "::error::bytes need not be the committed bytes. REFUSING TO PUBLISH."
               exit 1
@@ -430,7 +440,11 @@ jobs:
         # the promoted copy, which is invariant 4 falsified.
         run: |
           set -euo pipefail
-          if git -C src/main ls-tree -r --name-only HEAD | grep -q '^stable/'; then
+          # `^stable(/|$)`: a regular FILE or a submodule named `stable` collides with the
+          # promoted copy's mount point too, and `^stable/` missed both. They were
+          # fail-closed via the byte assertion — whose message says nothing about a
+          # collision and sends the reader to the wrong place.
+          if git -C src/main ls-tree -r --name-only HEAD | grep -qE '^stable(/|$)'; then
             echo "::error::main carries a 'stable/' path, which collides with the promoted copy's mount point."
             echo "::error::REFUSING TO PUBLISH — the two copies would merge."
             exit 1
@@ -458,12 +472,28 @@ jobs:
           set -euo pipefail
           fail=0
           check_copy() {
-            local dir="$1" src="$2" label="$3"
-            local expected actual
+            local dir="$1" src="$2" label="$3" prune="$4"
+            local expected actual links
+            # F10(a) — SYMLINKS FIRST. `find -type f` cannot see them, and
+            # upload-pages-artifact tars with --dereference, so a symlink at a path
+            # absent from the commit's tree is invisible to the hash below AND
+            # published with its target's contents. Committed symlinks are refused
+            # upstream; this is the backstop for anything that appears afterwards.
+            links=$(find "$dir" -type l | head -5)
+            [ -z "$links" ] || {
+              echo "::error::$label — symlink(s) in the directory about to be published:"
+              echo "$links"
+              echo "::error::the Pages artifact is tarred with --dereference. REFUSING TO PUBLISH."
+              fail=1; return; }
             # `git archive` of the commit, hashed as a sorted path+blob listing.
             expected=$(git -C "$src" ls-tree -r HEAD --format='%(path) %(objectname)' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
             # The same listing computed from the files on disk.
-            actual=$(cd "$dir" && find . -type f -not -path './stable/*' -printf '%P\n' \
+            # F13(a) — the ./stable/* exclusion is meaningful ONLY for the root copy.
+            # Applied to both, it silently dropped a legitimate `stable/` directory
+            # inside the PROMOTED tree from the hash, and the mismatch was reported as
+            # `REFUSING TO PUBLISH — northstar invariant 4` — a false alarm naming the
+            # gravest invariant in the project.
+            actual=$(cd "$dir" && find . -type f $prune -printf '%P\n' \
                      | LC_ALL=C sort \
                      | while read -r f; do printf '%s %s\n' "$f" "$(git hash-object "$f")"; done \
                      | sha256sum | cut -d' ' -f1)
@@ -473,8 +503,8 @@ jobs:
               echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
               fail=1; }
           }
-          check_copy dist       src/main   "root (/)"
-          check_copy dist/stable src/stable "promoted (/stable/)"
+          check_copy dist        src/main   "root (/)"           "-not -path ./stable/*"
+          check_copy dist/stable src/stable "promoted (/stable/)" ""
           [ "$fail" = 0 ] || exit 1
           echo "OK: both published copies are byte-for-byte their own commit's tree."
 
@@ -490,6 +520,14 @@ jobs:
         run: npx --no-install playwright install --with-deps chromium
 
       - name: "Check 5 against the /stable/ copy specifically — invariant 4's call site"
+        # continue-on-error, with a gate step at the end of the job. F9: a failing step
+        # aborts the job, so placing this FIRST — done so acceptance 5a's call site
+        # always runs — meant that while /stable/ was bad, NO root-copy check ever
+        # executed. That is today's state until stable is fast-forwarded, and it is the
+        # inverse of the defect that put this step first. Both copies are judged in
+        # every run now; nothing publishes while either is red.
+        continue-on-error: true
+        id: stable_call_site
         # PUP-WO-0103 §1.3, ruled from PUP-WO-0102's F1. This runs BEFORE the general
         # per-copy loop, and the ordering is load-bearing rather than cosmetic.
         #
@@ -524,6 +562,9 @@ jobs:
           fi
 
       - name: "Check EVERY published copy, in the run that publishes it"
+        if: always() && steps.stable_call_site.conclusion != 'skipped'
+        continue-on-error: true
+        id: per_copy
         # PUP-WO-0103 §1.3. The rule an earlier version got wrong: the checks job only
         # ever examines the TRIGGERING ref, so a push to main would publish stable's
         # content — to Buddy's tablet — with stable never checked in that run.
@@ -567,6 +608,19 @@ jobs:
             echo "::endgroup::"
           done
           [ "$fail" = 0 ] || exit 1
+
+      - name: "GATE — refuse publication if either copy failed"
+        # The two steps above are continue-on-error so both copies are always judged.
+        # This is where that becomes a refusal again. Fail-closed: an outcome that is
+        # neither success nor failure (cancelled, skipped) refuses too.
+        if: always()
+        run: |
+          set -euo pipefail
+          s='${{ steps.stable_call_site.outcome }}'; p='${{ steps.per_copy.outcome }}'
+          echo "/stable/ call site: $s    per-copy checks: $p"
+          [ "$s" = success ] && [ "$p" = success ] || {
+            echo "::error::REFUSING TO PUBLISH — a published copy did not pass its checks."
+            exit 1; }
 
       - name: "Load every published copy in a real browser"
         run: |
