@@ -59,8 +59,29 @@ try {
 }
 var CACHE_PREFIX = SCOPE_PATH === null ? null : cachePrefixFor(SCOPE_URL);
 
-/* Bump when any cached asset changes. CI asserts this (check 3). */
-var CACHE_VERSION = 'v17';
+/* Bump when any cached asset changes. CI asserts this (check 3).
+ *
+ * v17 -> v18 IS DELIBERATE AND IS PART OF THE FIX, not housekeeping — PUP-WO-0105.
+ * No cached asset changed, so check 3 does not REQUIRE this bump. It is here because
+ * the guard below only stops a NEW poisoning: CACHE_NAME is what a worker adopts on
+ * activate, so an unchanged name means a device that already cached a 404 over its
+ * app shell keeps serving it after the fix ships, until something re-fetches that
+ * exact URL while online — and a three-year-old cannot cause that. The defect is
+ * live now, so assume some device already carries it.
+ *
+ * Bumping retires the poisoned cache instead of inheriting it. It is safe in both
+ * directions, and both were checked rather than assumed:
+ *   - the reap is prefix-bounded (`startsWith(CACHE_PREFIX) && name !== CACHE_NAME`),
+ *     so v18 retires v17 and touches nothing outside this worker's own prefix;
+ *   - install is `event.waitUntil(cache.addAll(...))`, so on a device that is OFFLINE
+ *     when the new worker arrives the precache rejects, install fails, the new worker
+ *     never activates, and the OLD worker keeps serving. No window where the child
+ *     has neither.
+ * The cost is one re-download of five small assets on the next healthy online load.
+ *
+ * Flagged for review rather than buried: this is the one change here that is not the
+ * guard itself, and it is a judgement about recovery, not correctness. */
+var CACHE_VERSION = 'v18';
 /* Guarded, because `null + 'v17'` is the STRING "nullv17" — a perfectly plausible
  * cache identity that no browser will ever create. It is unreachable today (install
  * returns early, servesRequest declines, activate takes the orphan branch), but
@@ -328,14 +349,44 @@ self.addEventListener('fetch', function(event) {
 
   event.respondWith(
     fetch(event.request).then(function(response) {
-      var clone = response.clone();
-      /* cache.put rejects on a non-GET request, a 206, or an opaque redirect. The
-       * response has already been returned, so there is nothing to recover — but
-       * an unhandled rejection in a worker is now a CI failure, and an unguarded
-       * one here would make routine traffic look like a defect. */
-      caches.open(CACHE_NAME).then(function(cache) {
-        return cache.put(event.request, clone);
-      }).catch(function() {});
+      /* STORE ONLY WHAT SHOULD BE STORED — PUP-WO-0105.
+       *
+       * fetch() RESOLVES on 4xx and 5xx; it rejects only on a network-layer
+       * failure. So without this guard an HTTP error received WHILE ONLINE is
+       * written over the good copy, and the offline .catch below never runs
+       * because nothing rejected. './' is in urlsToCache, so the poisoned entry
+       * is the app shell: one 404 reload replaced /PupPad/, and the device then
+       * served the error page OFFLINE. Northstar invariants 3 and 5.
+       *
+       * WHY NOT `response.ok` ALONE, which is the obvious predicate — measured in
+       * Chromium against this worker, not reasoned (docs/feedback/PUP-WO-0105.md):
+       *     same-origin 200          ok=true   status=200  type=basic
+       *     same-origin 404          ok=false  status=404  type=basic   <- the defect
+       *     cross-origin opaque 200  ok=false  status=0    type=opaque  <- the Map panel
+       *     cross-origin opaque 404  ok=false  status=0    type=opaque
+       * `ok` is FALSE for opaque, so `ok` alone would stop caching leaflet,
+       * supabase and every OpenStreetMap tile (index.html:1373) — and the Map
+       * panel would lose its offline assets. That is invariant 3 traded against
+       * invariant 3, which §7 makes a ruling rather than a build step.
+       *
+       * WHAT THIS DOES NOT FIX, stated rather than glossed: an opaque 200 and an
+       * opaque 404 are INDISTINGUISHABLE — both status 0, both type opaque, both
+       * with an unreadable body. No predicate can separate them, so a failed tile
+       * or CDN asset is cached exactly as it is today: unchanged, not improved.
+       * PUP-WO-0600 vendors those assets and dissolves the question. Do not read
+       * this guard as covering the cross-origin case.
+       *
+       * cache.put still rejects on a non-GET request, a 206, or an opaque
+       * redirect, and `ok` is true for a 206 — so the .catch stays. The response
+       * has already been returned, so there is nothing to recover, but an
+       * unhandled rejection in a worker is a CI failure and an unguarded one here
+       * would make routine traffic look like a defect. */
+      if (response.ok || response.type === 'opaque') {
+        var clone = response.clone();
+        caches.open(CACHE_NAME).then(function(cache) {
+          return cache.put(event.request, clone);
+        }).catch(function() {});
+      }
       return response;
     }).catch(function() {
       /* SCOPED read. `caches.match(request)` is CacheStorage.match, which searches
