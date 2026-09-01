@@ -1,582 +1,320 @@
-# FEEDBACK — PUP-WO-0000
+# FEEDBACK — PUP-WO-0100
 
-**Builder:** CC-EM (pup-b) · **Branch:** `investigate/wo-0000` · **Base:** `main` @ `4329c0c`
+**Builder:** CC-EM (pup-b) · **Branch:** `build/wo-0100` · **Base:** `origin/main` @ `4199407`
 **To:** CC-A (architect). Parked unmerged. The builder does not self-merge.
 
 ---
 
-## Gates — checkable facts, not assertions
+## Gates — checkable facts
+
+Reproduce with `git fetch origin && git diff origin/main --stat`.
 
 | Gate | Status |
 |---|---|
-| `git diff main --stat` shows changes under `docs/` only | **PASS** — one file, `docs/findings/PUP-WO-0000.md`, +1152 |
+| §3.1 — diff under `.github/` and `docs/` only, **measured against fetched `origin/main`** | **PASS** |
 | `index.html` diffs to empty | **PASS** |
 | `sw.js` diffs to empty | **PASS** |
 | `manifest.json` diffs to empty | **PASS** |
-| `icon-192.png` diffs to empty | **PASS** |
-| `icon-512.png` diffs to empty | **PASS** |
-| Base is live `origin/main` | **PASS** — `4329c0c`, verified by `git fetch`; the WO header's `a4be019` was stale, as its own "verify live HEAD" anticipated |
-| Every claim about `index.html`/`sw.js` cites `file:line` | **PASS** — see the adversarial pass's Probe 2 for an independent check |
-| `docs/findings/PUP-WO-0000.md` contains all ten named sections of WO §3.2 | **PASS** — §1 lifecycle, §2 router, §3 state, §4 sounds, §5 PIN/lock, §6 `sw.js`, §7 disposition, §8 module contract, §9 registry, §10 contradictions |
-| Contradictions list is non-empty or explicitly stated empty | **PASS** — non-empty; three items, §10.1–§10.3 |
+| `icon-192.png` / `icon-512.png` diff to empty | **PASS** |
+| §3.2 — all four checks green on the unmodified tree | **PASS locally.** See the note below on the real-run half. |
+| §3.3 — all four demonstrated red, each reverted | **PASS** — evidence below |
+| §3.4 — check 4 deterministic | **PASS**, with limits stated rather than claimed away |
+| §2 — workflow declares minimal permissions | **PASS** — `permissions: contents: read`, and no publish/deploy/branch-write step exists |
+| §1 — runs on every PR and every push to `main` | **PASS** |
+| Tooling confined to `.github/`, no root `package.json` | **PASS** |
+| Node pinned to 24 | **PASS** — `actions/setup-node@v5`, `node-version: 24` |
 
-Reproduce: `git fetch origin && git diff origin/main --stat`.
+**The real-run half of §3.2 is outstanding, and it is not a scope decision.** A
+GitHub Actions run needs the pull request to exist, and PR creation was refused by
+a permission classifier on this box. The branch is pushed (`build/wo-0100` @
+`413c833`); the PR is not open. Everything below was produced by executing the
+checks locally, which is the "captured output" half of §3.3 but is **not** the
+"green in a real run on the PR" half of §3.2. **That gate is unmet until the PR
+exists and CI runs.** Stated as unmet rather than quietly counted as passed.
 
 ---
 
-## Findings
+## §3.3 — the four red demonstrations
 
-Format per WO §6: *finding · where · type · recommendation · decision-needed.*
+Each break was applied to the working tree, the check run, and the break reverted;
+`git diff` confirmed clean after each. Protected surfaces are byte-identical to
+`origin/main` at HEAD.
 
-### F1 — The Map panel can leave an un-closable full-screen overlay
-- **Where:** `index.html:1361` (overlay appended), `index.html:1368` (`L.map` — throws if Leaflet is unavailable), `index.html:1550` (CLOSE listener, never reached)
-- **Type:** bug
-- **Detail:** Leaflet loads from a CDN (`index.html:13`). If `L` is undefined — CDN blocked, ad-blocker, or offline after a cache reap — the throw at `:1368` aborts before the CLOSE button is wired. A `z-index:80` full-bleed overlay is already in the DOM. There is no `keydown`, `popstate` or `visibilitychange` handler anywhere in the file, so nothing can dismiss it. Recovery requires killing the app.
-- **Recommendation:** wire CLOSE immediately after the overlay is appended and before any code that can throw; or wrap the opener body in `try`/`catch` that calls `closeTreasureMap()`. **Not done here — `index.html` is a protected surface and WO §4 ranks the rule above the improvement.** Findings §8.2 obligation 5 makes the games host structurally incapable of reproducing it.
-- **Decision needed:** no — a `PUP-WO-0200`-scoped fix.
+### Check 1 — syntax
 
-### F2 — `openCanvas` restores three monkey-patched globals in the button handler, not in the teardown
-- **Where:** patched `index.html:573-584`, restored `index.html:646-648`, teardown `index.html:655-663`
-- **Type:** risk
-- **Detail:** harmless today because `closeCanvas()` has exactly one call site (`index.html:649`). The second call site is the bug: any future shell-driven or error-path close leaks three global functions closed over a dead canvas and an unfreeable `strokeHistory`.
-- **Recommendation:** move the three restores into `closeCanvas()`. Cited in findings §1.3 as the defect the module contract's returned-closure shape is designed to make unwriteable.
-- **Decision needed:** no.
+- **Break:** `index.html:1741`, `function updateUI() {` → `function updateUI( {`
+- **Failing step:** *Check 1 — every .js and the inline script of index.html parse*
+- **Output:**
+  ```
+  CHECK 1 FAILED — 1 unit(s) did not parse:
+  --- index.html (inline script, line 39) ---
+  index.html:1742
+    var gc = state.active ? state.active.glow : '#00ff88';
+        ^^
+  SyntaxError: Unexpected identifier 'gc'
+  ```
+  Exit 1. **Note the line number is `index.html:1742` — the real file line**, not
+  an offset into an extracted fragment. That is what the blank-line padding in
+  `check-syntax.mjs` buys, and it is the difference between a usable failure and
+  "there is an error somewhere in 1,900 lines".
+- **Revert:** restored; `git diff -- index.html` empty; check green.
 
-### F3 — `sw.js` produces an unhandled promise rejection on every non-GET request
-- **Where:** `sw.js:35-37`
-- **Type:** bug
-- **Detail:** `cache.put` is neither awaited nor caught, and it rejects for non-`GET` requests. The app issues `POST`s to Supabase (`index.html:190`, `:194`, via `pushXMark` `:202` / `pushAlert` `:210`), so each produces an unhandled rejection inside the worker.
-- **Recommendation:** guard with `if (event.request.method === 'GET')` and add a `.catch(function(){})`. Natural to fold into `PUP-WO-0101`, which is already opening this file.
-- **Decision needed:** no.
+### Check 2 — asset manifest
 
-### F4 — The service worker is network-first, which is a standing threat to the cold-start budget
-- **Where:** `sw.js:33` (network first), `sw.js:39` (cache only on `fetch` rejection)
-- **Type:** risk
-- **Detail:** a cached asset is still waited on whenever the network answers slowly rather than not at all. Architecture §5 rules that games load on demand, so this compounds per game: opening a game on a flaky connection waits for a fetch timeout before falling back. Northstar §6 names this exact failure ("he taps the icon and waits").
-- **Recommendation:** consider cache-first-with-background-revalidate for same-origin assets, measured against P2's cold-start gate rather than assumed. Architecture §10 already has cold-start as an open question for Scotty; this is the mechanism behind it.
-- **Decision needed:** **yes** — it interacts with P2's exit gate and with `PUP-WO-0101`'s ownership of `sw.js`.
+Demonstrated red in **both** directions, because the two are different defects.
 
-### F5 — The PIN unlock path dismisses the dialog before comparing the PIN
-- **Where:** `index.html:1901` (closes), `index.html:1915` (compares), `index.html:1918` (wrong PIN → sound only)
-- **Type:** bug
-- **Detail:** entering any four digits closes the dialog; the comparison only selects between the `unlock` and `error` sounds. Since the lock gates nothing (findings §5), nothing is exposed by this — but it means the lock does not even reject a wrong PIN, which matters if anyone is ever tempted to build on it.
-- **Recommendation:** record it in architecture §3.1 so the "gates nothing" ruling is not later softened to "gates a little". No code fix warranted while the lock gates nothing.
-- **Decision needed:** no.
+- **Break 2a (a reference appears):** inserted `var _future = './games/gyre.js';`
+  at `index.html:1935` — deliberately the shape `PUP-WO-0200` will actually
+  introduce.
+  ```
+  CHECK 2 FAILED — 1 local asset(s) referenced but not in sw.js's urlsToCache:
+    games/gyre.js
+      referenced by: index.html string literal
+  ```
+- **Break 2b (a cache entry disappears):** deleted the `icon-512.png` line from
+  `urlsToCache`.
+  ```
+  CHECK 2 FAILED — 1 local asset(s) referenced but not in sw.js's urlsToCache:
+    icon-512.png
+      referenced by: manifest.json icons[].src
+  ```
+- **Failing step:** *Check 2 — every local asset index.html references is in urlsToCache*
+- **Revert:** both restored; `index.html` and `sw.js` diff empty; check green.
 
-### F6 — The Settings panel is reachable while "locked" and shows the Supabase anon key in cleartext
-- **Where:** `index.html:1736-1737` (unconditional binding), `index.html:1818` (`value="'+keyVal+'"` in a visible text input)
-- **Type:** risk
-- **Detail:** one tap on the gear while locked reveals and offers to edit the credential. It is an anon key, not a service-role key, so the exposure is bounded — but it is exposed to the child, and the lock's appearance implies otherwise.
-- **Recommendation:** a decision, not a patch: either the lock gates the settings button (making it a real, if weak, containment) or the settings button moves behind something that is not the lock. Architecture §8 currently forbids treating the lock as containment, which argues for the second.
-- **Decision needed:** **yes** — Scotty.
+### Check 3 — cache identity
 
-### F7 — `index.html` has three unconditional third-party CDN dependencies, and northstar §5 forbids third-party network calls
-- **Where:** `index.html:11` (jsDelivr, Supabase UMD), `index.html:12-13` (cdnjs, Leaflet CSS+JS), `index.html:1373` (OpenStreetMap tiles)
-- **Type:** scope-question
-- **Detail:** architecture §2 states "no dependencies", which is false. Northstar §5's non-goal reads *"any third-party network call … a category of thing this project will not contain"*; the shipped code makes three on every cold load. The non-goal is plainly aimed at trackers rather than a tile server, but as written the code contradicts it, and a non-goal the code already violates will not stop the next proposal.
-- **Recommendation:** either self-host Leaflet and drop the Supabase UMD bundle (three `urlsToCache` lines, buys invariant 3 outright), or narrow northstar §5's wording to name what it actually forbids — tracking, ads, telemetry, data about Buddy. Full analysis at findings §10.3. **The games surface is unaffected either way**: architecture §5 already rules games strictly offline and findings §8.3 makes that structural by giving `api` no network member.
-- **Decision needed:** **yes** — this is a northstar question, and northstar changes are re-ratified, never work-ordered.
+Eleven scenarios in throwaway repositories. The five that matter as red/green
+pairs:
 
-### F8 — A committed OAuth client secret exists in both source workspaces
-- **Where:** `~/PupPad-sources/blockpop/src/lib/auth/preview.ts:19` and `:21`; `~/PupPad-sources/gyre/src/lib/auth/preview.ts:19` and `:21`
-- **Type:** risk
-- **Detail:** line 19 is an OAuth client id, line 21 a 64-character plaintext client secret. Identical in both workspaces — a Grok-platform template credential, not a ClearForge one. **Not copied, not echoed, not committed.** I verified existence by measuring the shape of the lines without reading their values. Both independent sweeps confirmed by exact-string search that it does not appear in the `.vercel/` build output, so it never shipped to a browser. It cannot reach this repo: `~/PupPad-sources/` is outside the git tree and `src/lib/auth/` is classified `discard` in both dispositions.
-- **Recommendation:** nothing is required to keep PupPad clean. The open question is whether to notify whoever owns the Grok preview broker, since the secret presumably ships in every sandbox export. Rotation costs nothing and is not ours to perform.
-- **Decision needed:** **yes** — surfaced per WO §7; Scotty's call, not a builder's.
-
-### F9 — Architecture §3's "Cached assets" row is contradicted by the code
-- **Where:** `docs/architecture.md` §3; `sw.js:31-43`, specifically `sw.js:34-37`
-- **Type:** bug (in the document)
-- **Detail:** §3 states "anything not listed is not cached and will not work offline". The fetch handler caches every successful response at runtime, so the cache is a superset of `urlsToCache`. Full argument and a suggested replacement row at findings §10.1.
-- **Recommendation:** amend §3. It changes the severity of the §6 reap hazard (the reap also evicts the runtime-cached Leaflet, which turns a graceful offline degradation into F1's un-closable overlay) and it hides the network-first property behind F4.
-- **Decision needed:** **yes** — an architecture amendment is CC-A's to make.
-
-### F10 — Architecture §7 seams 2 and 3 are net-new construction, not preserved structure
-- **Where:** `docs/architecture.md` §7; `~/PupPad-sources/blockpop/src/lib/game/store.ts:44-47`, `:194`, `:214`, `:220`, `:288`, `:332`
-- **Type:** scope-question
-- **Detail:** seam 2 (trays keyed by player) has nothing to preserve — the source has no player concept at all, verified by grep: zero occurrences of `player`/`players`/`playerId` in `src/lib/game/` or `src/components/game/`. Seam 3 (one reducer taking `{playerId, action}`) requires consolidating **five** distinct board-writing actions, only one of which is reducer-shaped. §7's ruling that the seams are worth installing now still stands; its implied cost does not.
-- **Recommendation:** carry this into `PUP-WO-0400`'s scope so the estimate is written against construction rather than preservation. Findings §8.7 has the seam-by-seam assessment.
-- **Decision needed:** no — but it should reach whoever scopes P4.
-
-### F11 — Minor defects noticed while reading, logged per WO §4, none fixed
-- **Type:** note. **Decision needed:** no. All are in the protected `index.html`.
-
-| # | Where | What |
+| Scenario | Expected | Result |
 |---|---|---|
-| a | `index.html:1252`, called only at `:1365` | `resizeMapCanvas()` is never bound to any resize or orientation event, so the map's overlay canvas never re-sizes on rotation — on a landscape-locked tablet toy |
-| b | `index.html:437-439`, `:770-771`, `:1294-1295` | `state.pop` set on a panel-gate failure is never cleared; the auto-clear timer is armed only on the non-panel branch (`:1695-1698`), so the toast persists until another button is pressed |
-| c | `index.html:127`, `:131-146`, `:1672` | `triggerAlertEffect` captures `#alertFlash` once; `#alertFlash` lives inside `#app`, so a `render()` mid-alert leaves the interval writing to a detached node while the live flash never fires |
-| d | `index.html:1157`, reset at `:1298` | while the map is closed, the realtime `map-stroke` handler still pushes into `mapStrokes`, which grows unbounded until the next open |
-| e | `index.html:118`, `:154`, `:262`, `:673` | five globals declared and never read: `tpId`, `xmId`, `lastFetchTime`, `cameraReviewCanvas`, and `canvasOpen` (written twice, read nowhere) |
+| cached asset changed, no bump | RED | `CACHE_NAME is still "v1"` — exit 1 |
+| same change **with** bump | GREEN | exit 0 |
+| docs-only change | GREEN (no false red) | exit 0 |
+| `urlsToCache` entry **removed**, no bump | RED | `the urlsToCache list itself changed` — exit 1 |
+| PR range: asset change and bump in **separate commits** | GREEN | merge-base spans both |
 
-### F12 — A subagent's own summary arithmetic was wrong; its rows were not
-- **Where:** the blockpop disposition sweep, recorded verbatim below
-- **Type:** note
-- **Detail:** its closing line read "6 port, 7 rewrite" while its table marks `src/lib/game/store.ts` **rewrite**, making the true split 5/8. Its discard count and every per-file row were correct. Caught by reconciling both sweeps' totals against an independent `find` of each tree (blockpop 99+143=242, gyre 87+158=245 — both exact). Corrected in findings §7 with the correction recorded inline rather than applied silently, since the verbatim outputs are below and a reader comparing them would otherwise find an unexplained discrepancy.
-- **Decision needed:** no. Recorded because it is the argument for reconciling delegated counts rather than accepting them.
+- **Failing step:** *Check 3 — CACHE_NAME changed when a cached asset changed*
 
----
+### Check 4 — headless load
 
-## The adversarial pass — verbatim (WO §5, architecture §5 and §11)
+- **Break 4a (uncaught exception):** inserted `nonexistentFunction();` into the
+  init block at `index.html:1930`.
+  ```
+  CHECK 4 FAILED — 1 error(s) originating in PupPad's own code:
+    [uncaught exception] page script
+      ReferenceError: nonexistentFunction is not defined
+  ```
+- **Break 4b (console.error, execution continues):** inserted
+  `console.error('deliberate same-origin error');` at the same point.
+  ```
+  CHECK 4 FAILED — 1 error(s) originating in PupPad's own code:
+    [console.error] http://127.0.0.1:42217/index.html:1929
+      deliberate same-origin error
+  ```
+  Service worker still `active` in this one — proving the two failure modes are
+  distinguished rather than collapsed.
+- **Failing step:** *Check 4 — the console opens clean over HTTP, with no network*
+- **Revert:** restored; `git diff -- index.html` empty; check green.
 
-Run as a black-box task in my own workflow: a **fresh subagent with no investment
-in the findings being sound**, given the artifact and the ground truth and **none
-of my reasoning about either**. Independence here is context isolation, not who
-dispatched it.
-
-**It found nine defects I would not have found, one of which was a false claim
-this document proposed writing into a ratified document.** I did not wave any of
-them off. Every finding is answered below the transcript, with the resulting edit
-named. Both the prompt and the output are reproduced unedited, as architecture §11
-requires — a summary written by the party being audited is where a weak pass
-hides.
-
-### Timeline, stated because it affects what the record proves
-
-The artifact should have been frozen when the pass was dispatched. It was not: two
-edits landed while the pass was running — §6.1's `CACHE_NAME` claim gained git
-evidence, and I separately noticed the "four PIN outcomes" miscount and held it
-rather than patching mid-review. Neither was prompted by the pass, both are
-declared here, and everything else in the document is as the reviewer saw it.
-
-### What I gave it, verbatim
-
-````text
-You are an adversarial reviewer. Your job is to find what is WRONG with a document. You have no stake in it being sound and you did not write it. Nobody has explained their reasoning to you and nobody will — you have the artifact and the ground truth, and that is deliberate.
-
-THE ARTIFACT — read it in full, all of it, before doing anything else:
-  /home/ikthys777/worktrees/PupPad/builder/docs/findings/PUP-WO-0000.md   (~1150 lines)
-
-GROUND TRUTH you can check it against (all read-only — do NOT modify any file anywhere):
-  /home/ikthys777/worktrees/PupPad/builder/index.html      (1942 lines — the app)
-  /home/ikthys777/worktrees/PupPad/builder/sw.js           (43 lines — the service worker)
-  /home/ikthys777/worktrees/PupPad/builder/manifest.json
-  /home/ikthys777/worktrees/PupPad/builder/docs/northstar.md      (invariants, cited by number)
-  /home/ikthys777/worktrees/PupPad/builder/docs/architecture.md   (the doc it claims to contradict)
-  /home/ikthys777/worktrees/PupPad/builder/docs/work-orders/PUP-WO-0000.md  (what it was asked to produce)
-  ~/PupPad-sources/blockpop/   and   ~/PupPad-sources/gyre/   (the two source workspaces it classifies)
-
-CONTEXT: PupPad is a single-file offline PWA — a pretend console for a three-year-old who cannot read. The document is an investigation that produces two specifications later work orders will build against: what a game module must export, and what a registry entry must contain. If either spec is wrong, work built on it is wrong.
-
-RUN THESE FOUR PROBES. Do not skip any. Report what you actually did for each.
-
-**PROBE 1 — break the module contract (§8).**
-Take the contract in §8 and try to design a game it CANNOT express. Do not be gentle and do not settle for the two games the document already discusses — those are the ones it was built around, so they prove little. Think of games a three-year-old toy console might plausibly want, and find one whose lifetime, state, input, or exit needs the contract has no place for. Candidates worth trying: something with sound that must survive across a pause; something with a countdown or a timer; something that needs two children touching the screen at once; something that must ask before discarding progress; something that streams or decodes an asset; something that wants to be resumed exactly where it left off days later; something with more than one screen inside itself. For each one you try, state whether the contract expresses it, and if it does, say concretely HOW. A contract that fits only the two games in hand is a description, not a contract — your job is to determine which this is. If you cannot break it, say so plainly; a clean bill of health is a legitimate result but only if you genuinely tried.
-
-**PROBE 2 — verify every citation.**
-The document makes claims of the form `index.html:1234` and `sw.js:31-43`, and also cites the two source workspaces (`sim.ts:69`, `store.ts:156`, `engine.ts:174`, and so on). Check them. Open the cited file, go to the cited line, and confirm it says what the document claims it says. A miscited line is a worse defect than an uncited claim, so be thorough: work through the document section by section and check every citation you encounter, not a sample. Report every citation that does not resolve, is off by one or more lines, or resolves to something that does not support the claim being made. Also flag any substantive claim about the code that carries NO citation. Report how many you checked.
-
-**PROBE 3 — attack the registry shape (§9).**
-Try to break it. What does the picker do with: an entry missing an icon; a very long name; twelve entries; exactly one entry; zero entries; two entries with the same `id`; an `id` that does not match its module filename; a `sound` name that is not in the bank; a `players` value of 0 or 2.5 or "two"; an `icon` containing raw HTML or a script tag; a `module` path pointing outside the games directory? §9.4 pre-answers some of these — judge whether those answers are adequate or whether they wave the problem away. Look especially for cases the document did not consider at all. Also judge §9.2's central argument — that every field is required and that this is what protects the non-reader — on its merits: is it right, or does it just move the failure somewhere else?
-
-**PROBE 4 — re-verify the PIN/lock finding from scratch.**
-The document's §5 and §10.2 make claims about the lock button, the PIN, and what they do and do not gate. `docs/architecture.md` §3.1 makes an overlapping claim. Do NOT take either document's word for it. Go to `index.html` yourself, trace the lock button from its click handler through to every consequence, and determine independently what the lock actually does and does not do. Then say whether the document's account is correct, incorrect, or incomplete. If the document claims something the code does not support, that is your most important finding of the four probes.
-
-ALSO, beyond the four probes, report anything else you find: internal contradictions between sections, claims that overreach the evidence, a specification that is ambiguous enough that two builders would implement it differently, arithmetic that does not add up, and anywhere the document asserts something as measured that it appears to have assumed.
-
-OUTPUT FORMAT — findings first, ordered most-serious first. For each: what is wrong, where (file and section/line), why it matters, and how confident you are. Then a short section for each of the four probes recording what you did. Then a one-line overall verdict: is this document safe to build against?
-
-Be blunt. Do not soften findings, do not pad with praise, and do not describe something as a minor nitpick if you think it is real. If a section is fine, say so in one line and move on. NEVER print, echo, or quote any credential value you encounter in the source workspaces — refer to it by file and line only.
-````
-
-### What it returned, unedited
-
-Reproduced exactly as received, inside a fence so that nothing in it can be
-confused with this document's own structure. Its finding numbers F1–F25 are
-the reviewer's own and are referenced by the disposition table below. They are
-a **separate numbering** from this document's F1–F12 upward findings above.
-
-`````text
-I've read the artifact in full, verified against the code, and run all four probes. Findings below, most serious first.
+**One ordering defect found and fixed during this demonstration.** The first run of
+4a reported *"the service worker did not register"* rather than the
+`ReferenceError`. Both were true — the exception at `:1930` aborts the script
+before the registration at `:1935` — but the check named the **symptom**, not the
+cause. The report order now puts own-code errors before the service-worker
+verdict. A check that misdirects the person reading its log is only half a check.
 
 ---
 
-# FINDINGS
+## §3.4 — check 4's determinism, and what it cannot distinguish
 
-## F1 — §9.3 specifies something §8.1 and §9.1 cannot express. There is no channel from a registry entry into a game. *(critical; confidence high)*
+**Mechanism.** Every request whose URL is not the local origin is aborted at the
+driver (`check-load.mjs`, the `context.route('**')` handler). The run touches no
+network at all, so the third-party outcome is *identical on every run* rather than
+merely usually fine. What remains is judged by origin:
 
-`docs/findings/PUP-WO-0000.md` §9.3 rules that Block Pop's `easy`/`classic` "ship as two registry entries, **each passing its own mode**." Nothing in the document lets an entry pass anything:
+- `pageerror` → always fails. With third parties blocked, the only script that
+  executes is PupPad's own.
+- console `error` with a same-origin location → fails.
+- console `error` with a foreign location → ignored, and **reported with a count**
+  so the evidence is visible rather than implied.
 
-- §8.1's signature is `mount(host, api)` — no config/options parameter.
-- §8.3's `api` surface is fixed at six members: `close`, `sound`, `vibrate`, `save`, `load`, `prefersReducedMotion`. No `api.entry`, `api.mode`, `api.players`.
-- §9.1 fixes "**eight required fields and no optional ones**" with no `mode`/`params`, and rules `id` "MUST equal the module basename" — so two entries force **two module files**, not two entries against one module.
-- §8.4's own Block Pop demonstration hardcodes `const mode = 'easy';`, silently contradicting §9.3.
-
-Consequences that propagate: §9.5's three-file table ("**one entry** appended") is false for the second of the two games the document is built around; and §8.7's claim that architecture §7 seam 4 is "**Installed by §9**, at a cost of one integer per entry" is wrong — a module can never read `players`, so the seam terminates at a picker badge and is not a seam into the game at all. Two later work orders (P4 especially) cite §8.1 and §9.1 as authoritative; whichever a builder follows, the other is wrong. This is the single defect most likely to cause built-wrong work.
-
-## F2 — The contract cannot release the one resource §8.1 requires it to release: sound *(critical; confidence high)*
-
-§8.1: after teardown "the module must hold no live `requestAnimationFrame`, interval, timeout, event listener, observer, capture, **or media resource**."
-
-The only sound channel §8.3 permits is `api.sound(name)` → `doSound` (`index.html:59-92`). Verified: it returns nothing, builds a fresh switch table per call (`:76-89`), and schedules oscillators with hard `o.stop(t+dur)` (`:67`, `:74`). **There is no handle, no stop, no pitch parameter.** §8.3 simultaneously forbids the game its own `AudioContext`. So:
-
-- A sound started by a game keeps playing after teardown, over the picker, with nothing able to stop it — §8.1's own guarantee is unsatisfiable for audio.
-- Any game whose core is *sustained* sound (aquarium, ocean, lullaby, white-noise) is **inexpressible**.
-- A musical-instrument toy — arguably the most obvious next three-year-old toy after a drawing pad — is **inexpressible**: twelve fixed cues, no note/pitch argument.
-
-The document's escape hatch ("voices are added to the bank at `index.html:76-89`, which is a shell change **and should be**") puts a per-game edit into a switch table ~1,500 lines from the registry — structurally the same defect §2 condemns in `attachEvents`, and it breaks §9.5's "Nothing else." §8.6 lists what the contract deliberately does not do; this is not on the list, so it reads as an oversight rather than a ruling.
-
-## F3 — §5 and §10.2's headline PIN claim is factually wrong, and §10.2 recommends writing the wrong claim into a ratified document *(serious; confidence high)*
-
-§5 item 3: "**The unlock check cannot reject.** … The lock is not merely non-gating; **it does not reject a wrong PIN**." §10.2 recommends appending to `docs/architecture.md` §3.1: *"so it also does not reject a wrong PIN."*
-
-The code says otherwise. `index.html:1910-1919`:
+**Evidence.** Three consecutive runs on the unmodified tree:
 
 ```
-1915      if (pin === state.storedPin) {
-1916        state.isLocked = false; state.storedPin = null;
-1917        doSound('unlock'); exitFullscreen(); render();
-1918      } else { doSound('error'); render(); }
+run 1: exit=0 | blocked=3 | ignored-3p-errors=3 | CHECK 4 PASSED
+run 2: exit=0 | blocked=3 | ignored-3p-errors=3 | CHECK 4 PASSED
+run 3: exit=0 | blocked=3 | ignored-3p-errors=3 | CHECK 4 PASSED
 ```
 
-On a wrong PIN: `isLocked` stays `true`, `storedPin` is preserved, `exitFullscreen()` is not called. **The wrong PIN is rejected.** What is true is narrower and the document conflates the two: `closePinOverlay()` at `:1901` runs *before* the comparison, so a wrong PIN **dismisses the dialog instead of re-prompting** — no retry, no lockout, no rate limit.
-
-This is the WO's designated highest-value probe (WO §5, §1.5) and the one place §5 claims to go beyond architecture §3.1. The addition it contributes is false, and §10.2 proposes to amend a ratified document with it.
-
-## F4 — §8.2 obligation 3's `z-index:80` does not put the game host above the shell's own surfaces, and §1.5 says those surfaces will fire while a game is open *(serious; confidence high)*
-
-Obligation 3 surveys only the three panel overlays (`index.html:452`, `:782`, `:1310`, all `z-index:80`) and concludes "the shell's game chrome sits above it." Full inventory, verified:
-
-| surface | line | z-index |
-|---|---|---|
-| `#portraitBlock` | `:25` | 9999 |
-| remote-photo popup (`showRemotePhoto`) | `:711` | 200 |
-| gallery full-image viewer | `:1050` | 200 |
-| `settingsOverlay` | `:1801` | 100 |
-| `pinOverlay` | `:1863` | 100 |
-| `#alertFlash` | `:1672` | 90 |
-
-The document's own §1.5 finding is that the three realtime channels are **never left**, so while a game is mounted a remote photo still fires `showRemotePhoto` (z-index 200) and a remote alert still fires `triggerAlertEffect` (z-index 90, up to 4s of full-screen red, `:131-146`). Both paint over the game *and* over the back affordance obligation 2 exists to guarantee. The document found both halves and never joined them.
-
-## F5 — §1.6 clears `openCanvas` and `openCamera` of the un-closable-overlay trap on incomplete evidence *(serious; confidence high on structure)*
-
-§1.6: "`openCanvas` and `openCamera` do not have this trap." The trap is structural, not Leaflet-specific — all three openers append the full-bleed `z-index:80` overlay early and wire the CLOSE listener last:
-
-- draw: append `:493` → close wired `:645` (152 lines)
-- camera: append `:825` → close wired `:1112` (**287 lines**, including a synchronous `startCameraStream(...)` call at `:844`, `document.querySelectorAll('.filter-pick')` at `:869`, and `renderGallery()` at `:1109`)
-
-Any synchronous throw in those spans reproduces §1.6 exactly. The clearance rests on enumerating each opener's *known* failure modes, which is not the same as showing no path exists. This weakens the document's own case: §8.2 obligation 5's justification is that this is a general hazard — which it is.
-
-## F6 — `api.close()` has no legal caller under the contract's own rules, and "exactly one close path" is self-contradicted *(serious; confidence high)*
-
-- §8.3: `api.close()` is for "a *game-initiated* exit only. **The shell's own back affordance does not route through it.**" → two paths reach teardown.
-- §8.2 ob. 4: "**Exactly one close path.** One shell function calls `teardown()`, then removes `host`, **and is the only thing that does.**"
-- §8.4: `api.close()` "exists for a future game with a genuine self-ending flow."
-- §8.5: a terminal state "must **not** call `api.close()`. Ending a game must never eject the child to the picker." — forbidding the exact use §8.4 reserves it for.
-
-Two builders will implement this differently, and one of them will wire a second path into teardown — which is precisely the `openCanvas` defect §1.3 exists to make unwriteable.
-
-## F7 — §8.1's "observable test" is forbidden by §8.2 obligation 6 *(serious; confidence high)*
-
-§8.1: "two instances of the same game can be mounted simultaneously without interfering … it is **the observable test** that no module-level state exists." §8.2 ob. 6: "`teardown()` completes before any other game mounts. **No two games are ever live at once.**" Obligation 3's host is `position:fixed; inset:0`, so two hosts fully occlude each other anyway. The stated test for architecture §7 seam 1 is unobservable under the obligations in the same section. Separately, "`mount` … Called exactly once per session" never defines "session."
-
-## F8 — §8.3 presents honour-system absences as structural enforcement *(serious; confidence high)*
-
-"No `fetch`, no network, no Supabase … A game cannot reach the network through the contract, **which is stronger than asking it not to**," and "**No DOM access outside `host`**."
-
-A `<script type="module">` has full ambient access to `window.fetch`, `XMLHttpRequest`, `<img src>`, `document.body`, `localStorage`, and every one of the 127 shell globals §3.2 itself inventories. Withholding `fetch` from `api` is *exactly* asking it not to. §8.1's returned-closure argument genuinely is structural; §8.3's is not, and the document gives them equal standing. This matters because architecture §5's "games are strictly offline" and invariant 3 are asserted (§10.3, §8.3) to be made structural by this.
-
-## F9 — `teardown` is not exception-safe, and the document's own Gyre sketch ends it with a throwing call *(serious; confidence high)*
-
-§8.2 ob. 5 wraps `mount` in `try`/`catch`; nothing wraps `teardown`. Obligation 4 calls `teardown()` **then** removes `host` — a throwing teardown leaves the child in a full-bleed overlay with no exit: §1.6 reproduced by the contract designed to prevent it. §8.4's Gyre sketch ends `teardown` with `api.save(settings)`; `localStorage.setItem` throws on quota exhaustion and in some privacy modes — the shell itself wraps every `localStorage` call in `try`/`catch` (`index.html:156-164`, `:170-174`), and §8.3's spec for `api.save` says nothing about failure.
-
-## F10 — §9.2's central argument is wrong on its own terms *(serious; confidence high)*
-
-§9.2 claims required fields "move 'unreadable-but-recognisable' from a review checklist **into the data schema**, where `PUP-WO-0100`'s CI can assert it."
-
-CI can assert a non-empty string. It cannot assert that `icon:'A'`, `icon:'🔤'`, or two tiles both `🎮` on `#10B981` and `#11B892`, are distinguishable by a non-reader. The schema has **no uniqueness constraint** on `icon` or `color`, no contrast constraint, and no stated validation of `color`/`glow` as hex. Worse, `btnHTML` (`index.html:1585-1592`) — which §9.1 nominates as "the working reference for how a tile renders" — interpolates `btn.color` **unescaped into a `style` attribute**, so a present-but-malformed colour silently destroys the tile's CSS with nothing red.
-
-And the killer: a *present but invalid* `sound` produces exactly the quiet failure §9.2 says required fields prevent. `doSound` no-ops on unknown names (`index.html:90` — which §4 verifies as a *feature*), so the tile taps silently and CI passes. **Requiredness buys presence, not recognisability.** §9.2 relocates the failure from review to a CI check that cannot see the property that matters.
-
-## F11 — §9.4 omits six cases and waves away a seventh *(serious; confidence high)*
-
-Not considered at all:
-
-| case | what actually happens |
-|---|---|
-| duplicate `id` | §8.3 namespaces `api.save` "per game id" — two games silently share one save store. Unaddressed. |
-| `id` ≠ module basename | §9.1 says MUST; §9.4 never lists the check, and §9.5's CI list doesn't either. |
-| `sound` not in the bank | Silent tile, nothing red — see F10. |
-| `players: 0 / 2.5 / "two"` | §9.2 makes the badge "a comparison": `2.5 > 1` badges a 2.5-player game; `"two" > 1` is false. No validator specified. |
-| `icon` containing raw HTML/script | §9.1 **explicitly permits** "inline SVG markup", which forces `innerHTML`, making `icon` (and `label`) unescaped markup sinks — and makes `icon` un-regex-validatable, undercutting §9.2's CI argument. |
-| `module` outside `games/` | §9.1 says only "path relative to `index.html`". A `../` or `https://` module path is a dynamic `import()` = a third-party network call (invariant 3, northstar §5), and would not be in `urlsToCache`. |
-
-Waved away: "`module` fails to load → the picker stays up and the tile reports nothing — the child taps something else." Dynamic `import()` failure is **asynchronous**, and by the document's *own* §6.2 finding `sw.js` is network-first — so on a flaky network the tap does nothing for the full fetch timeout. A tile that does nothing when tapped is indistinguishable from a broken tablet to a non-reader; that is invariant 1's failure mode answered with a shrug. It also never defines "reports nothing" (silent, or `api.sound('error')`) — two builders will differ.
-
-"Zero entries … Should be unreachable" — nothing in the spec makes it unreachable; the games button (architecture §5, replacing Power) always exists.
-
-Adequate as written: over-long label (clamp + `<=12` CI, though the 12 is asserted, never measured), twelve entries (scrolling grid, and the warning not to copy the rails' layout is the right instinct), one entry.
-
-## F12 — §7's headline arithmetic is wrong and stale *(confidence high, verified against disk)*
-
-"The whole of the wanted material is **26** files. The other **460** of the **486** classified-or-excluded files are platform scaffolding."
-
-- 242 + 245 = **487**, not 486.
-- 487 − 26 = **461**, not 460.
-- After §7.1's own correction (gyre rewrite 10→6), port+rewrite is **22**, not 26. The sentence sits *above* the correction and is never restated, so the document's headline is stale by its own ruling. §11's summary table repeats "26 files of 486."
-
-Everything else in §7's counting is exact: 242/245 totals, every exclusion cell (92/36/15, 87/52/19), both sums (143/158), both classified remainders, both disposition sums, §7.1's correction arithmetic, and all 22 table line-counts to the line.
-
-## F13 — §7.1's ruling is argued from a false premise *(confidence high)*
-
-"Nothing in either file is Gyre-specific or Block Pop-specific — they are **identical boilerplate from the same template**." The two `button.tsx` files diff by **86 lines** over 44/49. Blockpop's uses hand-rolled `Record<Variant,string>` lookup tables with **no `cva` and no Radix Slot**; gyre's uses `cva` + `@radix-ui/react-slot` + `VariantProps`. The variant vocabularies do not overlap (`primary|secondary|ghost|soft` × `sm|md|lg|xl` vs `default|secondary|outline|ghost` × `default|sm|icon|icon-sm`). Blockpop's carries game-specific toy styling — `font-display`, `active:not-disabled:scale-[0.96]`, a `0 3px 0` hard shadow, `accent`/`ink`/`surface` tokens. `discard` may still be the right call; the reason given for it is not true. This is presented as the document's most careful piece of adjudication.
-
-## F14 — §7's own quality claim is not sustainable *(confidence high)*
-
-"I spot-checked 33 of their `file:line` citations against the sources; **all 33 resolved to what was claimed.**" Five source citations do not resolve as claimed:
-
-- **`sim.ts:76`** (§8.4, "`sim.ts:76`'s pointer capture is never released in the source") — `sim.ts` contains **zero** `setPointerCapture`; line 76 is blank. The capture is at `particle-canvas.tsx:76`, which the *same paragraph* cites correctly two sentences earlier.
-- **`store.ts:244`** (§8.4 table, "terminal state | board full") — line 244 is `const gameOver = !anyTrayFits(cleared.board, tray);`. The predicate is *no tray piece fits*, not board-fullness. §8.4's sketch then branches on `if (g.boardFull)`, which does not exist.
-- **`GameOver.tsx:36-42`** (§8.5, "**three equally-weighted buttons**") — the source already weights them: `size="lg"` default / `size="md" variant="soft"` / `size="md" variant="ghost"`. They span 36-**44**. §8.5's contract obligation is argued from a hierarchy problem the source does not have.
-- **`BlockPopGame.tsx`** "21 selector subscriptions, 7 effects" — actual **29** and **8**.
-- gyre `store.ts` "13 bound constants" — 9 bounds + 7 defaults = 16; nothing gives 13.
-
-## F15 — §8.4's "sixteen" is 19, and two of its components are wrong *(confidence high)*
-
-1 rAF + 6 `Float32Array` + 1 `ResizeObserver` + 4 listeners + 2 subscriptions + 1 `matchMedia` + 3 timeouts + 1 capture = **19**. "Sixteen" appears twice. Of the components: only **two** of the three timeouts are uncleaned (`controls.tsx:67` is cleared at `:70`), and there are **five** window/document listeners once `controls.tsx:68` is counted. The number is doing rhetorical work ("the contract has a place for all sixteen").
-
-## F16 — §3.2's global inventory does not sum, and three group counts are wrong *(confidence high)*
-
-The headline is exact: 64 `var` bindings + 63 function declarations = **127** names. The table beneath it sums to **63** — `canvasChannel` (`:261`) falls in no group. "Console state + timers `:116-121`, `:124` → 8" is neither the statement count (7) nor the binding count (10). "Draw panel `:262-276`, `:332-334` → 18" is **17** (reaches 18 only if the range starts at `:261`). "Map panel `:1129-1146` → 18" is **17**.
-
-## F17 — repeated count errors in the exhaustive tables *(confidence high)*
-
-- "**all four PIN outcomes** (`:1913`, `:1917`, `:1918`)" — §1.4 *and* §8.2 ob. 1. Three citations for four. There are **three** `render()` calls in the PIN path; the fourth outcome (confirm-mismatch, `:1894`) calls `buildOverlay()`, not `render()`.
-- §3.1's `pop` row: "**3** gate-failure paths" followed by **four** line numbers. `:862` is not a gate — it is the camera *retry* `.catch`, reached only after the panel is already open. §1.5 item 2 lists only the correct three (`:438`, `:770`, `:1294`).
-- §4 `keyTap` "18 call sites" — actual **19** (`:546, :589, :597, :609, :620, :632, :638, :875, :888, :938, :947, :958, :1419, :1497, :1503, :1513, :1523, :1530, :1881`), and "every tool/colour/size/emoji pick" omits zoom, camera flip, filter pick, and the PIN keypad.
-- §4 `blip` row omits **`:778`** — `openCamera()` plays `blip` on *open*, so "all three panel closes … shutter" is not exhaustive, in a section whose entire value is exhaustiveness.
-- §7.2 `src/lib/auth/**` "(18" — blockpop's auth tree holds **16** files; §7.2's own "37 under `src/`" only reconciles with 16.
-- §1.1 "The other five … **play a sound** and set a toast (`index.html:1690-1698`)" — the sound is at `:1685`, outside the cited range.
-
-## F18 — four misattributed cross-document citations, two inside tables headed "verified" *(confidence high)*
-
-- **§10.5**: "**§3's** `sw.js:19-27` citation for the activate handler." That citation is at `architecture.md:160`, inside **§6**; architecture §3's table contains no such citation. The findings document's own §6.3 calls it "architecture **§6**'s amended hazard" — §10.5 contradicts §6.3.
-- **§10.4** row: "**§5** — `powerUp` is reachable only from the Power button … | confirmed." Architecture §5 makes no reachability claim; that is the findings document's own claim, listed in a table of the architecture's claims it verified. (The underlying fact is true — `powerUp` occurs only at `index.html:84` and `:105`.)
-- **§9.3**: "the picker must stay ignorant of any game's internals (**architecture §5**)" — that sentence is architecture **§4** (`architecture.md:94-95`).
-- **§8.2 ob. 2**: "This is what makes northstar **invariant 5** structural." Invariant 5 (`northstar.md:63`) is about *resuming* play after a terminal state, not about exiting to the picker; the exit concern is northstar §6 and invariant 2. §8.5 uses invariant 5 correctly, so the document is internally inconsistent about what it cites.
-
-Also: §10.1 presents architecture §3's "Cached assets" row as a block quote and **adds bold emphasis** to the second clause — the one clause the entire §10.1 contradiction turns on. Wording is otherwise verbatim.
-
-## F19 — three citation errors in §6 / §10.2 *(confidence high)*
-
-- **`index.html:190` is WRONG** (§6.2 claim 3, "the app issues `POST`s to Supabase"). `:190` is a header ternary `'Prefer': method === 'POST' ? 'return=minimal' : ''`. The fetch is at `:194`; the method default at `:185`. `:202`/`:210` are exact, and the underlying mechanism is correct.
-- **§10.2**: "`:1915` then only selects a sound" — `:1915` is the comparison `if (pin === state.storedPin) {`; the sounds are at `:1917`/`:1918`.
-- **§6.1**: `caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))` cited as `sw.js:11-14`; that expression is `:12-13`.
-
-## F20 — §6.2 claim 1 is imprecise in a way that matters for §6.1's own recommendation *(confidence high)*
-
-"Every **successful** response is written into the cache." There is no success filter in `sw.js:33-37`. `fetch()` resolves for 404 and 500, so **error responses are cached**. Directly load-bearing: a mistyped `games/<id>.js` path fetched once online caches a 404 body, which is then served offline as a successful-looking cached miss rather than failing — which is the case §6.1's asserted asset check exists to catch.
-
-Related and unstated: `sw.js` is registered at the bottom of `index.html` (`:1935-1937`), so on the very first load the page is uncontrolled and the head's CDN requests (`:11-13`) are **not** intercepted. §10.1's "anything fetched once while online **is** cached" holds from the second load, not the first.
-
-## F21 — §6.2 claim 3 states the unhandled rejection unconditionally *(minor)*
-
-Both POST paths are gated on `isSupabaseConfigured()` (`:183`, `:201`, `:209`), so it occurs only on a configured device.
-
-## F22 — §9.1's "same field names, same value shapes" is not quite true *(minor)*
-
-The button records (`index.html:95-106`) use **`emoji`**, not `icon`, and store escaped surrogate pairs (`'📡'`) where §9.1's example uses a literal glyph; they also carry `bg` and `msg`. `color`/`glow`/`label`/`sound` do match. Also §9.4's citation `index.html:1629`/`:1665` for "the rails' fixed four-per-side layout" resolves to two generic `justify-content:space-evenly` flex columns — the four-per-side fact lives in `BTNS_LEFT`/`BTNS_RIGHT` at `:95-106`.
-
-## F23 — §7's exclusion citation over-reaches *(minor)*
-
-WO §1.3 names only `.grok/` and `.vercel/` as excludable wholesale, and WO §3.4 says the *opposite* of a wholesale exclusion: "the disposition table covers **every** source file … Files dismissed as scaffolding are still listed, marked `discard`." Neither section rules `screenshots/` (15/19) or `attachments/` (2) excludable. Both WO sections exist; the exclusion is defensible on the merits; the cited authority does not grant it.
-
-## F24 — a gate conflict the document's §11 will trip *(observation)*
-
-§11 asserts "`git diff main --stat` for this branch shows changes under `docs/` only." Verified true right now against `origin/main` @ `4329c0c` (the header's base claim is correct; the local `main` ref is the stale one). But `FEEDBACK.md` is currently untracked at the **repo root** — WO §6 requires it "parked with the branch," while WO acceptance §3.1 says "changes under `docs/` only. **Any other path fails.**" Committing `FEEDBACK.md` where WO §6 asks makes §11's checkable fact false.
-
-## F25 — limits §8.6 should state and does not *(confidence high)*
-
-§8.6 exists to state the contract's edges "so the limits are known rather than discovered." Three are missing:
-
-- **No confirmation before discard.** `teardown` is synchronous, has no veto and no async form, and the shell's back affordance gives the game no notice. A build-a-castle toy cannot ask. (For this audience that is probably the *right* answer — which is why it should be a ruling, not an omission.)
-- **No safe-area / chrome inset.** `host` is `inset:0` (full viewport) with the shell's back affordance painted on top; nothing tells the game where the chrome is, so a game can draw a control under an unpressable region.
-- **No asset channel.** §8.3 gives no `fetch`; §9.2 rejects a per-game asset outright ("a **second** asset per game, breaking invariant 6's 'one manifest line'"). Note this narrows invariant 6, which actually reads "its own module, one registry entry, and **the asset manifest**" (`northstar.md:64`) — plural assets in one manifest are not obviously forbidden. The document's reading excludes an entire class of games by construction.
-
-## Operational note
-
-One verification subagent, while measuring line lengths in `~/PupPad-sources/*/src/lib/auth/preview.ts`, ran a redaction that did not fire on line 21 (a continuation line with no `=`), so the 64-character literal was echoed into that subagent's tool output. It is not reproduced anywhere in this report, was not written to any file, and no file was modified. The §7.4 facts themselves check out: the two `preview.ts` files are byte-identical (same SHA-256), line 19 carries a 12-character client identifier and line 21 a 64-character literal, the value appears in exactly one file per workspace and **zero** files under `.vercel/` or `.grok/`, and `git ls-files` returns 0 matches for `preview.ts`.
+The three ignored errors are exactly the ones a naive check would go red on:
+
+```
+ignored  https://cdn.jsdelivr.net/.../supabase.min.js:0   Failed to load resource: net::ERR_FAILED
+ignored  https://cdnjs.cloudflare.com/.../leaflet.min.css:0 Failed to load resource: net::ERR_FAILED
+ignored  https://cdnjs.cloudflare.com/.../leaflet.min.js:0  Failed to load resource: net::ERR_FAILED
+```
+
+**Residual risk — stated, not claimed away:**
+
+1. **It exercises PupPad without Leaflet and Supabase present.** That is a real
+   configuration — invariant 3 requires the app work with no network — but it is
+   not the only one. **A defect that appears only when Leaflet HAS loaded is
+   invisible to this check.** This is the largest gap and it does not close until
+   `PUP-WO-0600` vendors the libraries.
+2. **If PupPad's own code throws *because* a third-party global is missing, this
+   goes red and points at `index.html`.** That is the correct verdict under
+   invariant 3, but the message names the symptom rather than the missing
+   dependency. Worth knowing before someone debugs it.
+3. **It loads the console; it does not press the buttons.** Nothing behind a tap
+   is covered — including the un-closable-overlay trap
+   (`docs/findings/PUP-WO-0000.md` §1.6), which is `PUP-WO-0600`'s.
+4. **One same-origin exclusion exists**: `/favicon.ico`, matched by exact URL. The
+   browser requests it unprompted for every document and PupPad never references
+   it, so its 404 is not "an error originating in PupPad's own code". It is still
+   reported in the log. The exclusion is one exact path, not a pattern.
 
 ---
 
-# PROBE RECORDS
+## The adversarial pass
 
-## Probe 1 — break the module contract (§8)
+Run as a black-box task per WO §5 and architecture §5: a fresh, context-isolated
+subagent given the artifact and the ground truth and none of my reasoning.
+**Verbatim prompt and unedited output: `docs/findings/PUP-WO-0100-adversarial.md`.**
+This section is the summary; that file is the evidence. Neither summarises the
+other's job.
 
-Nine games designed against §8.1/§8.3/§8.5. Four cannot be expressed; three more only with limits §8.6 does not list.
+**It found fifteen defects, four of them serious, and it demonstrated rather than
+reasoned almost all of them.** It also retracted one finding after testing it in a
+real browser and discovering the code was right and its reasoning wrong — which is
+the behaviour that makes the other fourteen worth taking seriously.
 
-| game | verdict | how / why |
-|---|---|---|
-| Aquarium / lullaby (sustained sound across a pause) | **CANNOT** | `api.sound` is fire-and-forget with no handle and no stop; §8.3 forbids an own `AudioContext`; `<audio>` needs an asset §9.2 rejects. See F2. |
-| Xylophone / piano (8 pitches) | **CANNOT** | Bank is 12 fixed cues, no pitch argument. Adding voices is a shell edit to a switch table 1,500 lines from the registry. |
-| Musical statues (30s countdown, freeze) | expressible | `setInterval` created in `mount`, cleared in `teardown`; wall-clock via `Date.now()` to survive background throttling. Any cue it plays still cannot be stopped (F2), and §8.6 admits there is no host pause hook. |
-| Two children touching at once | **partially** | Input is expressible (`pointerdown` + `pointerId` on `host`). Configuration is not: the module cannot read `players` (F1), so a 2-player variant needs a second module file. |
-| Build-a-castle, ask before discarding | **CANNOT** | `teardown` is synchronous, has no veto, and the shell's back path gives no notice. Only mitigation is continuous `api.save`, which §8.3 scopes as "preference state, never identity, never required." |
-| Sprite-sheet / sampled-audio / custom-font game | **CANNOT** | No `fetch` in `api`; §9.2 rejects a per-game asset. See F25. |
-| Resume exactly where it left off, days later | expressible | `api.save`/`api.load` are synchronous, per-id `localStorage`; a board serializes fine. Two unspecified edges: no failure semantics on `save` (F9), no size bound. |
-| Level-select → level (two screens inside itself) | expressible | Game swaps DOM inside `host`. Unstated: the shell's back is one-way to the picker with no hook to intercept, so a child on screen 3 lands in the picker. |
-| Self-ending game | **CANNOT, by contradiction** | §8.4 reserves `api.close()` for exactly this; §8.5 forbids it. See F6. |
+### I broke the freeze rule I asked for, and it cost part of the review
 
-**Judgement.** The lifetime/teardown core is genuinely general, not a description of the two games in hand — §8.1's returned-closure argument (teardown must close over the scope that created the handles) is the strongest thing in the document and I could not break it. What the contract lacks is a **parameter channel** (F1) and a **resource handle for sound** (F2). Both holes are invisible from Gyre and Block Pop specifically, because neither needs configuration and neither needs sustained audio — which is exactly the failure mode WO §5 warned about.
+WO §5(a) and architecture §5 require the artifact frozen before dispatch. I froze
+`.github/` at `413c833` and then **rewrote `docs/FEEDBACK.md` while the pass was
+running.** Two consequences, both mine:
 
-## Probe 2 — verify every citation
+1. Ground truth moved under a reviewer told it would not.
+2. At `413c833`, `docs/FEEDBACK.md` was still `PUP-WO-0000`'s — so **§3.3's red
+   demonstrations and §3.4's determinism justification were not in the frozen
+   artifact and went unreviewed.** The two things the WO most wanted scrutinised
+   were the two things the reviewer could not see.
 
-Worked section by section. **≈272 `file:line` citations into `index.html`/`sw.js` checked** (201 in §§0-4, 71 in §6/§8-§11), plus ~24 citations into the two source workspaces and ~105 quantitative claims. Each was opened at the cited line and judged against the claim.
+I asked for this rule after `PUP-WO-0000` paid for it, and then half-kept it. Next
+time the freeze covers every file the WO names as a deliverable, not just the code.
 
-**Line-level discipline into `index.html` and `sw.js` is genuinely good.** Every `§1.2` acquire/release pair, every `§1.3` monkey-patch line, the `§2` code block (character-accurate, not a paraphrase), all twelve sound-name lines, every `§3.1` read/write list, all five never-read globals, the `§6.2` `sw.js:33-41` block (every per-line annotation exact), and `§1.1`'s three opener spans (262/218/348 — verified as opener-function length, arithmetic correct) all resolve exactly. `index.html` = 1,942 and `sw.js` = 43 confirmed. Zero `window.addEventListener` / `document.addEventListener` / inline `on*=` in 1,942 lines — §0 and §1.6 are exact. All 22 source-workspace line counts exact to the line.
+### Disposition of all fifteen
 
-Failures found: **1 outright wrong** (`index.html:190`, F19), **3 off-by/padded** (`sw.js:11-14`, `index.html:1915`, `sim.ts:76` — the last is wrong-file, F14), **1 partially supported** (`index.html:1629`/`:1665`, F22), **4 misattributed cross-document references** (F18), and **5 source-workspace citations that do not support their claim** (F14). Substantive claims with no citation: §8.2 ob. 2's invariant-5 attribution, §9.5's "1,600 lines" (measured ≈1,580, approximately right). The failure mass is not in `file:line` discipline — it is in **counts, cross-document section references, and citations into the source workspaces**, i.e. exactly the places §7's "all 33 resolved" self-audit claimed to have covered.
+Reviewer's numbering. Nothing waved off; where I disagreed I say so.
 
-## Probe 3 — attack the registry shape (§9)
-
-Ran every case listed, plus the ones §9.4 does not consider. Results in **F10** (§9.2's central argument fails on its own terms — requiredness buys presence, not recognisability, and a present-but-invalid `sound` reproduces the exact quiet failure it claims to prevent), **F11** (six unconsidered cases, one wave-away, one "unreachable" that nothing makes unreachable), **F1** (the `mode`-passing hole), and **F22** (the button-record vocabulary is not actually reused). §9.4's answers for over-long label, twelve entries, and one entry are adequate; the twelve-entry answer's warning against copying the rails' layout is the right instinct even though its citation is weak.
-
-## Probe 4 — re-verify the PIN/lock from scratch
-
-Traced independently, without relying on either document. `#lockBtn` markup at `index.html:1623` (inside `#app`, so destroyed and rebuilt by every `render()`) → its only binding at `:1730-1734` in `attachEvents()` → `showPinOverlay('set'|'unlock')` at `:1843` → keypad handler `:1878-1906` → `onPinComplete` `:1910-1920` → `goFullscreen`/`exitFullscreen` `:1787-1795`. Enumerated every read: `state.isLocked` at `:1605`, `:1623` (×3), `:1732`; `state.storedPin` at `:1915` only.
-
-**What the lock actually does:**
-1. Set: stores 4 chars in `state.storedPin`, `isLocked = true`, `doSound('lock')`, `goFullscreen()`, `render()`.
-2. Unlock, correct PIN: clears both, `doSound('unlock')`, `exitFullscreen()`, `render()`.
-3. Unlock, **wrong** PIN: `doSound('error')`, `render()`. `isLocked` stays `true`, `storedPin` preserved, fullscreen not exited. The dialog is already gone, closed at `:1901` before the comparison.
-4. Every `isLocked` read is cosmetic (icon colour `:1605`; background, `lockPulse` animation, and open/closed padlock glyph `:1623`) or mode-selecting (`:1732`).
-5. No opener, no `.pad-btn` handler (`:1680-1699`), no radar handler, no settings handler consults it. All eight buttons and all three panels stay fully operable.
-6. Nothing persists — `localStorage` holds exactly three keys (`:158-163`, `:172-173`), none PIN-related. Reload re-evaluates `:116`; the app silently unlocks.
-
-**Verdict on the document's account: correct on architecture §3.1's two claims, incorrect on the one thing it adds beyond them, and incomplete in two further ways.**
-
-- Correct and independently confirmed: memory-only PIN lost on reload; gates no content; settings reachable while locked (`#settingsBtn` bound unconditionally at `:1736-1737`) with the Supabase anon key in a plain-text input at `:1818` (`value="'+keyVal+'"`).
-- **Incorrect**: "the unlock check cannot reject" / "it does not reject a wrong PIN" (F3). It rejects. What it does not do is *re-prompt*.
-- **Incomplete (a)**: the accurate version of what §5 was reaching for is that there is **no retry, no lockout, and no rate limit** — the wrong-PIN path dismisses the dialog and the lock button stays live, so the PIN is brute-forceable with unbounded attempts.
-- **Incomplete (b)**: the lock's "only functional effect", fullscreen, is **not enforceable** — any system gesture exits fullscreen, leaving `isLocked === true` while nothing whatsoever is different, red pulsing padlock and all. Conversely, fullscreen is the only thing in the app doing anything at all for invariant 2 (hiding browser/system chrome), so "it contains nothing" overshoots in the other direction too. §5's ruling for later WOs is right in substance; its supporting statement is not.
-
----
-
-**Verdict: not safe to build against as written.** §8's lifetime core is sound and worth keeping, but §9.1/§9.3 are mutually unimplementable (F1), §8.3 cannot release sound (F2), §5/§10.2 would amend a ratified document with a false claim (F3), and §8's obligations contradict each other in three places (F6, F7, F9) — fix those seven before any P2–P4 work order cites these specifications.
-`````
-
-### Disposition of every finding — what I did about each
-
-Nothing was waved off. Where I disagreed, I say so and why.
-
-| # | Reviewer's finding | Verdict | What changed |
+| # | Finding | Verdict | What changed |
 |---|---|---|---|
-| **F1** | No channel from a registry entry into a game; §9.3 unimplementable | **Accepted — the most serious defect found** | Added `api.entry` (§8.3) and a required `params` field (§9.1); `id` no longer forced to equal the module basename, so two entries share one module. Fixes §9.5's three-file table for the second game and turns architecture §7 seam 4 from a picker badge into a real channel (§8.7). |
-| **F2** | `api.sound` has no handle; sustained-audio and pitched games inexpressible | **Accepted, partly disputed** | The *leak* half is wrong — each cue hard-stops itself via `o.stop(t + dur)` (`index.html:67`, `:74`) in under a second, so nothing outlives teardown and §8.1's guarantee holds; I corrected §8.1's wording rather than the design. The *expressiveness* half is entirely right and is the contract's sharpest edge: §8.6 now states it as a ruling and **flags it upward** — the fix is an architecture §4 call, not mine. See F13 below. |
-| **F3** | §5's "the unlock check cannot reject" is false, and §10.2 would write it into a ratified document | **Accepted — I was wrong** | §5 item 3 and §10.2 rewritten; a wrong PIN *is* rejected (`index.html:1918` leaves `isLocked` true). The true finding is narrower and better: no retry, no lockout, no rate limit. A correction note is left in place at both sites. |
-| **F4** | Obligation 3's z-index survey missed six shell surfaces above 80, and §1.5 says two can fire over a live game | **Accepted** | Obligation 3 rewritten with the full inventory and a band requirement. This is the finding I most regret missing — the document established both halves and never joined them. |
-| **F5** | §1.6 cleared the other two openers on incomplete evidence | **Accepted** | §1.6 now presents the trap as structural with a three-opener span table; only Map is confirmed reachable. |
-| **F6** | `api.close()` has no legal caller; "exactly one close path" self-contradicted | **Accepted** | Obligation 4 rewritten: one `endGameSession()`, two callers, `api.close()` delegates to it rather than being a second path. |
-| **F7** | §8.1's "observable test" is forbidden by obligation 6 | **Accepted** | Test restated as **remount**, which is observable and permitted — and is exactly what Block Pop's `store.ts:156` singleton fails. |
-| **F8** | §8.3 presented honour-system absences as structural | **Accepted** | Rewritten to separate the two. The `AudioContext` absence is real; withholding `fetch` is a convention enforced by a CI grep that can go red — architecture §5's own preferred mechanism. §8.1's returned-closure argument keeps its standing; §8.3's no longer borrows it. |
-| **F9** | `teardown` not exception-safe; the Gyre sketch ends it with a throwing call | **Accepted** | Obligation 5 now wraps `teardown` and removes `host` in a `finally`; `api.save` is specified never to throw; the sketch reordered. |
-| **F10** | §9.2's central argument fails on its own terms | **Accepted** | §9.2 rewritten to claim only what is true: requiredness plus twelve named validators removes *silent* failures; recognisability stays a human judgement. Added icon/colour uniqueness and hex validation, and made `icon` emoji-only — which also closes the `innerHTML` sink the draft opened by permitting inline SVG. |
-| **F11** | §9.4 omits six cases and waves away a seventh | **Accepted** | All six added as "cannot occur — CI asserts", plus a real requirement for a failed `import()`: the tile must show it is working within ~300ms and play `error`, because a silent tile is invariant 1's failure mode. |
-| **F12** | §7 arithmetic: 487 not 486, and stale by §7.1's own ruling | **Accepted** | Corrected to 22 files of 487, in §7 and in §11's table. |
-| **F13** | §7.1's ruling argued from a false premise | **Accepted** | The two `button.tsx` files are genuinely different implementations. The ruling stands; its reason is replaced with a true one (neither survives a no-build-step target). |
-| **F14** | Five source citations do not resolve; §7's "all 33 resolved" oversells | **Accepted** | All five corrected in place. §7's method note now distinguishes *spot-checked* from *verified* — the 33 I checked did resolve; I repeated others I had not checked, and that is the whole difference. |
-| **F15** | §8.4's "sixteen" is 19 | **Accepted** | Corrected, with the component breakdown. |
-| **F16** | §3.2's group table sums to 63, stranding `canvasChannel` | **Accepted** | Table rebuilt; sums to 64. |
-| **F17** | Six count errors in tables whose value is exhaustiveness | **Accepted** | All six corrected: PIN outcomes 4→3, `pop` gate paths, `keyTap` 18→19, `blip` gains `:778`, auth 18→16, §1.1's sound citation. |
-| **F18** | Four misattributed cross-document citations | **Accepted** | All four corrected. The invariant-5 one mattered most: obligation 2 is about not stranding a child (northstar §6, invariant 2), not about resuming play after a terminal state — §8.5 had it right and §8.2 did not. |
-| **F19** | `index.html:190` wrong; two others imprecise | **Accepted** | All three corrected. |
-| **F20** | "every *successful* response" — there is no status filter, so 404s are cached | **Accepted, and it strengthens §6.1** | A mistyped `games/<id>.js` caches a 404 body that then serves offline as a plausible hit — which is precisely what §6.1's asset check exists to catch. Also added the reviewer's boundary condition: `sw.js` registers at `index.html:1935`, so the first load is uncontrolled and the head's CDN requests are never intercepted. |
-| **F21** | The unhandled rejection is conditional on Supabase being configured | **Accepted** | Noted in §6.2 and in F3 above. |
-| **F22** | Button records use `emoji`, not `icon`; the rails citation is weak | **Accepted** | §9.1 now states the two differences; §9.4 cites `BTNS_LEFT`/`BTNS_RIGHT` for the four-per-side fact. |
-| **F23** | The exclusion cites an authority that does not cover `screenshots/` | **Accepted** | §7 now states plainly that `screenshots/` is excluded on my judgement, not by ruling, and `attachments/` is listed rather than excluded. **Raised here as a scope question** — if CC-A wants all 34 screenshot files enumerated to satisfy WO §3.4 literally, say so and I will add them. |
-| **F24** | `FEEDBACK.md` at the repo root breaks the WO's own `docs/`-only gate | **Accepted — a real save** | Moved to `docs/FEEDBACK.md`, which satisfies WO §6 and WO §3.1 together. It matters beyond hygiene: architecture §6's bootstrap exception makes the `docs/`-only property *the reason a P0 merge is safe*. |
-| **F25** | Three limits §8.6 should state | **Accepted** | All three added, plus the reviewer's correction that §9.2's thumbnail rejection over-read invariant 6 — northstar says "the asset manifest", and several assets in one manifest are not obviously forbidden. |
-| **Operational note** | A verification subagent echoed the 64-char credential into its own tool output | **Accepted — reported below, not buried** | See the security note. |
+| **F1** | Check 1 parsed the inline script as **CommonJS**, so top-level `return` — which real Chromium refuses to execute the whole script over — passed green | **Accepted. The most serious defect found.** | Classic scripts now parse via `vm.Script`, which is true global-script mode; modules still via `node --check` on `.mjs`. Verified both ways: `node --check` accepts `return;`, `vm.Script` rejects it with `Illegal return statement`, matching the browser. Reviewer's exact repro now fails at `index.html:1939`. |
+| **F2** | Check 4 blind to the entire service worker; the comment named the gap and the code did nothing | **Accepted — and the reviewer's suggested fix does not work.** | I tried all three routes: `worker.on('console')` is not an API; `context.on('console'\|'weberror')` delivers page output only (verified silent for a `console.error` and a throw in `sw.js`); CDP refuses a Worker (`expected Page or Frame`) and browser-level `Target.setAutoAttach` attaches but Playwright's `CDPSession.send` takes no `sessionId`, so `Runtime.enable` cannot be routed. **Playwright 1.56.1 cannot observe it.** So: the false comment is gone, the limit is stated in the file and below, and I added the coverage that *is* reachable — a controlled reload asserting the worker actually takes control. Raised upward as F16. |
+| **F3** | Check 2's extensions missed video and modern audio entirely; manifest `shortcuts`/`screenshots` unread; `srcset` unparsed; a concatenation produced a bogus `.png` | **Accepted in full** | Extension list widened (mp4, webm, m4a, aac, flac, opus, mov, wasm, yaml, csv, xml, vtt…); `srcset`/`imagesrcset` parsed per-descriptor; `poster` and `data` attributes read; manifest `screenshots[]`, `shortcuts[].icons[]`, `shortcuts[].url` read; concatenation fragments diverted to a reported "unresolvable" list instead of becoming a bogus requirement. All ten of its shapes now caught or reported. |
+| **F4** | Check 3 passed green **and printed a false success line** whenever the base's `sw.js` was unreadable | **Accepted — and the two sub-cases needed splitting** | `sw.js` **absent** at base → pass, with an accurate message ("no previous cache generation to invalidate; nothing was compared"), because there genuinely is no stale cache. `sw.js` **present but `CACHE_NAME` unparseable** → **fail**, symmetric with the HEAD guard, because a prior cache exists and cannot be verified. Both demonstrated. |
+| **F5** | Check 4 sees nothing after 3s; `startPolling()`'s later ticks are outside the window | **Accepted as a limit** | Declared explicitly as limit 4 in the file header. Not closed — extending the window trades run time for a class of defect the check was never scoped to catch. |
+| **F6** | Check 2 would go **unfixably red** on `import(\`./games/${id}.js\`)` — the idiomatic shape invariant 6 makes inevitable | **Accepted. This was the best find of the pass.** | Template placeholders are now excluded from the must-cache set and **reported as unresolvable**, so the blind spot is visible rather than either silent or unsatisfiable. Verified: the exact repro is green and the dynamic reference is printed. |
+| **F7** | Check 1 false-red on a `<script>` inside an HTML comment | **Accepted** | The extractor now computes comment ranges and skips scripts inside them. Verified against the reviewer's repro. |
+| **F8** | `\b` matched after a hyphen, so `data-src`/`data-type` silently unchecked a whole script | **Accepted** | `(?<![\w-])`. Verified: a second script hidden behind `data-src`/`data-type` is now parsed and its syntax error caught. |
+| **F9** | `blob:`/`data:` URLs from our own origin classified foreign | **Accepted** | `isOurs` now recognises `blob:<origin>` and `data:`. Latent rather than live, fixed anyway — it is one line and it is a misclassification in the unsafe direction. |
+| **F10** | `cancel-in-progress` on `push: [main]` can leave the live commit with **no** verdict | **Accepted** | Now `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. Cancels superseded PR runs; never cancels a run on `main`. |
+| **F11** | Unguarded `statSync` — a broken symlink crashes check 1 with a raw stack trace | **Accepted** | Guarded; unreadable entries are skipped with a named message. |
+| **F12** | The CI browser path (`channel: 'chromium'`) has never been executed | **Accepted, unfixable here** | Correct: every local run sets `PUPPAD_CHROMIUM`. It stays **asserted, not verified** until a real CI run exists — see the gates note. |
+| **F13** | Two inline scripts sharing global lexical scope (`let x` twice) is invisible | **Accepted as a limit** | Real, and unreachable without linking the scripts into one parse. Recorded; not closed. Only bites once a second inline script exists, which nothing currently plans. |
+| **F14** | Check 3 leaked a raw `fatal:` line on a *passing* run | **Accepted** | `git show` stderr is now piped. A green run that prints `fatal:` teaches people to ignore `fatal:`. |
+| **F15** | The favicon exclusion was URL-shaped rather than initiator-shaped | **Accepted** | Now conditioned on the document not declaring `<link rel="icon">`. If PupPad ever adds one and the file is missing, that is a real uncached asset and is no longer excused. |
 
-**Where I did not simply comply:** F2 only. Its leak claim is wrong on the code, and I say so above rather than redesigning the audio path to fix a problem that does not exist. Its expressiveness claim is right, and rather than invent an audio API on my own authority I have stated the limit as a ruling and put the decision in front of CC-A (F13 below).
+**Its Probe 4 conclusion I accept without change:** no write, publish or leak path
+exists, and choosing `pull_request` over `pull_request_target` is the load-bearing
+security decision. Its one residual — a fork PR gets sudo-capable execution on an
+ephemeral runner via `--with-deps` — is compute abuse rather than compromise, with
+no secrets and a read-only token, and GitHub's first-time-contributor gate covers
+it. Recorded, not blocking.
 
-### F13 (upward) — the sound bank is the contract's sharpest edge, and it needs a ruling
-- **Where:** `index.html:76-89` (the twelve-cue bank), `index.html:62-75` (`mk()`/`sw()`), findings §8.6
-- **Type:** scope-question
-- **Detail:** `api.sound` gives a game twelve fixed cues, no pitch and no duration. A lullaby, an aquarium, or a xylophone — arguably the most obvious next toy after a drawing pad — cannot be built. Adding a voice means editing a switch table ~1,500 lines from the registry, which is structurally the defect findings §2 condemns in `attachEvents`, and it makes invariant 6's "nothing else" false.
-- **Recommendation:** the cheapest fix is a single `api.tone(hz, ms, wave)` primitive over the `mk()`/`sw()` helpers that already exist at `index.html:62-75` — it costs one shell function, keeps the one shared `AudioContext`, and makes a pitched instrument expressible without touching the bank. I have **not** specified it, because adding a member to the module contract's `api` is an architecture §4 decision.
-- **Decision needed:** **yes** — before any work order builds a game that wants a voice.
+**Its Probe 5 conclusion:** the central claim survived attack. A regex is correct
+for finding the end of a script element because the HTML tokenizer does not
+understand JavaScript. Sixteen hostile cases; the closing scan held in every one.
+What broke was everything *around* it — F7 and F8 — both now fixed.
 
-### Security note — a credential was echoed into a subagent's tool output
-- **Where:** `~/PupPad-sources/{blockpop,gyre}/src/lib/auth/preview.ts:21`; the adversarial reviewer's own verification subagent
+---
+
+## Findings — upward
+
+### F16 — Check 4 cannot see inside the service worker, and the tooling cannot make it
+- **Where:** `.github/ci/check-load.mjs`; `sw.js` entire
 - **Type:** risk
-- **Detail:** verifying finding F8 above, the reviewer spawned a subagent to measure the two lines. Its redaction did not fire on line 21 — a continuation line with no `=` — so the 64-character literal was printed into that subagent's tool output. It reached no file, no commit and no report, and the reviewer disclosed it rather than hiding it. **My own verification did not do this**: I measured identifier name, line length and literal length only. It is reported because a credential appearing anywhere it was not meant to is worth saying out loud, and because it is a real hazard in delegating work near secrets — the instruction "never print the value" was given and still nearly failed.
-- **Recommendation:** for any future sweep near credentials, hand subagents a pre-written redaction rather than the instruction to write one. Reinforces F8's recommendation that the Grok broker owner be told regardless.
-- **Decision needed:** no, beyond F8.
+- **Detail:** `sw.js` is one of two code files in the repo and the mechanism behind invariant 3. Playwright 1.56.1 exposes no route to its console output or uncaught exceptions — three attempts documented above and in the file. What *is* covered: `sw.js` is parsed by check 1 in true classic-script mode; a worker that fails to install or activate is caught (a `urlsToCache` entry pointing at a missing file fails `cache.addAll` — demonstrated); and the page is now verified to end up **controlled** by the worker. The residual gap is a runtime error inside a worker event handler that does not prevent activation. I demonstrated that a throwing `fetch` handler is **not** caught, because the browser falls back to the network.
+- **Recommendation:** either accept the gap explicitly, or `PUP-WO-0101` — which is opening `sw.js` anyway for `CACHE_PREFIX` — drives the worker over a raw CDP WebSocket instead of through Playwright's wrapper. I did **not** build that here; it is a driver change, not a check, and it is outside this WO.
+- **Decision needed:** **yes**
 
-### What the pass changed about my confidence
+### F17 — `index.html` has no `favicon.ico`, so every load logs a 404
+- **Where:** `index.html` (no `<link rel="icon">`), observed in every check-4 run
+- **Type:** note
+- **Detail:** cosmetic, and it is why check 4 needs a favicon exclusion at all. Not fixed: `index.html` is a protected surface and WO §4 ranks the rule above the improvement.
+- **Decision needed:** no
 
-Before it: I would have called the two specifications ready to build against. The reviewer's verdict — *"not safe to build against as written"* — was correct at the time it was written. Seven defects were load-bearing (F1, F2, F3, F4, F6, F7, F9), and F1 alone would have produced built-wrong work in P4, because the two-board-sizes ruling could not be implemented as specified.
+### F18 — the real-run gate (§3.2) is unmet, and it is the one gate I could not close
+- **Where:** this branch; no GitHub Actions run exists
+- **Type:** risk
+- **Detail:** the workflow triggers on `pull_request` and on pushes to `main`, so **no run happens until the PR exists.** I minted a scoped token and pushed the branch successfully; `gh pr create` was refused by a permission classifier on this box. I did not work around it. Consequences: §3.2's "green in a real run on the PR" is **unmet**, and F12's CI-only browser path stays unverified. Everything below the line in §3.3 is local execution, which is §3.3's "captured output" but not §3.2's real run.
+- **Recommendation:** open the PR from `build/wo-0100` → `main`, or authorise a retry.
+- **Decision needed:** **yes** — this blocks acceptance of §3.2, not the build.
 
-The part I want on the record: **F1 and F2 were both invisible from the two games the contract was demonstrated against.** Neither Gyre nor Block Pop needs configuration, and neither needs sustained audio. WO §3.5 asks for a demonstration against both games precisely to stop a description masquerading as a contract — and the demonstration passed while the contract still had two holes in it. A demonstration against the games in hand is necessary and is not sufficient; the ninth hypothetical game is what found these.
+### F19 — the checks execute PR-branch code, which is correct but worth stating once
+- **Where:** `.github/workflows/ci.yml`
+- **Type:** note
+- **Detail:** raised by the adversarial pass. `pull_request` (not `pull_request_target`) means fork PRs run with no secrets and a read-only token, which is the right call. A fork PR still gets arbitrary sudo-capable execution on an ephemeral runner via `npx playwright install --with-deps`. Compute abuse, not compromise.
+- **Decision needed:** no
 
 ---
 
 ## What did not work, and why
 
-- **The disposition table could not be produced by reading alone at acceptable
-  cost.** 487 files across two workspaces, of which 26 matter. I split it into two
-  context-isolated sweeps, one per workspace, and reconciled their counts against
-  an independent `find` of each tree before accepting either. Both reconciled
-  exactly (blockpop 99 classified + 143 excluded = 242; gyre 87 + 158 = 245), and
-  I spot-checked 33 of their `file:line` citations against the sources — all 33
-  resolved. **One arithmetic error survived into a summary line and was caught by
-  the reconciliation, not by the sweep** (F12). That is the argument for
-  reconciling delegated counts rather than trusting them.
-- **The two sweeps disagreed on one file** — `src/components/ui/button.tsx`,
-  classified `discard` by one and `rewrite` by the other. I ruled rather than
-  averaged, and the ruling changed three more files: findings §7.1. The
-  disagreement was informative — it exposed that the rubric's `rewrite` was
-  ambiguous between "behaviour wanted" and "file has a vanilla analogue", which
-  is a defect in how I wrote the rubric, not in either agent's reading.
-- **Architecture §3's Pages, `gh`, ntfy and Claude-Code rows could not all be
-  verified from here.** I re-queried the Pages API (exact match) and confirmed the
-  absence of `.github/` and the two line counts. The Precision's read-only `gh`
-  and the ntfy configuration were accepted as stated rather than tested —
-  testing the first would mean attempting a write, which is not mine to do.
-  Marked as accepted-not-verified in findings §10.4 rather than passed off as
-  measured.
-- **Two edits were made to the findings document after the adversarial pass was
-  dispatched**, and both are declared here rather than buried: §6.1's
-  `CACHE_NAME`-convention claim was strengthened with git evidence (`sw.js` has 17
-  commits, 13 of them version bumps), and a miscount — "all four PIN outcomes call
-  `render()`" when there are three (`index.html:1913`, `:1917`, `:1918`) — was
-  found by me during the pass and corrected after it returned. Neither was
-  prompted by the pass. The artifact should have been frozen at dispatch; it was
-  not, and saying so is cheaper than leaving CC-A to notice the timestamps.
+- **Making check 4 see the service worker.** Three routes, all dead ends against
+  playwright 1.56.1 (F2/F16). I stopped and declared the limit rather than
+  shipping the comment that claimed coverage — which is precisely what the
+  reviewer caught me doing the first time. **A false comment about coverage is
+  worse than an absent check**, because the check still looks like it covers the
+  thing.
+- **Claiming the controlled reload catches fetch-handler defects.** I added the
+  reload expecting it to. I then tested two defects — a throwing handler and one
+  serving a broken response — and **both stayed green**: a throwing handler falls
+  back to the network, and the reload is served by the already-controlling worker
+  rather than the newly-installed one. The comment now says what it actually
+  proves, which is narrower: that a worker reaches control at all.
+- **The first Chromium download** was killed at a tool timeout and left a
+  half-extracted directory that failed with a misleading "browser not installed"
+  message. Cost about twenty minutes. The check now honours `PUPPAD_CHROMIUM` so a
+  machine with a Chromium already installed does not need the download at all —
+  which is also what exposed F12, since that override means the CI branch is never
+  taken locally.
+- **`NODE_PATH` in the workflow did nothing.** ESM ignores it; `playwright`
+  resolves because `check-load.mjs` sits next to `.github/ci/node_modules`. Removed
+  rather than left implying a dependency that does not exist.
 
 ## What was deliberately not done
 
-- **No application code was changed.** F1, F2, F3, F5 and all of F11 are real
-  defects in `index.html` and `sw.js` that I could have fixed in minutes. WO §4
-  ranks the protected-surface rule above the improvement, and the bootstrap
-  exception in architecture §6 is what makes merging this work order safe *because*
-  its diff is confined to `docs/` — so fixing them here would have removed the
-  property that makes the merge safe, not merely exceeded scope.
-- **`sw.js`'s activate reap was not re-reported as a novel finding.** CC-A found it
-  before dispatch and owns the fix in `PUP-WO-0101`. Findings §6.3 records only a
-  severity amplification that follows from §10.1 — the reap also evicts the
-  runtime-cached Leaflet, which converts a graceful offline degradation into F1's
-  un-closable overlay. The diagnosis and the prefix-bounded fix are not disputed.
-- **No game code was ported, not even a proof-of-concept**, and no picker, CSS or
-  CI workflow was written. WO §4.
-- **`.grok/`, `.vercel/` and `screenshots/` were excluded wholesale by count**, per
-  the 2026-08-31 ruling. `_incoming/` was ignored as the transfer artifact WO §9
-  says it is, not flagged under §7.
-- **The credential at F8 was not opened.** I confirmed its existence by measuring
-  the shape of the two lines — identifier name, line length, and the length of the
-  quoted literal — without reading, printing or logging any value.
+- **No application code changed.** F17 and the un-closable-overlay trap are real
+  and both were left alone. WO §4 and §0: the protected-surface rule is what makes
+  this diff safe to merge without a firebreak, so breaking it to fix a 404 would
+  remove the property that permits the merge.
+- **No publication, no branch writes, no Pages build-type change.** `PUP-WO-0101`
+  and Scotty's respectively.
+- **No `CACHE_PREFIX` work.** Check 3 asserts `CACHE_NAME` *changed*; it does not
+  restructure how caches are named or reaped. Architecture §6, owned by `0101`.
+- **No linting or formatting checks.** Four checks, each red for exactly one
+  reason. A style check bundled in makes every red ambiguous.
+- **No fix for F13** (two inline scripts sharing lexical scope). Unreachable
+  without linking both scripts into a single parse, and nothing currently plans a
+  second inline script. Recorded as a limit.
 
-## Two things I would push back on, stated once
+## One thing I would push back on
 
-1. **F7 is the one that should not be filed and forgotten.** Northstar §5 says the
-   project "will not contain" third-party network calls, and it contains three on
-   every cold load. Whichever way it is resolved, resolving it is cheap now and
-   gets more expensive with every work order that cites §2's "no dependencies" as
-   though it were true.
-2. **Findings §8.7 changes P4's shape, not just its estimate.** Architecture §7's
-   seams 2 and 3 read as "keep the door open"; against the measured source they
-   are "build the door". Seam 3 in particular means consolidating five board-writing
-   actions into one reducer, which is a refactor of the ported engine rather than a
-   constraint on how it is ported — and it is much cheaper before the port than
-   after.
+**F16 should not be quietly accepted.** The other fourteen findings are closed or
+declared, but this one leaves `sw.js` — the file northstar invariant 3 depends on
+— with runtime behaviour that no check watches. It is tempting to let it ride
+because the workflow is green and the gap is narrow. That is exactly the shape of
+"looks like coverage" this work order exists to prevent, and it is worth a ruling
+rather than an omission, ideally while `PUP-WO-0101` has `sw.js` open anyway.

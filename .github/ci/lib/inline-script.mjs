@@ -26,7 +26,9 @@ const JS_TYPES = new Set([
 ]);
 
 function attr(attrs, name) {
-  const m = attrs.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+  // (?<![\w-]) not \b: \b matches after a hyphen, so `data-src=` would read as
+  // `src=` and silently mark an inline script external — leaving it unparsed.
+  const m = attrs.match(new RegExp(`(?<![\\w-])${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
   if (!m) return null;
   return (m[2] ?? m[3] ?? m[4] ?? '').trim();
 }
@@ -36,11 +38,31 @@ function attr(attrs, name) {
  *   One entry per inline (src-less) script with JS semantics. `startLine` is the
  *   1-based line in `html` on which the script body begins.
  */
+/** Ranges of `<!-- ... -->` comments, so a commented-out <script> is not treated
+ *  as one. Commenting a block out is ordinary HTML; reporting a parse error on
+ *  code no browser will execute is a false red, and false reds get checks muted. */
+function commentRanges(html) {
+  const ranges = [];
+  let i = 0;
+  for (;;) {
+    const start = html.indexOf('<!--', i);
+    if (start === -1) break;
+    const end = html.indexOf('-->', start + 4);
+    if (end === -1) { ranges.push([start, html.length]); break; }
+    ranges.push([start, end + 3]);
+    i = end + 3;
+  }
+  return ranges;
+}
+
 export function extractInlineScripts(html) {
   const out = [];
+  const comments = commentRanges(html);
+  const inComment = (i) => comments.some(([a, b]) => i >= a && i < b);
   SCRIPT_OPEN.lastIndex = 0;
   let m;
   while ((m = SCRIPT_OPEN.exec(html)) !== null) {
+    if (inComment(m.index)) continue;          // commented-out script: not a script
     const attrs = m[1] || '';
     const bodyStart = m.index + m[0].length;
 

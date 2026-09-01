@@ -45,7 +45,10 @@ const norm = (p) => p.replace(/^\.\//, '').replace(/^\//, '');
 const cached = new Set([...listMatch[1].matchAll(/['"]([^'"]+)['"]/g)].map(m => norm(m[1])));
 
 // ---- what is referenced ----
-const ASSET_EXT = /\.(html|js|mjs|css|png|jpe?g|gif|svg|webp|avif|ico|json|woff2?|ttf|otf|mp3|ogg|wav|webmanifest)$/i;
+// Deliberately wide. The previous list stopped at 1990s audio and had no video at
+// all, which for a sound-and-picture console for a three-year-old is the most
+// likely next asset. Adding an extension is cheap; a missed asset is silent.
+const ASSET_EXT = /\.(html|js|mjs|css|png|jpe?g|gif|svg|webp|avif|ico|bmp|json|webmanifest|woff2?|ttf|otf|eot|mp3|ogg|oga|wav|m4a|aac|flac|opus|weba|mp4|webm|mov|m4v|txt|csv|xml|yaml|yml|wasm|vtt)$/i;
 const isLocal = (u) =>
   !/^[a-z][a-z0-9+.-]*:/i.test(u) &&        // http:, https:, data:, blob:, mailto:
   !u.startsWith('//') &&                     // protocol-relative
@@ -57,19 +60,46 @@ const swRegistered = new Set(
   [...html.matchAll(/serviceWorker\s*\.\s*register\s*\(\s*['"]([^'"]+)['"]/g)].map(m => norm(m[1]))
 );
 
-const refs = new Map(); // normalised path -> [how it was found]
+const refs = new Map();     // normalised path -> [how it was found]
+const dynamic = [];         // references this scanner provably cannot resolve
+
 function note(raw, how) {
-  if (!raw || !isLocal(raw)) return;
-  const clean = raw.split(/[?#]/)[0].trim();
+  if (!raw) return;
+  const s = raw.trim();
+
+  // A template placeholder cannot be resolved to a path, and emitting it as a
+  // required entry would be UNSATISFIABLE — no urlsToCache line can ever match
+  // `games/${id}.js`. Silence would be worse: that is exactly the shape northstar
+  // invariant 6 makes idiomatic. So it is skipped from the must-cache set and
+  // REPORTED, loudly, as a blind spot.
+  if (/\$\{|\$\(/.test(s)) { dynamic.push(`${how}: ${s}`); return; }
+
+  if (!isLocal(s)) return;
+  const clean = s.split(/[?#]/)[0].trim();
   if (!clean || !ASSET_EXT.test(clean)) return;
+  // "sprites/" + "dog" + ".png" makes the literal ".png" match. A path whose
+  // basename is empty is a fragment of a concatenation, not an asset.
+  const base = clean.split('/').pop();
+  if (base.startsWith('.')) { dynamic.push(`${how}: ${s} (looks like a concatenation fragment)`); return; }
   const k = norm(clean);
   if (!refs.has(k)) refs.set(k, []);
   refs.get(k).push(how);
 }
 
+/** srcset="a.png 1x, b.png 2x" — the path is not the whole attribute value. */
+function noteSrcset(value, how) {
+  for (const part of value.split(',')) {
+    const url = part.trim().split(/\s+/)[0];
+    if (url) note(url, how);
+  }
+}
+
 // (a) HTML attributes that fetch: src, href
-for (const m of html.matchAll(/\b(src|href)\s*=\s*("([^"]*)"|'([^']*)')/gi)) {
+for (const m of html.matchAll(/(?<![\w-])(src|href|poster|data)\s*=\s*("([^"]*)"|'([^']*)')/gi)) {
   note(m[3] ?? m[4], `index.html ${m[1]}=`);
+}
+for (const m of html.matchAll(/(?<![\w-])(srcset|imagesrcset)\s*=\s*("([^"]*)"|'([^']*)')/gi)) {
+  noteSrcset(m[3] ?? m[4], `index.html ${m[1]}=`);
 }
 // (b) CSS url() inside inline <style>
 for (const m of html.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)) note(m[1], 'index.html css url()');
@@ -85,6 +115,11 @@ if (existsSync(manifestPath)) {
   try {
     const mf = JSON.parse(readFileSync(manifestPath, 'utf8'));
     for (const icon of mf.icons || []) note(icon.src, 'manifest.json icons[].src');
+    for (const sc of mf.screenshots || []) note(sc.src, 'manifest.json screenshots[].src');
+    for (const sh of mf.shortcuts || []) {
+      for (const icon of sh.icons || []) note(icon.src, 'manifest.json shortcuts[].icons[].src');
+      if (sh.url) note(sh.url, 'manifest.json shortcuts[].url');
+    }
     if (mf.start_url) note(mf.start_url, 'manifest.json start_url');
   } catch (e) {
     console.error(`CHECK 2 FAILED — manifest.json is not valid JSON: ${e.message}`);
@@ -102,6 +137,10 @@ for (const [path, hows] of refs) {
 console.log(`  urlsToCache (${cached.size}): ${[...cached].map(c => c || './').join(', ')}`);
 console.log(`  local assets referenced (${refs.size}): ${[...refs.keys()].join(', ')}`);
 if (swRegistered.size) console.log(`  excluded (a worker must not cache itself): ${[...swRegistered].join(', ')}`);
+if (dynamic.length) {
+  console.log(`  UNRESOLVABLE references this scanner cannot check (${dynamic.length}) — verify by hand:`);
+  for (const d of dynamic) console.log(`    dynamic  ${d}`);
+}
 
 if (missing.length) {
   console.error(`\nCHECK 2 FAILED — ${missing.length} local asset(s) referenced but not in sw.js's urlsToCache:\n`);

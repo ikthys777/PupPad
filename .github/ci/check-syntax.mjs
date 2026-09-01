@@ -9,7 +9,8 @@
  * difference between a usable failure and "there is an error somewhere in 1,900
  * lines".
  */
-import { readFileSync, writeFileSync, mkdtempSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, readdirSync, statSync, existsSync } from 'node:fs';
+import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, relative, extname } from 'node:path';
@@ -24,22 +25,46 @@ function walk(dir, acc = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
     const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, acc);
+    // A dangling symlink would make statSync throw and take the whole check down
+    // with a raw stack trace — red, but for a reason the check never names.
+    if (!existsSync(p)) { console.log(`  skip  ${relative(REPO, p)}  (broken symlink or unreadable)`); continue; }
+    let st; try { st = statSync(p); } catch { continue; }
+    if (st.isDirectory()) walk(p, acc);
     else acc.push(p);
   }
   return acc;
 }
 
-/** Parse `source` with Node. `ext` picks script (.js/.cjs) vs module (.mjs) semantics. */
-function parse(source, ext, label) {
-  const f = join(tmp, `u${failures.length}_${Math.random().toString(36).slice(2)}${ext}`);
+/**
+ * Parse `source` in the mode a browser would use.
+ *
+ * CLASSIC SCRIPT — vm.Script, NOT `node --check`. This distinction is the whole
+ * correctness of this check. `node --check` on a .js/.cjs file parses as
+ * CommonJS, which wraps the source in a function, and a function body legalises
+ * constructs a browser classic script rejects. `return;` at top level is the
+ * concrete case: `node --check` accepts it, Chromium refuses to execute the
+ * entire script with "Illegal return statement". vm.Script compiles in true
+ * global-script mode and rejects it, matching the browser.
+ *
+ * MODULE — `node --check` on a .mjs file, which is genuine module mode (and
+ * correctly rejects top-level return as well).
+ */
+function parse(source, isModule, label) {
+  if (!isModule) {
+    try {
+      new vm.Script(source, { filename: label });
+      return null;
+    } catch (e) {
+      const line = e.stack?.split('\n')[0] ?? label;
+      return `${line}\n${e.name}: ${e.message}`;
+    }
+  }
+  const f = join(tmp, `u${failures.length}_${Math.random().toString(36).slice(2)}.mjs`);
   writeFileSync(f, source);
   try {
     execFileSync(process.execPath, ['--check', f], { stdio: ['ignore', 'pipe', 'pipe'] });
     return null;
   } catch (e) {
-    // Node's --check output already points at the line and column; just re-label
-    // the temp path so the message names the real file.
     return String(e.stderr || e.message).replaceAll(f, label).trim();
   }
 }
@@ -53,10 +78,10 @@ const jsFiles = walk(REPO).filter(p => ['.js', '.mjs', '.cjs'].includes(extname(
 for (const p of jsFiles) {
   const rel = relative(REPO, p);
   const src = readFileSync(p, 'utf8');
-  const ext = extname(p) === '.mjs' || (extname(p) === '.js' && looksLikeModule(src)) ? '.mjs' : '.cjs';
-  const err = parse(src, ext, rel);
+  const isModule = extname(p) === '.mjs' || (extname(p) === '.js' && looksLikeModule(src));
+  const err = parse(src, isModule, rel);
   if (err) failures.push({ unit: rel, err });
-  else console.log(`  ok  ${rel}  (${src.split('\n').length} lines, ${ext === '.mjs' ? 'module' : 'script'})`);
+  else console.log(`  ok  ${rel}  (${src.split('\n').length} lines, ${isModule ? 'module' : 'classic script'})`);
 }
 
 // ---- the inline script of index.html ----
@@ -69,9 +94,9 @@ if (inline.length === 0) {
 for (const s of inline) {
   // Pad so parser line N == index.html line N.
   const padded = '\n'.repeat(s.startLine - 1) + s.source;
-  const err = parse(padded, s.isModule ? '.mjs' : '.cjs', 'index.html');
+  const err = parse(padded, s.isModule, 'index.html');
   if (err) failures.push({ unit: `index.html (inline script, line ${s.startLine})`, err });
-  else console.log(`  ok  index.html inline script  (${s.source.split('\n').length} lines from line ${s.startLine}, ${s.isModule ? 'module' : 'script'})`);
+  else console.log(`  ok  index.html inline script  (${s.source.split('\n').length} lines from line ${s.startLine}, ${s.isModule ? 'module' : 'classic script'})`);
 }
 
 if (failures.length) {

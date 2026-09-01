@@ -40,6 +40,10 @@
  *      point at index.html rather than at the missing dependency.
  *   3. It cannot see anything that needs interaction. It loads the console; it
  *      does not press the buttons.
+ *   4. It observes for SETTLE_MS (default 3000) after load, plus the controlled
+ *      reload. An error thrown later — index.html:1931 starts a 3-second polling
+ *      interval, so the second tick onward — is outside the window. No interaction
+ *      is required to miss it, only patience, so this is a separate limit from 3.
  * Both 1 and 2 shrink when PUP-WO-0600 vendors the CDN libraries. Do not
  * pre-empt that here.
  */
@@ -100,13 +104,21 @@ const foreignBlocked = []; // expected, reported only
 const warnings = [];
 const foreignErrors = [];  // the CDN failures a naive check would go red on
 
-const isOurs = (url) => !url || url.startsWith(ORIGIN);
+// A blob: URL minted by our own page is `blob:http://127.0.0.1:PORT/...`, so a
+// bare startsWith(ORIGIN) calls PupPad's own code foreign. Same for data:.
+const isOurs = (url) =>
+  !url || url.startsWith(ORIGIN) || url.startsWith(`blob:${ORIGIN}`) || url.startsWith('data:');
 
 // The browser requests /favicon.ico on its own initiative for every document.
 // PupPad never references it, so its 404 is same-origin but is NOT "an error
 // originating in PupPad's own code" — the criterion this check is specified on.
 // Narrow by construction: this exact path only, and it is still reported.
-const isBrowserInitiatedFavicon = (url) => url === `${ORIGIN}/favicon.ico`;
+// Only browser-initiated if the document never asks for it. If PupPad ever adds
+// <link rel="icon">, a missing favicon becomes a genuine uncached local asset and
+// must NOT be excused — so this is recomputed from the document, not hardcoded.
+let documentRequestsFavicon = false;
+const isBrowserInitiatedFavicon = (url) =>
+  !documentRequestsFavicon && url === `${ORIGIN}/favicon.ico`;
 const ignored = [];
 
 // Hermetic: nothing leaves the machine.
@@ -117,22 +129,61 @@ await context.route('**', (route) => {
   return route.abort();
 });
 
-const page = await context.newPage();
-page.on('pageerror', (err) => {
-  ownErrors.push({ kind: 'uncaught exception', text: err.stack || String(err), where: 'page script' });
-});
-page.on('console', (msg) => {
+// Listeners go on the CONTEXT, not the page. A page-level listener sees only the
+// document's own output; sw.js runs in a service worker and its console output
+// and uncaught exceptions never reach the page. Since sw.js is one of exactly two
+// code files here and is the mechanism behind northstar invariant 3, a page-only
+// listener leaves half the repository unwatched.
+const seen = new Set();
+function record(bucket, entry) {
+  const key = `${entry.kind}|${entry.where}|${entry.text}`;
+  if (seen.has(key)) return;          // context and page listeners can both fire
+  seen.add(key);
+  bucket.push(entry);
+}
+function onConsole(msg) {
   const loc = msg.location() || {};
   const where = loc.url ? `${loc.url}:${loc.lineNumber ?? '?'}` : '(inline)';
+  const fromWorker = /\/sw\.js(\?|$)/.test(loc.url || '');
   if (msg.type() === 'error') {
-    if (isBrowserInitiatedFavicon(loc.url)) ignored.push(`${where} ${msg.text()}`);
-    else if (isOurs(loc.url)) ownErrors.push({ kind: 'console.error', text: msg.text(), where });
-    else foreignErrors.push(`${where} ${msg.text()}`);   // blocked CDN loads: deterministic, ignored
+    if (isBrowserInitiatedFavicon(loc.url)) { if (!seen.has('fav')) { seen.add('fav'); ignored.push(`${where} ${msg.text()}`); } }
+    else if (isOurs(loc.url)) record(ownErrors, { kind: fromWorker ? 'service worker console.error' : 'console.error', text: msg.text(), where });
+    else if (!seen.has('f|' + where + msg.text())) { seen.add('f|' + where + msg.text()); foreignErrors.push(`${where} ${msg.text()}`); }
   } else if (msg.type() === 'warning' && isOurs(loc.url)) {
     warnings.push(`${where} ${msg.text()}`);
   }
+}
+context.on('console', onConsole);
+context.on('weberror', (webErr) => {
+  const err = webErr.error?.() ?? webErr;
+  record(ownErrors, { kind: 'uncaught exception', text: err?.stack || String(err), where: 'page or worker script' });
 });
-// Service worker script errors do not surface on the page.
+
+const page = await context.newPage();
+page.on('pageerror', (err) => {
+  record(ownErrors, { kind: 'uncaught exception', text: err.stack || String(err), where: 'page script' });
+});
+page.on('console', onConsole);
+// SERVICE WORKER OBSERVABILITY — a measured limit, not an assumption.
+// sw.js is one of exactly two code files here and is the mechanism behind
+// northstar invariant 3, but its console output and uncaught exceptions do not
+// reach the page. Three routes were tried against playwright 1.56.1 and all fail:
+//   worker.on('console')            -> not an API on ServiceWorker
+//   context.on('console'|'weberror') -> delivers page output only; verified silent
+//                                       for a console.error and a throw inside sw.js
+//   CDP                              -> newCDPSession rejects a Worker ("expected
+//                                       Page or Frame"); browser-level
+//                                       Target.setAutoAttach does attach to the
+//                                       service_worker target, but Playwright's
+//                                       CDPSession.send takes no sessionId, so
+//                                       Runtime.enable cannot be routed to it.
+// What IS covered, and it is not nothing: sw.js is parsed by check 1 in true
+// classic-script mode; a worker that fails to install or activate is caught by the
+// swState guard below (a urlsToCache entry pointing at a missing file fails
+// cache.addAll and is caught); and the controlled reload below exercises the
+// worker's fetch handler for real. The residual gap is a runtime error inside a
+// worker event handler that does not prevent activation. Stated in FEEDBACK.md and
+// raised upward rather than papered over.
 context.on('serviceworker', (worker) => {
   console.log(`  service worker registered: ${worker.url()}`);
 });
@@ -143,8 +194,37 @@ if (!resp || !resp.ok()) {
   process.exit(1);
 }
 
+// Does the document itself ask for a favicon? Decides whether a favicon 404 is
+// the browser's own probe or a real missing asset (see isBrowserInitiatedFavicon).
+documentRequestsFavicon = await page.evaluate(() =>
+  !!document.querySelector('link[rel~="icon"], link[rel~="shortcut"]'));
+
 // Let deferred work run: SW registration, startPolling, orientation lock.
 await page.waitForTimeout(SETTLE_MS);
+
+// Reload once so the page ends up CONTROLLED by the worker. On first load it is
+// not (sw.js registers at index.html:1935, after the document is parsed), so this
+// asserts a strictly stronger property than "a worker registered": that a worker
+// actually takes control and serves a navigation — the state Buddy's tablet is in
+// on every launch after the first.
+//
+// MEASURED LIMIT, so this is not mistaken for fetch-handler coverage: it does NOT
+// catch a defective fetch handler. A handler that throws falls back to the network
+// and the page loads fine; a handler returning a broken response is not caught
+// either, because the reload is served by the already-controlling worker rather
+// than the newly-installed one. Both were tested and both stayed green. What this
+// does catch is a worker that never reaches control at all.
+if (await page.evaluate(() => !!navigator.serviceWorker?.controller) === false) {
+  const reloaded = await page.reload({ waitUntil: 'load', timeout: 30000 });
+  if (!reloaded || !reloaded.ok()) {
+    console.error(`\nCHECK 4 FAILED — reload under service-worker control failed (HTTP ${reloaded ? reloaded.status() : 'none'}).`);
+    console.error('  The worker was active, so its fetch handler (sw.js:31-43) served this. That is the');
+    console.error('  path every launch after the first takes — northstar invariant 3.');
+    process.exit(1);
+  }
+  await page.waitForTimeout(1000);
+}
+const controlled = await page.evaluate(() => !!navigator.serviceWorker?.controller);
 
 // Evidence the HTTP requirement is real and the worker actually took.
 const swState = await page.evaluate(async () => {
@@ -161,7 +241,7 @@ server.close();
 
 // ---------- report ----------
 console.log(`  document title: ${JSON.stringify(title)}`);
-console.log(`  service worker: ${swState}`);
+console.log(`  service worker: ${swState}; page controlled by it after reload: ${controlled}`);
 console.log(`  third-party requests blocked (expected, not failures): ${foreignBlocked.length}`);
 for (const u of [...new Set(foreignBlocked)].slice(0, 10)) console.log(`    blocked  ${u}`);
 console.log(`  third-party console errors IGNORED (a naive check would go red on these): ${foreignErrors.length}`);

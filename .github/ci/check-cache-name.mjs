@@ -69,7 +69,12 @@ console.log(`  head:  ${head}`);
 if (base === head) fail('base and head are the same commit — this would compare nothing.');
 
 // ---------- what counts as a cached asset ----------
-const readAt = (ref, path) => { try { return git('show', `${ref}:${path}`); } catch { return null; } };
+const readAt = (ref, path) => {
+  try {
+    return execFileSync('git', ['-C', REPO, 'show', `${ref}:${path}`],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch { return null; }   // absent at that revision; the caller decides what that means
+};
 const norm = (p) => p.replace(/^\.\//, '').replace(/^\//, '');
 function urls(src) {
   if (!src) return null;
@@ -114,9 +119,29 @@ if (!triggers.length) {
   console.log('\nCHECK 3 PASSED — no cached asset changed, so no CACHE_NAME bump is required.');
   process.exit(0);
 }
-if (nameBase !== null && nameHead === nameBase) {
+// The base may be unreadable in two very different ways, and they must not be
+// collapsed — an earlier version guarded the failure on `nameBase !== null` and
+// so fell through to the success line, printing "CACHE_NAME changed to X" without
+// ever having established it.
+if (swBase === null) {
+  // sw.js did not exist at the base: there was no service worker, therefore no
+  // previous cache generation to invalidate. Nothing to bump. Say exactly that.
+  console.log(`\nCHECK 3 PASSED — ${triggers.join('; ')}, but sw.js does not exist at the base,`);
+  console.log('  so there is no previous cache generation to invalidate. Nothing was compared.');
+  process.exit(0);
+}
+if (nameBase === null) {
+  // sw.js EXISTS at the base but its CACHE_NAME could not be read — a previous
+  // cache generation does exist and this check cannot tell whether it changed.
+  // Symmetric with the HEAD case at the top, which already fails.
+  fail(`sw.js exists at the base (${base.slice(0,8)}) but its CACHE_NAME could not be parsed,\n` +
+       `  while ${triggers.join('; ')}.\n` +
+       `  A previous cache generation exists and this check cannot verify it was invalidated.\n` +
+       `  Failing rather than guessing: CACHE_NAME must be a plain quoted literal on sw.js:1.`);
+}
+if (nameHead === nameBase) {
   fail(`${triggers.join('; ')}, but CACHE_NAME is still "${nameHead}".\n` +
        `  Bump CACHE_NAME in sw.js:1. Without it the activate handler (sw.js:19-29) reaps nothing\n` +
        `  and already-installed clients keep serving the previous build's assets — northstar invariant 7.`);
 }
-console.log(`\nCHECK 3 PASSED — ${triggers.join('; ')}, and CACHE_NAME changed to "${nameHead}".`);
+console.log(`\nCHECK 3 PASSED — ${triggers.join('; ')}, and CACHE_NAME changed from "${nameBase}" to "${nameHead}".`);
