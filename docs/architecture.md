@@ -360,6 +360,39 @@ every control this project has built checks whether a finding was *written down*
 and none checks whether it was *acted on*. Two instances is a pattern and it wants a
 control; **none is proposed here**, deliberately, by both parties who have each
 shipped a mechanism today for a problem that turned out not to exist.
+**Nothing ever asks whether a recommendation became a commit.** *(`PUP-WO-0105`'s
+builder, correcting CC-A's account of the same gap.)* Two accepted dispositions were
+recorded and not applied — the `puts` counter, and "say the opacity deferral is a
+choice rather than a law of physics" — and the next pass found both again. **The
+rows were accurate: both said *Recommendation* and neither claimed to be done.** So
+the missing control is not better recording. It is that no step in this process ever
+reads a recommendation and asks whether it turned into a diff. Named; still not
+designed.
+
+### 6.5 The quota path, and why the tiles question has no home yet
+
+*Measured 2026-09-01 across three passes.*
+
+An **opaque** cache entry costs **~7 MB regardless of body size** — a failed 200-byte
+tile costs the same as a real one. The padding is **randomised per entry** (~6.3–8.5
+MB observed, ~4,250× a same-origin entry), so **it must not be quoted as a
+constant**; the load-bearing fact is its **independence from body size**. Three
+opaque tiles exhausted a 40 MB budget, after which 57 of 60 subsequent puts failed
+silently. There is no `storage.persist()` anywhere, so the origin is evictable.
+
+**This chains into two live failures.** Eviction removes leaflet, and the next
+offline cold start hits the un-closable Map overlay (§6.1's trigger-list entry;
+`PUP-WO-0106`). And a device already at quota **cannot install a worker at all**:
+`addAll` rejects with `QuotaExceededError`, install fails, the new worker is
+discarded, **the old one stays activated**, and any poison it holds is permanent.
+**The devices most likely to be poisoned are the most-used, and use is what
+accumulates opaque entries** — so the fix cannot reach the devices that most need it.
+
+**`PUP-WO-0600` does not dissolve this.** Its scope is `index.html:11-13`, the two
+CDN `<script>`/`<link>` tags. **The OpenStreetMap tiles at `index.html:1373` are map
+data fetched per coordinate and cannot be vendored at all** — and tiles are the bulk
+of the opaque entries and the whole of the quota path. **The tiles question needs its
+own work order and does not have one.**
 
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
@@ -648,6 +681,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.1 member 4 gains two more clauses: the resolver must **fail closed**, and **not every path-shaped string is a pointer**. | Both from the rule's next two uses. The builder's resolver printed `ALL POINTERS RESOLVE` while a probe had crashed — `\| tail` discarded the exit status and returned a line that read like a version report; the claim was true and unestablished. CC-A's resolver then flagged a gitignored path cited as environment advice. **One false green and one false red from the same rule, one work order apart** — the print-the-lines clause covers only the red half. |
 | 2026-09-01 | §6.1 gains: **a per-change safety argument does not compose across changes in one commit**, with the varied-what rule and the author/reviewer scope asymmetry. | `PUP-WO-0105`'s builder, against a decision CC-A had already accepted. A response matrix measured the guard, CC-A extended it to the whole commit, and a `CACHE_VERSION` bump in the same commit discarded every runtime-cached asset — 0 of 24 map tiles under invariant 3's own falsification test. The waiver of the UI test rested on the argument that concealed what the UI test finds. |
 | 2026-09-01 | §6.1 gains the trigger-list rule and the disposition gap: a new trigger for a known defect is a new decision, and this project's near-misses are failures of disposition rather than discovery. | The builder's, stating properly why CC-A's P6 scheduling of the Map trap was defensible when made and wrong once quota eviction was measured. Paired with the round-1 `puts`-counter recommendation that was recorded and not applied — every control here checks that a finding was written down, none checks that it was acted on. Named as wanting a control; none proposed, by two parties who each shipped an unnecessary mechanism today. |
+| 2026-09-01 | §6.1: *nothing ever asks whether a recommendation became a commit*. §6.5 added: the quota path, and that `PUP-WO-0600` cannot receive the tiles question. | Both the builder's. The disposition rows were accurate — they said *Recommendation* — so the gap is not recording but that nothing reads one and asks whether it became a diff. And the tiles are map data fetched per coordinate: unvendorable, the bulk of the opaque entries, and the whole of the quota path, pointed by a deferral at a work order that provably cannot receive it. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
