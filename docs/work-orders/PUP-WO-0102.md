@@ -77,6 +77,18 @@ Four changes to `sw.js`, and nothing else in the file.
    otherwise-correct fix. **If you cannot bound it, that is a flag-and-stop and an
    architecture question, not a best-effort regex.**
 
+5. **The checks that prove items 1–4, committed and registered.** A cache-isolation
+   check asserting invariant 7's own falsification test; a cache-identity check that
+   **evaluates** the worker rather than scraping its text (a regex against source is
+   defeated by a second `var` line or a comment at column 0 — remove the class, not
+   another instance of it); and check 4 asserting the worker state it already
+   measures. `.github/ci/check-load.mjs:265` currently fails only when the state is
+   none of `active`/`registered`/`installing`/`waiting`, so **a worker stuck in
+   `installing`, with offline capability dead, passes green** — a value that is
+   measured and printed reads, in a green run, exactly like one that is asserted.
+   *(Moved here from `PUP-WO-0103` §1.8 on the seam in §2: it verifies the worker,
+   not publication.)*
+
 **Not in this work order:** the fetch *strategy*. It is network-first and that is
 architecture §10's open question. Change identity and ownership; leave strategy alone.
 
@@ -89,8 +101,20 @@ architecture §10's open question. Change identity and ownership; leave strategy
   the others, and §6.1 exists because fixing the reap made the read look closed.
 
 **Protected surfaces — must diff to empty:** `index.html`, `manifest.json`, both
-icons, and **everything under `.github/`**. `sw.js` is the subject and is the only
-non-doc file this work order may touch.
+icons, and **`.github/workflows/ci.yml`'s publication job and every publication
+script**. Those are `PUP-WO-0103`.
+
+**You MAY touch `.github/ci/` for the checks and harness that prove `sw.js`
+correct**, and register them in `ci.yml`'s `checks` job. *(Corrected 2026-09-01
+before dispatch: this section previously protected all of `.github/`, which
+contradicted §3.3 and §3.7 — both require a committed harness, and a check that
+asserts invariant 7 has nowhere else to live. CC-A's defect; found by mapping the
+parked branch against the split.)*
+
+**The seam, stated once so it settles every case:** a check that verifies **the
+worker** is yours; a check that verifies **publication** is `PUP-WO-0103`'s. Both
+work orders touch `ci.yml`, but sequentially and in disjoint jobs — `PUP-WO-0103`
+branches from this one's merge, so there is never a second writer.
 
 ## 3. Acceptance — proven, not asserted
 
@@ -121,8 +145,9 @@ non-doc file this work order may touch.
   hardening — all `PUP-WO-0103`.
 - `index.html`: the CDN loads and the un-closable overlay are `PUP-WO-0600`.
 - The fetch strategy (§1).
-- Check 4's worker-state assertion, **unless** the check lives in a file this work
-  order otherwise touches — it does not, so it goes to `PUP-WO-0103`.
+- The publication job, build stamp, invariant-4 byte verification, archive
+  hardening, the **two-tree** harness for the two *published* workers, and the
+  rollback lever — all `PUP-WO-0103`.
 - Generalising to N paths. Two copies today.
 
 ## 5. Adversarial pass
@@ -158,7 +183,9 @@ status as a checkable fact.
 
 ## 7. Flag-and-stop
 
-- **Any need to touch `index.html`, `manifest.json`, an icon, or `.github/`.**
+- **Any need to touch `index.html`, `manifest.json`, an icon, or the publication
+  job/scripts** (§2). Adding checks and a harness under `.github/ci/` is expected,
+  not a stop.
 - **Any need to weaken a `PUP-WO-0100` check** to land this.
 - **The `/stable/` normalisation not bounding** (§1.4).
 - **A third adversarial pass finding serious defects.** Two passes each finding

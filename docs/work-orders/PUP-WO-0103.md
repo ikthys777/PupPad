@@ -135,7 +135,7 @@ back is a safety mechanism you cannot use in the emergency it was built for.
 **Mechanism is yours to design.** It must not become a path by which anything
 reaches `/stable/` without a human naming the commit — see §7.
 
-### 1.8 Check 4 asserts the state it measures
+### 1.8 Check 4 asserts the state it measures — MOVED to `PUP-WO-0102` §1.5
 
 `.github/ci/check-load.mjs:265` fails only when the worker state is none of
 `active`, `registered`, `installing`, `waiting` — effectively never. **A worker
@@ -143,6 +143,9 @@ stuck in `installing`, with offline capability dead, passes green.** `:234` comp
 the state and the run prints it; no branch consumes it. A value that is measured and
 printed reads, in a green run, exactly like a value that is asserted. *(Correction
 appended to `docs/feedback/PUP-WO-0100.md` 2026-09-01.)*
+
+**Moved to `PUP-WO-0102` §1.5 on 2026-09-01**, on the seam that check 4 verifies the
+*worker* rather than *publication*. Section number retained and not reused.
 
 ## 2. Invariants — restated by number
 
