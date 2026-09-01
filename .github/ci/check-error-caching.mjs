@@ -302,7 +302,12 @@ const RUNTIME = [`${ORIGIN}/cdn/leaflet.js`, `${ORIGIN}/cdn/tile-1.png`, `${ORIG
 
 console.log('  NOT ASSERTED: whether an opaque 200 and an opaque 404 can be told apart.');
 console.log('                They cannot — both are status 0, type opaque, body unreadable —');
-console.log('                so a failed tile is cached exactly as it is today. PUP-WO-0600.');
+console.log('                so a failed tile is cached exactly as it is today.');
+console.log('                THIS HAS NO WORK ORDER. An earlier version of this line said');
+console.log('                "PUP-WO-0600", and architecture.md:391 rebuts that move BY NAME:');
+console.log('                0600 scope is index.html:11-13, the two CDN tags, while the OSM');
+console.log('                tiles "cannot be vendored at all" and "the tiles question needs');
+console.log('                its own work order and does not have one."');
 
 if (failures.length) {
   console.error(`\nCHECK FAILED — ${failures.length} assertion(s):`);

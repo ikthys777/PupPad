@@ -2,9 +2,19 @@
 
 **Frozen at HEAD `23d9b427f87be8dce0654c78fb5a75b1e02ef83f`**, branch `build/wo-0103`, 2026-09-01.
 
-Architecture §6.1 member 5: *a record that stays trusted because it stayed
-unchanged.* The hashes below make this tree tamper-evident during the adversarial
-pass. They do **not** make its claims true — that is the second half of the
+**CORRECTION, from the round-5 pass — this file cited a §6.1 member that does not
+exist.** It said *"Architecture §6.1 member 5: a record that stays trusted because it
+stayed unchanged."* `architecture.md:256` says the family has **four** members and
+`:278` says *"In all four…"*; `grep "member 5"` across the whole repository returned
+exactly one hit — this file. The IDEA is real and IS in §6.1, at `architecture.md:318`,
+as an **unnumbered** paragraph: *"A freeze verifies that the artifact stopped moving.
+It does not verify that the artifact was correct when it stopped, and a stale baseline
+passes every freeze check there is."* So the number was invented in the act of citing
+it, which is member 4 — and it is the worse form of member 4, because a number reads as
+a reference and the destination looks like it ought to exist. Whether that paragraph
+becomes member 5 is the architect's call, not mine.
+
+The hashes below make this tree tamper-evident during the adversarial pass. They do **not** make its claims true — that is the second half of the
 procedure, ratified out of PUP-WO-0105 and required by CC-A's round-5 dispatch:
 **`docs/feedback/PUP-WO-0103.md` is itself a frozen deliverable and its CLAIMS are
 measured against the tree**, not merely hashed.
@@ -14,6 +24,12 @@ Re-verify at disposition with exactly this, from the repo root:
 ```sh
 sha256sum -c docs/findings/PUP-WO-0103-r5-freeze.sums
 ```
+
+**KNOWN GAP IN THIS FREEZE, found by the pass:** `.github/ci/package-lock.json` is
+tracked and is NOT in the list below. `package.json` is. The lockfile is what pins
+Playwright, and Playwright is what checks 4, 6, 9 and 10 actually do — so it is the one
+tracked file that can change a verdict without changing a hash here. Excluded by a
+filter I wrote to keep the table short. It is included in the disposition freeze.
 
 There is no commit-SHA field for this file inside this file. That field is
 structurally impossible to get right — a file cannot contain the hash of the commit
