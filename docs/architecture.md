@@ -398,6 +398,42 @@ every gate `PUP-WO-0103` builds**, including the invariant-4 byte check and the
 prefix-bounded worker refusal. The question would be who created it and what
 publishes from it, not what ruleset to apply.
 
+### 6.4 The order: `PUP-WO-0105`, then the flip, then `PUP-WO-0104`
+
+*Ruled 2026-09-01, and it corrects a constraint CC-A wrote that cut both ways.*
+
+The earlier form was *"`PUP-WO-0104` must land before any future `sw.js` change reaches
+publication."* Applied literally it **gates `PUP-WO-0105`'s own fix** — the one-line
+guard for a defect that is live on the child's tablet — behind the gate that exists
+to catch bad worker changes. That is a rule protecting against unnoticed harm,
+delaying the most-scrutinised change in the project.
+
+**The constraint restated, which resolves it without weakening it: a worker change
+must be gated by a check for the class it changes.** `PUP-WO-0105` §3.5 *requires*
+building the fixture and assertion that catch its own defect class. So it does not
+bypass the gate — **it brings the gate for what it touches.** The classes it does not
+touch (M9, M7, G4) are unchanged by it, so the gate's weakness there is no worse
+after 0105 than before.
+
+**The order, and the reason for each step:**
+
+1. **`PUP-WO-0105`.** The live worker poisons its own app shell on any non-200
+   received while online. Everything else waits on this.
+2. **Fast-forward `stable`, add `stable` to the `github-pages` environment policy,
+   tablet offline across the window, then flip.** Flipping before 0105 adds a second
+   path caching from the same origin and **doubles the exposure of an active
+   defect**. After 0105 both copies carry a reviewed, known-good worker, so the cache
+   gate has nothing to catch at flip time — its weakness is not what the flip rests on.
+3. **`PUP-WO-0104`.** From the flip until 0104 merges, **`sw.js` does not change.**
+   That is the residual constraint, and it is now a short, bounded freeze rather than
+   an open-ended one.
+
+**P1 closes on its own gate, not on 0104.** Gate items 1 and 2 are met. Items 3 and 4
+are **live verifications a human runs** against the published site — 0104 automates
+that class of check in CI but is not what makes items 3 and 4 answerable. So
+`PUP-WO-0103` merged, plus the flip, plus items 3 and 4, closes P1 — with **0104
+recorded as P1 work carried past the phase gate**, not as a gate item quietly waived.
+
 ## 7. Deferred with intent — realtime co-op
 
 Not in scope, and deliberately not left to be bolted on. Phase 1 shapes itself so
@@ -548,6 +584,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §5 gains: red is not a demonstration — assert the commit that ran and the failing step's name, never the conclusion alone. | Four times in `PUP-WO-0103` a red run was read as a successful refusal demonstration, each red for the wrong reason, the last of them a stale run for a superseded commit. The builder named it as one missing habit rather than four mistakes and observed it was mechanisable, which is what makes it a ruling. It completes a pair with §6.1: a green run certifying nothing and a red run proving nothing are the same defect — the verdict read instead of what produced it. |
 | 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
 | 2026-09-01 | §6.1: member 4's rule gains its second clause — print the cited file's surrounding lines on a miss, never the count — because **member 4's enforcement is itself subject to member 3**. | The builder's, found while running member 4's first real enforcement, about a minute after it was ratified: a case-sensitive grep reported a quoted invariant as missing when it was present and materially identical. A pointer resolver exists to turn absence into red, so every bug in it presents as a dangle — making it the one check whose false positives are indistinguishable from its true positives without opening the file. The tool built to enforce *read what produced the verdict* did not obey it. |
+| 2026-09-01 | §6.4 added: the order is `PUP-WO-0105` → flip → `PUP-WO-0104`, and the "0104 before any `sw.js` change" constraint is restated as **a worker change must be gated by a check for the class it changes**. P1 closes on its own gate, with 0104 carried past it. | The constraint as written cut both ways — the co-architect spotted that it would gate 0105's own one-line fix for a defect live on the tablet. Restating it by *class* rather than by *file* resolves that without weakening it: 0105's acceptance requires building the check for its own defect class, so it brings the gate rather than bypassing it. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
