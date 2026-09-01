@@ -108,6 +108,40 @@ for (const [name, why] of Object.entries(expectKept)) {
   else bad(`reap DELETED ${why} — this is the origin-wide reap (architecture §6)`, name);
 }
 
+/* ---- 2a. F3: THE SAME MATRIX AT THE PROMOTED SCOPE ----
+ *
+ * Everything above dispatches at ROOT_SCOPE. The only activate ever run at
+ * STABLE_SCOPE was handed a two-entry store and asserted one thing — that the legacy
+ * literal survived. So a worker that reaps origin-wide ONLY when running at the
+ * promoted scope passed every assertion in this file, and §1.4's whole mechanism
+ * inherits that coverage. sw.js already branches on scope (IS_STABLE_WORKER, the
+ * legacy exception), so scope-conditional is the realistic shape of a defect here,
+ * not a contrived one — and the promoted copy is the one the child uses.
+ *
+ * (PUP-WO-0103 F3. This file is PUP-WO-0102's; touched here under the work order's
+ * documented seam exception, because §1.4 makes it 0103's mechanism and fixing a
+ * blind gate in a later work order means the gate stays blind meanwhile.) */
+const sAdjacent = stablePrefix.replace(/\|$/, 'x|') + 'v17';
+const sStale = stableName + '-stale-from-a-previous-build';
+const sStore = new FakeCacheStorage([stableName, sStale, rootName, sAdjacent, UNRELATED, LEGACY]);
+const sActivating = loadWorker(SW, STABLE_SCOPE, sStore);
+await sActivating.dispatch('activate');
+const sSurvivors = await sStore.keys();
+for (const [name, why] of Object.entries({ [sStale]: 'a stale cache of its OWN prefix' })) {
+  if (!sSurvivors.includes(name)) ok(`[stable scope] reap deleted ${why}`);
+  else bad(`[stable scope] reap did NOT delete ${why}`, name);
+}
+for (const [name, why] of Object.entries({
+  [stableName]: 'its own current cache',
+  [rootName]: "the ROOT deploy path's cache",
+  [sAdjacent]: 'an adjacent prefix it does not own',
+  [UNRELATED]: 'an unrelated cache on the same origin',
+  [LEGACY]: "the ROOT copy's legacy cache (the exception is the root worker's alone)",
+})) {
+  if (sSurvivors.includes(name)) ok(`[stable scope] reap preserved ${why}`);
+  else bad(`[stable scope] reap DELETED ${why} — an origin-wide reap on the PROMOTED copy`, name);
+}
+
 /* ---- 2b. F9: nothing may touch a cache AFTER activate's waitUntil settles ----
  *
  * `dispatch()` awaits every promise the handler passed to waitUntil, so a reap
@@ -352,20 +386,22 @@ for (const p of ['/PupPad/stable', '/PupPad/stable?x=1']) {
  * owns" covers install as much as fetch and activate — a urlsToCache entry pointing
  * into the other deploy path writes the promoted copy's bytes under this prefix
  * before a single fetch happens. */
+for (const [scopeLabel, scopeUrl] of [['root', ROOT_SCOPE], ['stable', STABLE_SCOPE]]) {
 const preStore = new FakeCacheStorage();
-const installing = loadWorker(SW, ROOT_SCOPE, preStore);
+const installing = loadWorker(SW, scopeUrl, preStore);
 await installing.dispatch('install');
 const ownCache = await preStore.open(installing.get('CACHE_NAME'));
 const precached = await ownCache.keys();
-if (precached.length) ok(`install precached ${precached.length} entr(ies) into its own cache`);
-else bad('install precached NOTHING — the worker has no offline capability at all (invariant 3)', 'urlsToCache is empty or addAll never ran');
+if (precached.length) ok(`[${scopeLabel}] install precached ${precached.length} entr(ies) into its own cache`);
+else bad(`[${scopeLabel}] install precached NOTHING — no offline capability at all (invariant 3)`, 'urlsToCache is empty or addAll never ran');
 
-const rootScopePath = new URL(ROOT_SCOPE).pathname;
+const scopePath = new URL(scopeUrl).pathname;
 const escaped = precached
-  .map((u) => { try { return new URL(u, ROOT_SCOPE).pathname; } catch (e) { return u; } })
-  .filter((path) => !path.startsWith(rootScopePath) || path.startsWith(rootScopePath + 'stable/'));
-if (escaped.length === 0) ok('every precached entry lies inside this worker\'s own scope');
-else bad('install precached OUTSIDE this worker\'s scope', escaped.join(', '));
+  .map((u) => { try { return new URL(u, scopeUrl).pathname; } catch (e) { return u; } })
+  .filter((path) => !path.startsWith(scopePath) || (scopeLabel === 'root' && path.startsWith(scopePath + 'stable/')));
+if (escaped.length === 0) ok(`[${scopeLabel}] every precached entry lies inside this worker's own scope`);
+else bad(`[${scopeLabel}] install precached OUTSIDE this worker's scope`, escaped.join(', '));
+}
 
 /* ---- verdict ---- */
 if (failures.length) {
