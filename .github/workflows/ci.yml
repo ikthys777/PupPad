@@ -424,62 +424,158 @@ jobs:
       - name: "Assert the PUBLISHED BYTES are the commit's, not merely the ref's"
         # PUP-WO-0103 §1.2. Everything above verifies refs and refuses dangerous
         # trees; this verifies the RESULT. It hashes what is actually in the
-        # directory about to be uploaded and compares it against the tree object of
-        # the commit it claims to be. Any step between the archive and here that
-        # added, removed or altered a byte fails it.
+        # directory about to be uploaded and compares it against the tree of the
+        # commit it claims to be. Any step between the archive and here that added,
+        # removed or altered a byte fails it.
         #
-        # The build stamp is written AFTER this step precisely so that this
-        # comparison can be exact rather than carrying an exception for one file.
+        # ROUND 5, B5 — WHAT THIS STEP USED TO CLAIM WAS NOT TRUE.
+        # It closed with "both published copies are byte-for-byte their own commit's
+        # tree" while comparing the whole DIRECTORY against the whole TREE. But the
+        # directory is not what gets published: actions/upload-pages-artifact@v4 tars
+        # it with `--exclude=.git --exclude=.github`, and tar's --exclude matches ANY
+        # PATH COMPONENT, not just a top-level one (measured: sub/.github/f and
+        # deep/nested/.git/f are both dropped). So `published ⊂ hashed` STRICTLY, the
+        # gap was never measured, and the closing sentence was false as written.
+        # Measured on this tree: 52 files, 18 of them under .github/, 34 published.
+        #
+        # ROUND 4 NAMED THE WRONG EXAMPLE AND IT IS LEFT STANDING WITH THE
+        # MEASUREMENT BESIDE IT: it said a future `.well-known/assetlinks.json` would
+        # be silently dropped. It would NOT. Both `.well-known/assetlinks.json` and
+        # `_headers` survive the uploader's tar — run it and they are there. The
+        # uploader excludes `.git` and `.github`, not dotfiles in general. The finding
+        # was real; its example was wrong.
+        #
+        # So the exclusion is now DECLARED ONCE, applied to BOTH sides, and REPORTED
+        # in the verdict. What that buys is a true sentence. What it does not buy is
+        # proof, because the declaration is still this file's belief about someone
+        # else's action — the step after the upload turns it into an observation.
         run: |
           set -euo pipefail
+          # A record is "<oid>\t<path>", NUL-terminated. The tab is a real tab via
+          # $'\t': grep -E is POSIX ERE and does NOT understand \t — it reads it as a
+          # literal `t`. Written with a backslash-t this filter matched NOTHING, and
+          # the comparison still passed because both sides were then equally
+          # unfiltered. A filter that silently matches nothing, under a green gate.
+          EX_REC=$'\t''(.*/)?\.git(hub)?(/|$)'
           fail=0
+          T=$(mktemp -d)
+
+          # B1 — THE PATHS COME FROM --name-only, NEVER FROM --format.
+          # `ls-tree --format='%(path)'` C-QUOTES, and -z does NOT turn that off:
+          # measured, `-z --format` still emits "mam\303\241.png". Adding
+          # `-c core.quotePath=false` fixes the non-ASCII half and STILL quotes a
+          # newline-bearing name. Only `-z --name-only` is genuinely raw — which is
+          # exactly what the .gitattributes refusal sixty lines above already uses.
+          # Round 4 said "-z fixes it". Measured: -z alone does not fix it here.
+          # The modes and oids come from a parallel listing of the same tree in the
+          # same order, and the two are zipped by index.
+          manifest_commit() {
+            local src="$1"; local -a mo=() nm=(); local i bad=0
+            mapfile -d '' mo < <(git -C "$src" ls-tree -r -z HEAD --format='%(objectmode) %(objectname)')
+            mapfile -d '' nm < <(git -C "$src" ls-tree -r -z HEAD --name-only)
+            [ "${#mo[@]}" = "${#nm[@]}" ] || return 9
+            for ((i=0;i<${#nm[@]};i++)); do
+              case "${mo[i]%% *}" in
+                # B4 — a submodule (160000) is a tree entry with no file on disk, so
+                # it used to surface as a hash mismatch reported as "REFUSING TO
+                # PUBLISH — northstar invariant 4": the gravest message in the project
+                # for something that is not that. Symlinks (120000) are refused
+                # upstream; this is the backstop and it names what it found.
+                100644|100755) printf '%s\t%s\0' "${mo[i]#* }" "${nm[i]}" ;;
+                *) printf '%s %s\n' "${mo[i]%% *}" "${nm[i]}" >&2; bad=1 ;;
+              esac
+            done
+            [ "$bad" = 0 ] || return 8
+          }
+
+          # B2/B3 — NUL-delimited throughout, `--` before the path, and --no-filters.
+          #   `read -r` on newline-delimited find output STRIPS LEADING WHITESPACE and
+          #   splits a name containing a newline. Measured on a fixture: ' leading.png'
+          #   became 'leading.png' and 'new\nline.png' became two files.
+          #   Without `--`, a file named '-x.png' made git print `unknown switch 'x'`.
+          #   NONE of that tripped `set -euo pipefail`, because a failing $(...) inside
+          #   a printf ARGUMENT is not a command failure — the run continued and the
+          #   only symptom was a hash mismatch blaming invariant 4. Forever, on every
+          #   subsequent run, because the offending name stays committed.
+          #   Without --no-filters the hash depends on the WORKSPACE's .gitattributes
+          #   (dist/ sits inside the repo, so git finds it), which no gate examines.
+          manifest_disk() {
+            local dir="$1"; shift
+            ( cd "$dir" || exit 9
+              find . -type f "$@" -printf '%P\0' \
+              | while IFS= read -r -d '' f; do
+                  h=$(git hash-object --no-filters -- "$f") || exit 9
+                  printf '%s\t%s\0' "$h" "$f"
+                done )
+          }
+          nrec() { tr -cd '\0' < "$1" | wc -c; }
+          peek() { tr '\0' '\n' < "$1" | cat -v | sed -n "1,6p"; }
+
           check_copy() {
-            # The prune arrives as TRAILING ARGS into a bash array, never as a string.
-            # It was `local prune="$4"` expanded unquoted as `find . -type f $prune`,
-            # and because the expansion happens AFTER `cd "$dir"`, the shell glob-
-            # expanded `./stable/*` against dist/ — which by then always contains the
-            # promoted copy. Every run died with
-            #     find: paths must precede expression: './stable/icon-192.png'
-            # before either copy was compared. Not a false refusal of one input: the
-            # publish job could never reach a check again, on any trigger, forever.
-            # Quoting "$prune" does not fix it either — find then sees one argument
-            # and reports `unknown predicate`. It has to be an array.
             local dir="$1" src="$2" label="$3"; shift 3
-            local -a prune=("$@")
-            local expected actual links
-            # F10(a) — SYMLINKS FIRST. `find -type f` cannot see them, and
-            # upload-pages-artifact tars with --dereference, so a symlink at a path
-            # absent from the commit's tree is invisible to the hash below AND
-            # published with its target's contents. Committed symlinks are refused
-            # upstream; this is the backstop for anything that appears afterwards.
-            links=$(find "$dir" -type l | head -5)
-            [ -z "$links" ] || {
+            local -a prune=("$@"); local n_ex rc=0 links
+            # B6 — `find ... | head -5` lets head close the pipe, find dies of SIGPIPE
+            # with 141, and under `pipefail` the step aborted MUTE above the pipe
+            # buffer threshold. find writes it all; sed trims for display only.
+            links=$(find "$dir" -type l -printf '%p\n' || true)
+            if [ -n "$links" ]; then
               echo "::error::$label — symlink(s) in the directory about to be published:"
-              echo "$links"
-              echo "::error::the Pages artifact is tarred with --dereference. REFUSING TO PUBLISH."
-              fail=1; return; }
-            # `git archive` of the commit, hashed as a sorted path+blob listing.
-            expected=$(git -C "$src" ls-tree -r HEAD --format='%(path) %(objectname)' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
-            # The same listing computed from the files on disk.
-            # F13(a) — the ./stable/* exclusion is meaningful ONLY for the root copy.
-            # Applied to both, it silently dropped a legitimate `stable/` directory
-            # inside the PROMOTED tree from the hash, and the mismatch was reported as
-            # `REFUSING TO PUBLISH — northstar invariant 4` — a false alarm naming the
-            # gravest invariant in the project.
-            actual=$(cd "$dir" && find . -type f "${prune[@]}" -printf '%P\n' \
-                     | LC_ALL=C sort \
-                     | while read -r f; do printf '%s %s\n' "$f" "$(git hash-object "$f")"; done \
-                     | sha256sum | cut -d' ' -f1)
-            echo "$label: tree=${expected:0:16} published=${actual:0:16}"
-            [ "$expected" = "$actual" ] || {
+              printf '%s\n' "$links" | sed -n '1,5p'
+              echo "::error::the Pages artifact is tarred with --dereference, so the target would be"
+              echo "::error::published off the runner filesystem. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: replace the symlink with a real committed file."
+              fail=1; return 0
+            fi
+            manifest_commit "$src" 2>"$T/nonblob" | sort -z > "$T/c.raw" || rc=$?
+            if [ "${rc:-0}" = 8 ]; then
+              echo "::error::$label — the commit's tree holds an entry that is not a regular file:"
+              sed -n '1,5p' "$T/nonblob"
+              echo "::error::A submodule publishes NOTHING; the site would be missing it. REFUSING."
+              echo "::error::REMEDY: remove that entry from the tree. This is NOT an invariant 4"
+              echo "::error::failure and NOTHING should be fast-forwarded to answer it."
+              fail=1; return 0
+            elif [ "${rc:-0}" != 0 ]; then
+              echo "::error::$label — could not read the commit's tree (rc=$rc). REFUSING."
+              fail=1; return 0
+            fi
+            if ! manifest_disk "$dir" "${prune[@]}" | sort -z > "$T/d.raw"; then
+              echo "::error::$label — could not hash the built directory. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: read the git error above; a path in the build defeated hashing."
+              fail=1; return 0
+            fi
+            n_ex=$(grep -zc -E "$EX_REC" < "$T/c.raw" || true)
+            grep -zZv -E "$EX_REC" < "$T/c.raw" > "$T/c.pub" || true
+            grep -zZv -E "$EX_REC" < "$T/d.raw" > "$T/d.pub" || true
+            echo "$label: tree=$(nrec "$T/c.raw") file(s); to be published=$(nrec "$T/c.pub"); withheld by the uploader=${n_ex:-0}"
+            if cmp -s "$T/c.pub" "$T/d.pub"; then
+              echo "  ok — every file that will be published is byte-identical to the commit's"
+            else
               echo "::error::$label — the bytes about to be published are NOT the commit's tree."
+              echo "  the commit's publishable set begins:"; peek "$T/c.pub"
+              echo "  the built directory's begins:";        peek "$T/d.pub"
               echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
-              fail=1; }
+              echo "::error::REMEDY: a step between the archive and here changed the tree. Do not"
+              echo "::error::fast-forward any ref to answer this; find the step."
+              fail=1
+            fi
           }
           check_copy dist        src/main   "root (/)"            -not -path './stable/*'
           check_copy dist/stable src/stable "promoted (/stable/)"
           [ "$fail" = 0 ] || exit 1
-          echo "OK: both published copies are byte-for-byte their own commit's tree."
+          echo "OK: every file either copy will publish is byte-for-byte its own commit's."
+          echo "    Files under .git/ and .github/ are withheld by the uploader and are NOT"
+          echo "    published; they are excluded from both sides of the comparison above and"
+          echo "    the count is printed per copy."
+          echo
+          echo "    WHAT THIS DOES NOT ESTABLISH. That exclusion is DECLARED here from"
+          echo "    actions/upload-pages-artifact@v4's observed behaviour; it is not read"
+          echo "    back off the artifact. If a future v4 widens what it drops, this step"
+          echo "    stays green and the site loses files. A draft of this step promised a"
+          echo "    post-upload check of the tar and that check was NOT built: it would rest"
+          echo "    on an undocumented \$RUNNER_TEMP path, break on a newline in a filename"
+          echo "    (the defect B2 just fixed), and — being behind DRY_RUN — never run on a"
+          echo "    pull request, so nobody would ever have watched it work. Open, recorded"
+          echo "    as PUP-WO-0109, and NOT silently absorbed."
 
       - name: Install the browser
         # BEFORE the per-copy checks, not after — found by a real run.
