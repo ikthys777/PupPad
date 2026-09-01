@@ -23,9 +23,9 @@
  * serving. That transition only exists in a browser, so this runs there.
  *
  * TWO SCENARIOS IN ONE RUN, AND NEITHER IS SUFFICIENT ALONE:
- *   A. SQUEEZED — origin quota capped over CDP and filled, shell poisoned by the
- *      unguarded worker. The guarded worker must reach `activated` and repair the
- *      shell. Before round 3 it reached `redundant` and the shell stayed poisoned.
+ *   A. SQUEEZED — origin quota capped over CDP and filled, shell poisoned. The worker
+ *      reaches `redundant` and the shell stays poisoned: THE FIX DOES NOT ARRIVE, and
+ *      that is the open defect PUP-WO-0108 owns. Printed, not asserted.
  *   B. BAD DEPLOY — a 404 on a urlsToCache entry, quota fine. Install MUST fail and
  *      the old worker MUST keep control. A blanket `.catch(){}` passes A and fails
  *      B, which is why B is here: it is the assertion that stops the easy wrong fix.
@@ -95,7 +95,8 @@ async function scenario({ label, oldSw, newSw, squeeze, breakIt }) {
   let filled = null;
   if (squeeze) {
     /* runtime entries first, THEN cap the quota just above what is now used, so the
-     * precache cannot fit until the reclaim frees those entries. Capping before the
+     * precache cannot fit. (Round 3 reclaimed here to make room; that was reverted, so
+     * today the install simply fails.) Capping before the
      * app is cached squeezes the wrong thing and the scenario tests nothing. */
     filled = await page.evaluate(async ({ o }) => {
       const c = await caches.open('runtime-pad'); let n = 0;
@@ -152,12 +153,13 @@ console.log(`demo-quota-install`);
 console.log(`  NEW sw.js blob : ${blob(join(NEW_DIR,'sw.js'))}`);
 console.log(`  origin         : ${ORIGIN}${BASE}\n`);
 
-/* ---- A. squeezed device: the update must still arrive ---- */
+/* ---- A. squeezed device: CHARACTERISE what happens; assert only the harm ---- */
 /* The PREDECESSOR is this same worker with a comment appended: byte-different, so
  * the browser genuinely offers an update, and behaviourally identical, so nothing in
  * the result depends on which worker preceded it. An explicit third argument still
- * overrides it, which is how the red-first demonstration against the un-reclaiming
- * install is driven. */
+ * overrides it — kept because PUP-WO-0108 will need to drive a DIFFERENT predecessor
+ * to exercise the harm this file cannot currently construct. ci.yml passes one
+ * argument, so the override is unused by the gate. */
 const NEWSW = join(NEW_DIR, 'sw.js');
 let OLDSW;
 if (process.argv[3] && resolve(process.argv[3]) !== NEW_DIR) {
@@ -189,11 +191,17 @@ if (a.life.seen.length === 0) {
    * leaves the child a working offline app; this leaves nothing. It is the state the
    * reverted round-3 fix produced, so it is the one thing that must stay impossible. */
   const activatedWithNoShell = arrived && !(a.shell.status === 200 && a.shell.isApp === true);
-  /* AND WHAT THIS CANNOT PRODUCE, so the ok is not read as coverage: the measured
-   * harm needed a LEGACY cache (pup-pad-v16) holding the only good shell, which
-   * activate then deleted. This scenario's predecessor shares CACHE_NAME, so it cannot
-   * construct that state — the assertion is a guard against a regression it has not
-   * itself exercised. PUP-WO-0108 owns building the fixture that can. */
+  /* WHAT THIS CANNOT PRODUCE, so the ok is never read as coverage — and the reason is
+   * the MEASURED one, not the one first written here. An earlier version said the harm
+   * needs a legacy cache holding the only good shell. True, but the simpler fact is
+   * that in this fixture the squeeze poisons THE SAME CACHE the new worker precaches
+   * into, so any worker that reclaims repairs it. Measured reach of this assertion:
+   *   reverted worker  arrived=false            -> ok, antecedent false, VACUOUS
+   *   origin/main      arrived=false            -> ok, VACUOUS
+   *   the round-3 fix  arrived=true, shell 200  -> ok  (it does NOT catch that)
+   *   blanket .catch() arrived=true, shell 404  -> FAIL
+   * So it discriminates the blanket-catch class ONLY. PUP-WO-0108 inherits the true
+   * reach, not an overstatement of it. */
   say(!activatedWithNoShell,
       'A: the device is never left with an activated worker and no app shell',
       `lifecycle ${JSON.stringify(a.life.seen)} but shell ${JSON.stringify(a.shell)}`);
@@ -216,4 +224,4 @@ if (b.life.seen.length === 0) {
 
 await browser.close(); server.close(); for (const s of sockets) s.destroy();
 if (problems.length) { console.error(`\nDEMO RED — ${problems.length}:`); for (const p of problems) console.error('  ' + p); process.exit(1); }
-console.log('\nDEMO GREEN — the fix arrives on a squeezed device, and a bad deploy still fails loudly.');
+console.log('\nDEMO GREEN — a bad deploy still fails loudly and no device is left with a worker\n              but no shell. The squeezed case is CHARACTERISED above, not asserted: the fix\n              does not arrive there, and that is PUP-WO-0108.');

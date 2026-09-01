@@ -10,7 +10,7 @@ spontaneously and caught the drift I had not declared.
 
 ## Frozen at
 
-    commit  b9d6870608d3d8e13aa443f5b084d8e7d5ad03ad
+    commit  273cb965d32c6deb4785c344fad2a493d3984c6c
     branch  build/wo-0105
 
 ## SHA-256 at freeze
@@ -22,12 +22,12 @@ d9a1c3b3d30d992212799dec017299253c557b77319cdf3f8a39c1c074919130  sw.js
 d397a4e1da464b0acb0b49ef45b5b2968b854341f60feae8e0744ec95dda313d  icon-192.png
 07117f432c777c14f44a5a33fce0e3161a11a61aadb74aa114a6a1af0f011660  icon-512.png
 2d3f9fca6dd1050e1f5aafbb05b4cf464dea8ddf3e83b584fd9a76a2e560cc12  .github/workflows/ci.yml
-7555828b4688da980f944425e0513faba467c86c07c94944b9008dbdffa8d201  .github/ci/check-error-caching.mjs
+c3688ca4d633a76d2ce9b61f2f509f622a5ad4b6a1fa0cdcd4dd831a86e69390  .github/ci/check-error-caching.mjs
 59d64710116450c178c624f4328ab7134089a096177a3cda91118cf481681cd0  .github/ci/demo-error-poisoning.mjs
-b205b04eed6920033888cb5d785769bcf403aea00dc3f2aa0a16f266f5e90b19  .github/ci/demo-quota-install.mjs
+a0eda4aea17c9d35fad5bbfd4792ea6581cfeebdbb8ead24c060165b2dc52014  .github/ci/demo-quota-install.mjs
 5fd4da9f8dec5945a24b9835ef85e9f917d5feb5129753f0d6c8dd5f3e1e13b2  .github/ci/check-mutations.mjs
-ac567a4b272d96912b1649a7788bec9cd93861b93bd28f3920eb5e0825cfeff8  .github/ci/lib/sw-harness.mjs
-6cf63d0eb6f4b2fb6aa51568169ffb1b7a1cfb54487b293b9de5f54a9e1b1777  docs/feedback/PUP-WO-0105.md
+44ee253963d2ed4fafaecb24bd6c48ff264b129c759f82dcec875a76176616e6  .github/ci/lib/sw-harness.mjs
+709ab18359645b05ba317c6172d3b1571d02cf800eec0f237426f767d6ad0bee  docs/feedback/PUP-WO-0105.md
 927f38413137bad1ce593083f0e08f6be375c3f82c5f72384e86f35c606487ff  docs/findings/PUP-WO-0105-pass-prompt-r3.md
 ```
 

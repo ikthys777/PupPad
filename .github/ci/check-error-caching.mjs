@@ -222,7 +222,11 @@ if (op.stored && op.stored.status === 0) {
       '`response.ok` guard trades invariant 3 against invariant 3 (work order §1.2, §7)');
 }
 
-/* ---- 5. THE INSTALL PATH — PUP-WO-0105 §0a. ASSERTED, not measured and printed.
+/* ---- 5. THE INSTALL PATH — PUP-WO-0105 §0a, AS IT STANDS AFTER THE REVERT.
+ * 5b is asserted. 5a is CHARACTERISED — measured and printed — because the behaviour
+ * it describes is an open defect (PUP-WO-0108) rather than a property this artifact
+ * provides. An earlier version of this header said "ASSERTED, not measured and
+ * printed", which was true of the install fix that was reverted.
  *
  * The guard stops new poisoning. It is worthless on a device the fix cannot reach,
  * and a device with no quota headroom is exactly that: addAll rejects, install fails,
@@ -270,8 +274,10 @@ const RUNTIME = [`${ORIGIN}/cdn/leaflet.js`, `${ORIGIN}/cdn/tile-1.png`, `${ORIG
   seed.push([SHELL, new Response('POISONED', { status: 404 })]);
   const r = await install({ seed, capacity: 6 });
   console.log('  NOT ASSERTED: whether a squeezed device receives the fix at all.');
-  console.log(`                install ${r.rejected ? 'REJECTED (' + r.rejected.name + ')' : 'resolved'}` +
-              ' — the new worker is discarded and the OLD one keeps serving. PUP-WO-0108.');
+  console.log('                ' + (r.rejected
+    ? `install REJECTED (${r.rejected.name}) — the new worker is discarded and the OLD one keeps serving.`
+    : 'install RESOLVED — the new worker activates. That is NOT today\'s behaviour and if you are'
+      + ' reading it here, something changed.') + ' PUP-WO-0108.');
 }
 
 /* 5b. THE OTHER HALF: a bad deploy must still fail loudly */

@@ -19,7 +19,15 @@ export class FakeCacheStorage {
     this.entries = new Map();          // cacheName -> Map(url -> response)
     /** Every url a worker ATTEMPTED to write, in order — including refused ones. */
     this.putAttempts = [];
-    /** Every entry a worker DELETED, in order. Final cache state cannot answer
+    /** UNEXERCISED AS OF THE PUP-WO-0105 REVERT — measured: zero Cache.delete calls
+     *  across check-error-caching, check-cache-isolation and check-mutations. This log
+     *  and the `delete` method beside it are what closed the eighth false green (a
+     *  reclaim keep-list that matched nothing), and the code that used them was
+     *  reverted. They travel to PUP-WO-0108 with it. Stated so 0108 knows this
+     *  instrumentation is UNTESTED rather than proven — a regression in it is
+     *  currently invisible to the gate.
+     *
+     *  Every entry a worker DELETED, in order. Final cache state cannot answer
      *  "was a precache entry deleted?" — addAll re-provisions them immediately, so
      *  the symptom is erased before any assertion can see it. */
     this.entryDeletes = [];

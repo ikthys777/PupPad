@@ -360,6 +360,30 @@ shape: a verdict read instead of what produced it.
 
 # ROUND 3 — the fix must be able to ARRIVE (§0a)
 
+> **NOTE, ADDED AT DISPOSITION. EVERYTHING BELOW DESCRIBES WORK THAT WAS REVERTED.**
+> The install-path fix this section reports — quota discrimination, reclaim, bounded
+> retry — is **not in the artifact**. It was reverted after the round-3 pass measured
+> it leaving a squeezed device with an **activated worker and no app shell at all**,
+> which is worse than not installing. `sw.js`'s executable code is byte-identical to
+> `b87fd8c`. The quota defect is open and owned by **PUP-WO-0108**.
+>
+> **Two statements below are now measurably false and are left standing rather than
+> edited away**, because the reasoning that produced them is the useful part:
+> * *"Acceptance 7, one run"* records `installed → activating → activated` and
+>   `shell {"status":200,"isApp":true}`. Measured against the current tree:
+>   `["updatefound:installing","statechange:redundant"]`, `shell {"status":404,"isApp":false}`.
+> * *"against `b87fd8c` … check 8 fails **only** its two install assertions"* — check 8
+>   against `b87fd8c` now passes entirely. Those assertions were retired with the code
+>   they tested.
+>
+> §0a.3's reasoning about what reclaiming refuses describes a reclaim that no longer
+> exists. Its conclusion was also wrong on its premise: the trade it calls forced is
+> not forced, because a proportional reclaim repairs the shell **and** keeps the map.
+> That correction is the substance PUP-WO-0108 inherits.
+>
+> Found by the round-3 pass, which read this file as a frozen deliverable and measured
+> it against the tree — the check nobody had been running on the feedback document.
+
 The guard is unchanged and was not reopened. Round 3 is the install path.
 
 ## §0a.2 — the discrimination, measured
