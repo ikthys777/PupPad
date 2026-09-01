@@ -340,6 +340,26 @@ Two rules follow, and the second is the cheaper one:
   only infer it.** Those are different duties and the record should say so rather
   than split fault evenly — but the reviewer's share is real whenever a waiver was
   granted on the claim's strength.
+**A SCHEDULING DECISION IS ONLY AS GOOD AS THE TRIGGER LIST IT WAS MADE AGAINST,
+AND A NEW TRIGGER FOR A KNOWN DEFECT IS A NEW DECISION, NOT A DUPLICATE FINDING.**
+*(`PUP-WO-0105`'s builder.)* The un-closable Map overlay was found in `PUP-WO-0000`
+§1.6 and scheduled into `PUP-WO-0600` at phase P6 — defensible, because the only
+known trigger was a blocked CDN: rare, external, self-healing. Then quota eviction
+was measured (~25 MB on a plain load, ~8 MB per opaque entry, no `storage.persist`),
+which turns that rare external trigger into **an ordinary internal one**, and the
+next offline cold start becomes the trap. **Nothing in either record joined them.**
+What nearly buried it is that it *looked like a re-find of something already
+scheduled* — and a re-find is exactly what gets closed as "known."
+
+**Both of this project's near-misses are failures of DISPOSITION, not of
+discovery.** Here, and the round-1 recommendation ("give the fake cache a `puts`
+counter and assert zero write attempts") that was written into the findings file
+under *Recommendation* and never applied, whose exact predicted vacuity round 2 then
+found. **The pass worked, the record worked, and the loop did not close** — because
+every control this project has built checks whether a finding was *written down*,
+and none checks whether it was *acted on*. Two instances is a pattern and it wants a
+control; **none is proposed here**, deliberately, by both parties who have each
+shipped a mechanism today for a problem that turned out not to exist.
 
 **And the standing consequence:** a check that verifies the checks — restoring each
 defect and requiring red, then neutering each stub and requiring the blindness to be
@@ -627,6 +647,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.4 added: the order is `PUP-WO-0105` → flip → `PUP-WO-0104`, and the "0104 before any `sw.js` change" constraint is restated as **a worker change must be gated by a check for the class it changes**. P1 closes on its own gate, with 0104 carried past it. | The constraint as written cut both ways — the co-architect spotted that it would gate 0105's own one-line fix for a defect live on the tablet. Restating it by *class* rather than by *file* resolves that without weakening it: 0105's acceptance requires building the check for its own defect class, so it brings the gate rather than bypassing it. |
 | 2026-09-01 | §6.1 member 4 gains two more clauses: the resolver must **fail closed**, and **not every path-shaped string is a pointer**. | Both from the rule's next two uses. The builder's resolver printed `ALL POINTERS RESOLVE` while a probe had crashed — `\| tail` discarded the exit status and returned a line that read like a version report; the claim was true and unestablished. CC-A's resolver then flagged a gitignored path cited as environment advice. **One false green and one false red from the same rule, one work order apart** — the print-the-lines clause covers only the red half. |
 | 2026-09-01 | §6.1 gains: **a per-change safety argument does not compose across changes in one commit**, with the varied-what rule and the author/reviewer scope asymmetry. | `PUP-WO-0105`'s builder, against a decision CC-A had already accepted. A response matrix measured the guard, CC-A extended it to the whole commit, and a `CACHE_VERSION` bump in the same commit discarded every runtime-cached asset — 0 of 24 map tiles under invariant 3's own falsification test. The waiver of the UI test rested on the argument that concealed what the UI test finds. |
+| 2026-09-01 | §6.1 gains the trigger-list rule and the disposition gap: a new trigger for a known defect is a new decision, and this project's near-misses are failures of disposition rather than discovery. | The builder's, stating properly why CC-A's P6 scheduling of the Map trap was defensible when made and wrong once quota eviction was measured. Paired with the round-1 `puts`-counter recommendation that was recorded and not applied — every control here checks that a finding was written down, none checks that it was acted on. Named as wanting a control; none proposed, by two parties who each shipped an unnecessary mechanism today. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
