@@ -71,12 +71,28 @@ var CACHE_PREFIX = SCOPE_PATH === null ? null : cachePrefixFor(SCOPE_URL);
  *     `caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))`. With CACHE_NAME
  *     unchanged that opens the EXISTING cache and puts fresh copies over all five
  *     precached URLs, including the poisoned ones. Shipping a byte-different sw.js
- *     IS the re-fetch. Verified: poisoned /PupPad/index.html at 404, guard shipped
- *     with the version left alone, entry back to 200 and the runtime cache intact.
+ *     IS the re-fetch — ON A DEVICE WITH QUOTA HEADROOM, and that precondition
+ *     turns out to be load-bearing. With headroom, verified: poisoned
+ *     /PupPad/index.html at 404, guard shipped with the version left alone, entry
+ *     back to 200 and the runtime cache intact.
+ *
+ *     ON A QUOTA-EXHAUSTED DEVICE THE FIX DOES NOT ARRIVE AT ALL. addAll rejects
+ *     with QuotaExceededError, install fails, the new worker goes `redundant`, and
+ *     the OLD unguarded worker stays activated — so the poisoned shell is never
+ *     repaired and the child keeps getting the error page. Measured A/B varying
+ *     only remaining quota: with headroom `statechange -> installed` and the shell
+ *     returns to 200; squeezed, `statechange -> redundant` and it stays 404.
+ *     AND THE DEVICES MOST LIKELY TO BE IN THAT STATE ARE THE ONES THAT MOST NEED
+ *     THIS FIX, because a poisoned device is one that has been USED, and use is
+ *     what accumulates opaque entries at ~8 MB each (see the cross-origin note).
+ *     Both facts were already in this file and were not composed — which is this
+ *     work order's own finding recurring inside the comment that records it.
+ *     Found by the round-2 pass, not by me.
  *     It repairs the five urlsToCache keys and nothing else: a poisoned same-origin
  *     RUNTIME entry would survive, and no production URL is one today only because
  *     index.html has no relative `./` subresources. That is a fact about today's
- *     index.html, not a property of the design — see the LIMITS note below.
+ *     index.html, not a property of the design — see WHAT THIS GUARD
+ *     DOES NOT COVER, at the guard itself.
  *   - THE BUMP COST THE MAP PANEL ITS OFFLINE ASSETS. Everything cross-origin is
  *     runtime-cached into THIS SAME cache — leaflet, supabase, and every OSM tile —
  *     and the activate reap deletes the old cache whole, after which addAll restores
@@ -400,10 +416,26 @@ self.addEventListener('fetch', function(event) {
        *
        * WHAT THIS DOES NOT FIX, stated rather than glossed: an opaque 200 and an
        * opaque 404 are INDISTINGUISHABLE — both status 0, both type opaque, both
-       * with an unreadable body. No predicate can separate them, so a failed tile
-       * or CDN asset is cached exactly as it is today: unchanged, not improved.
-       * PUP-WO-0600 vendors those assets and dissolves the question. Do not read
-       * this guard as covering the cross-origin case.
+       * with an unreadable body. Two passes attacked that across thirteen
+       * observables, a cache round trip and a quota side channel, and it held: no
+       * predicate on an OPAQUE RESPONSE can separate them.
+       *
+       * BUT THE OPACITY IS A CHOICE, NOT A LAW. This worker forwards
+       * `event.request`, inheriting the no-cors mode the browser picked for a
+       * <script>/<link>/<img>. All three third parties send
+       * `access-control-allow-origin: *` (verified live), so a cors-mode request
+       * would make the status readable, and the guard already refuses a cors 404
+       * correctly. Not done here because a naive always-cors REGRESSES any host
+       * that omits ACAO on a 200; it needs try-cors-then-fall-back. That is a
+       * deferral, and an earlier version of this comment stated it as a limit.
+       *
+       * AND IT DOES NOT GO TO PUP-WO-0600, which an earlier version also claimed.
+       * 0600's scope is index.html:11-13, the two CDNs. The OpenStreetMap tiles at
+       * index.html:1373 are not in it and CANNOT be vendored — they are map data
+       * fetched per coordinate. Tiles are the bulk of the opaque entries and the
+       * whole of the quota path, so this question survives 0600 and needs a home.
+       *
+       * Do not read this guard as covering the cross-origin case.
        *
        * cache.put still rejects on a non-GET request or a 206, and `ok` is true
        * for a 206 — so the .catch stays. (It does NOT reject an opaque redirect:
