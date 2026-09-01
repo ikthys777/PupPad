@@ -188,23 +188,32 @@ jobs:
       || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Scoped to THIS job; the workflow default stays contents: read.
-    # pages: write and id-token: write are exactly what actions/deploy-pages needs
-    # (OIDC for the deployment). Nothing else is widened. PUP-WO-0103 §7 requires
-    # this to be stated rather than assumed: publication needs more than
-    # contents: read, and this is the whole of what it needs.
+    # PUP-WO-0103 §7 requires the permissions to be stated rather than assumed.
+    # THIS JOB NEEDS NOTHING BEYOND READ. It verifies and builds; it does not deploy.
+    # pages: write and id-token: write live on the `deploy` job below and nowhere
+    # else, so the credential exists only in the job that actually needs it.
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    #
+    # NO `environment:` HERE, AND THAT IS THE POINT — found by running it.
+    #
+    # The first version put `environment: github-pages` on this whole job. The
+    # github-pages environment carries a branch_policy protection rule, so a job
+    # bound to it is REJECTED BEFORE ITS FIRST STEP on any branch the policy does not
+    # allow. The verify dispatch failed with zero steps executed and no log:
+    #     jobs[] -> {"name":"Publish both copies","steps":[]}
+    # That is the protection working correctly — and it meant every verification step
+    # sat behind the DEPLOYMENT policy, so none of them could run anywhere the site
+    # cannot be deployed from. Backwards: verification should run everywhere,
+    # deployment should be gated.
+    #
+    # The policy is a repository setting and therefore not the builder's to touch
+    # (§7). The fix is on this side: verification here, unbound; deployment in its
+    # own job below, bound.
     concurrency:
-      # Never cancel a publication in flight — a cancelled deploy can leave the site
-      # serving a half-updated pair of copies. This group is shared across every ref
-      # deliberately: two deployments must serialise even though their runs no longer
-      # share a concurrency group (see the workflow-level group above).
+      # Shared across every ref deliberately: two publications must serialise even
+      # though their runs no longer share a workflow-level concurrency group (see
+      # the group at the top of this file). Never cancelled in flight.
       group: pages-publish
       cancel-in-progress: false
     env:
@@ -520,11 +529,12 @@ jobs:
       - name: "verify mode — everything above ran; stop before publishing"
         if: env.DRY_RUN == 'true'
         run: |
-          echo "VERIFY ONLY — the full publication pipeline ran and passed."
-          echo "Upload and deploy were skipped on purpose; nothing was published."
-          echo "What this run did NOT exercise: actions/upload-pages-artifact and"
-          echo "actions/deploy-pages themselves. Those first execute on the first"
-          echo "push to main after this merges."
+          echo "VERIFY ONLY — the whole publication pipeline ran and passed."
+          echo "Nothing was uploaded and nothing was deployed."
+          echo "What a verify run does NOT exercise, stated so nobody reads more into"
+          echo "a green than is there: actions/upload-pages-artifact and"
+          echo "actions/deploy-pages. Those first execute on the first push to main"
+          echo "after this merges."
 
       - name: Upload the site
         if: env.DRY_RUN != 'true'
@@ -532,7 +542,44 @@ jobs:
         with:
           path: dist
 
+  # ==========================================================================
+  # Deployment — the ONLY job that can change what the site serves.
+  #
+  # Split from `publish` so the github-pages environment (and its branch policy)
+  # gates the deployment alone, not the verification. `needs: publish` means every
+  # assertion in that job stands between a commit and the site: a red check does not
+  # fail the deploy, it prevents this job from existing.
+  #
+  # It deploys the artifact its own run uploaded, so nothing built elsewhere can be
+  # deployed through it.
+  # ==========================================================================
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: publish
+    # Never on a verify dispatch, and never on a pull request. A rollback dispatch
+    # DOES deploy — that is what the lever is for — and its commit was named by a
+    # human and proven an ancestor of refs/heads/stable in the publish job above.
+    if: >-
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable'))
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'rollback')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The whole of what publication needs beyond read, and it lives only here:
+    #   pages: write     — create the Pages deployment
+    #   id-token: write  — the OIDC token actions/deploy-pages exchanges for it
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      # Never cancel a deployment in flight — a cancelled deploy can leave the site
+      # serving a half-updated pair of copies.
+      group: pages-deploy
+      cancel-in-progress: false
+    steps:
       - name: Deploy to GitHub Pages
-        if: env.DRY_RUN != 'true'
         id: deploy
         uses: actions/deploy-pages@v4
