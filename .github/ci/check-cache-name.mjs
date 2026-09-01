@@ -84,10 +84,34 @@ function urls(src) {
   return new Set([...m[1].matchAll(/['"]([^'"]+)['"]/g)]
     .map(x => norm(x[1])).map(x => (x === '' ? 'index.html' : x)));
 }
+/**
+ * Read the literal that identifies this cache generation.
+ *
+ * PUP-WO-0101 moved that literal. Before it, `CACHE_NAME = 'pup-pad-v16'` was the
+ * whole identity. After it, the name is DERIVED per deploy path
+ * (`CACHE_PREFIX + CACHE_VERSION`) so that one byte-identical sw.js can serve two
+ * paths, and the part that must change when a cached asset changes is
+ * `CACHE_VERSION`. Reading `CACHE_NAME` after that point reads a computed
+ * expression and parses nothing.
+ *
+ * Both forms are accepted because this check compares two revisions and the BASE
+ * revision legitimately predates the change — not as a fallback for sloppiness.
+ * The assertion itself is unchanged: the identity literal must differ between base
+ * and head whenever a cached asset changed, and an unparseable identity still
+ * fails rather than passing quietly.
+ */
 function cacheName(src) {
   if (!src) return null;
-  const m = src.match(/CACHE_NAME\s*=\s*['"]([^'"]+)['"]/);
-  return m ? m[1] : null;
+  /* The trailing `;` is load-bearing: without it `CACHE_VERSION = 'v' + (n)`
+   * matches the leading 'v' and reports a partial literal as if it were the whole
+   * identity. Require a COMPLETE assignment to a single string literal, so a
+   * computed identity is unparseable — and therefore fails loudly — rather than
+   * silently comparing fragments. (Found while proving this check still catches
+   * its original defect class.) */
+  const version = src.match(/CACHE_VERSION\s*=\s*(['"])([^'"]*)\1\s*;/);
+  if (version) return version[2];
+  const legacy = src.match(/CACHE_NAME\s*=\s*(['"])([^'"]*)\1\s*;/);
+  return legacy ? legacy[2] : null;
 }
 
 const swHead = readAt(head, 'sw.js'), swBase = readAt(base, 'sw.js');
@@ -95,7 +119,8 @@ if (!swHead) fail('sw.js does not exist at HEAD.');
 const listHead = urls(swHead), listBase = urls(swBase);
 if (!listHead) fail('could not parse urlsToCache from sw.js at HEAD (sw.js:2-8).');
 const nameHead = cacheName(swHead), nameBase = cacheName(swBase);
-if (!nameHead) fail('could not parse CACHE_NAME from sw.js at HEAD (sw.js:1).');
+if (!nameHead) fail('could not parse the cache identity literal from sw.js at HEAD —\n' +
+  '  expected CACHE_VERSION (or, before PUP-WO-0101, CACHE_NAME) as a plain quoted string.');
 
 // Union of both revisions: an asset REMOVED from the list still changed what a
 // client caches, so it must still trigger a bump.

@@ -13,7 +13,10 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # stable republishes the promoted copy when Scotty fast-forwards it. A push to
+    # either ref rebuilds BOTH copies from their own refs, so publication is
+    # idempotent and neither ref can go stale because the other moved.
+    branches: [main, stable]
 
 # Minimal by construction. A workflow that inherits write scope it does not use is
 # a credential sitting in the blast radius of every future edit to this file.
@@ -81,3 +84,124 @@ jobs:
         # up from its own location to .github/ci/node_modules, which is why the
         # tooling can stay out of the repository root.
         run: node .github/ci/check-load.mjs .
+
+      # ---------------------------------------------------------------- 5 ----
+      - name: "Check 5 — the two deploy paths cannot destroy each other's caches"
+        run: node .github/ci/check-cache-isolation.mjs .
+
+  # ==========================================================================
+  # Publication. Gated on the checks BY CONSTRUCTION — `needs: checks` means a red
+  # check does not fail the deploy, it prevents the deploy job from existing
+  # (architecture §6). Never runs on a pull request.
+  # ==========================================================================
+  publish:
+    name: Publish both copies
+    needs: checks
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Scoped to THIS job only; the workflow default stays contents: read.
+    # pages: write and id-token: write are what actions/deploy-pages requires and
+    # are the minimum for publication — see docs/feedback/PUP-WO-0101.md.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      # Never cancel a publication in flight: a cancelled deploy can leave the site
+      # serving a half-updated pair of copies.
+      group: pages-publish
+      cancel-in-progress: false
+    steps:
+      - name: Check out main into the site root
+        uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          path: site
+
+      - name: Check out stable into /stable/
+        uses: actions/checkout@v7
+        with:
+          # refs/heads/stable explicitly, never the bare name: a bare ref can be
+          # satisfied by a TAG of the same name. northstar invariant 4 says the
+          # promoted copy advances only when a human promotes it, so the ref this
+          # resolves is not a detail.
+          ref: refs/heads/stable
+          path: stable-src
+
+      - name: Stamp each copy with the ref and commit it was built from
+        # The stamp is generated INSIDE each checkout from that checkout's own HEAD.
+        # It cannot inherit the other copy's identity, which is what makes the
+        # verification below meaningful rather than decorative.
+        run: |
+          set -euo pipefail
+          stamp() {
+            local dir="$1" want_ref="$2" out="$3"
+            local sha
+            sha="$(git -C "$dir" rev-parse HEAD)"
+            printf '{"ref":"%s","sha":"%s","path":"%s","built_at":"%s"}\n' \
+              "$want_ref" "$sha" "$out" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              > "$dir/build-stamp.json"
+            echo "  $out -> $want_ref @ $sha"
+          }
+          stamp site   main   /
+          stamp stable-src stable /stable/
+          mkdir -p site/stable
+          # Copy stable's content in, excluding its git metadata.
+          tar -C stable-src --exclude=.git -cf - . | tar -C site/stable -xf -
+
+      - name: "Invariant 4 — verify each copy against the remote ref it claims"
+        # THIS IS THE STEP THAT STANDS BETWEEN AN UNPROMOTED COMMIT AND A
+        # THREE-YEAR-OLD'S TABLET, so it must not verify itself.
+        #
+        # An earlier version of this step was tautological in two ways and would
+        # have passed with main's content in /stable/: it compared the stamp's `ref`
+        # field against the literal this workflow had just written into it, and its
+        # sha comparison fell back to `git rev-parse HEAD` of the very checkout
+        # under test — HEAD against HEAD, true by construction.
+        #
+        # The authority is now `git ls-remote`, which asks the SERVER what
+        # refs/heads/<ref> points at. It is independent of the checkout, of the
+        # stamp, and of this workflow's own assumptions. There is NO fallback: if
+        # the remote tip cannot be established, publication fails.
+        run: |
+          set -euo pipefail
+          remote="https://github.com/${GITHUB_REPOSITORY}.git"
+
+          verify() {
+            local dir="$1" want_ref="$2" label="$3"
+            local stamp_ref stamp_sha head_sha remote_sha
+            stamp_ref=$(jq -r .ref  "$dir/build-stamp.json")
+            stamp_sha=$(jq -r .sha  "$dir/build-stamp.json")
+            head_sha=$(git -C "$4" rev-parse HEAD)
+            remote_sha=$(git ls-remote "$remote" "refs/heads/${want_ref}" | cut -f1)
+
+            echo "$label: stamp=$stamp_ref@${stamp_sha:0:12} head=${head_sha:0:12} remote=${remote_sha:0:12}"
+
+            [ -n "$remote_sha" ] || { echo "::error::refs/heads/${want_ref} does not exist on the remote"; exit 1; }
+            [ "$stamp_ref" = "$want_ref" ] || { echo "::error::${label} stamp names ${stamp_ref}, expected ${want_ref}"; exit 1; }
+            [ "$stamp_sha" = "$head_sha" ] || { echo "::error::${label} stamp sha does not match its own checkout"; exit 1; }
+            [ "$head_sha" = "$remote_sha" ] || {
+              echo "::error::${label} checkout is ${head_sha}, but refs/heads/${want_ref} on the remote is ${remote_sha}."
+              echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
+              exit 1; }
+          }
+
+          verify site        main   "root (/)"        site
+          verify site/stable stable "promoted (/stable/)" stable-src
+
+          test -f site/stable/index.html || { echo "::error::/stable/ has no index.html — refusing a partial publish"; exit 1; }
+          test -f site/index.html        || { echo "::error::root has no index.html — refusing a partial publish"; exit 1; }
+          echo "OK: each copy carries the commit its own remote ref points at."
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

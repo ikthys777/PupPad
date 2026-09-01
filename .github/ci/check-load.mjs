@@ -51,6 +51,7 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize, resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { attachServiceWorkerWatcher } from './lib/sw-cdp.mjs';
 
 // Absolute: the containment guard below compares prefixes, and a relative root
 // would reject every path.
@@ -93,10 +94,25 @@ console.log(`  serving ${REPO} at ${ORIGIN}`);
 // version under test is pinned with the lockfile. PUPPAD_CHROMIUM overrides the
 // executable for local runs on a machine that already has a Chromium — the check
 // is about PupPad's console, not about which build renders it.
-const launchOpts = { args: ['--no-sandbox', '--disable-dev-shm-usage'] };
+// A fixed port is required because the CDP watcher connects to the browser
+// endpoint by URL before any page exists.
+const CDP_PORT = Number(process.env.CDP_PORT || 9333);
+const launchOpts = { args: ['--no-sandbox', '--disable-dev-shm-usage', `--remote-debugging-port=${CDP_PORT}`] };
 if (process.env.PUPPAD_CHROMIUM) launchOpts.executablePath = process.env.PUPPAD_CHROMIUM;
 else launchOpts.channel = 'chromium';
 const browser = await chromium.launch(launchOpts);
+// Attach BEFORE any context exists, so the worker target cannot be created and run
+// its first evaluation before the watcher is listening.
+let swWatcher = null;
+try {
+  swWatcher = await attachServiceWorkerWatcher(CDP_PORT, { onError: (e) => record(ownErrors, e) });
+} catch (e) {
+  console.error(`\nCHECK 4 FAILED — could not attach the service-worker watcher: ${e.message}`);
+  console.error('  sw.js runtime coverage is not optional (PUP-WO-0101 §1.5). Failing rather than');
+  console.error('  silently reverting to the blind behaviour PUP-WO-0100 shipped.');
+  process.exit(1);
+}
+
 const context = await browser.newContext();
 
 const ownErrors = [];      // fails the check
@@ -164,26 +180,15 @@ page.on('pageerror', (err) => {
   record(ownErrors, { kind: 'uncaught exception', text: err.stack || String(err), where: 'page script' });
 });
 page.on('console', onConsole);
-// SERVICE WORKER OBSERVABILITY — a measured limit, not an assumption.
-// sw.js is one of exactly two code files here and is the mechanism behind
-// northstar invariant 3, but its console output and uncaught exceptions do not
-// reach the page. Three routes were tried against playwright 1.56.1 and all fail:
-//   worker.on('console')            -> not an API on ServiceWorker
-//   context.on('console'|'weberror') -> delivers page output only; verified silent
-//                                       for a console.error and a throw inside sw.js
-//   CDP                              -> newCDPSession rejects a Worker ("expected
-//                                       Page or Frame"); browser-level
-//                                       Target.setAutoAttach does attach to the
-//                                       service_worker target, but Playwright's
-//                                       CDPSession.send takes no sessionId, so
-//                                       Runtime.enable cannot be routed to it.
-// What IS covered, and it is not nothing: sw.js is parsed by check 1 in true
-// classic-script mode; a worker that fails to install or activate is caught by the
-// swState guard below (a urlsToCache entry pointing at a missing file fails
-// cache.addAll and is caught); and the controlled reload below exercises the
-// worker's fetch handler for real. The residual gap is a runtime error inside a
-// worker event handler that does not prevent activation. Stated in FEEDBACK.md and
-// raised upward rather than papered over.
+// SERVICE WORKER OBSERVABILITY — closed in PUP-WO-0101 (F16).
+// sw.js is one of exactly two code files here and is the mechanism behind northstar
+// invariant 3. Playwright 1.56.1 cannot observe it — worker.on('console') is not an
+// API, context.on('console'|'weberror') delivers page output only, and
+// CDPSession.send takes no sessionId so browser-level auto-attach cannot be ROUTED
+// to the worker session. This check therefore drives a RAW CDP socket alongside
+// Playwright (lib/sw-cdp.mjs), which can carry a sessionId. A console.error or an
+// uncaught exception inside sw.js now fails this check — including the throwing
+// fetch handler that stayed green under PUP-WO-0100.
 context.on('serviceworker', (worker) => {
   console.log(`  service worker registered: ${worker.url()}`);
 });
@@ -235,6 +240,16 @@ const swState = await page.evaluate(async () => {
 });
 const title = await page.title();
 
+// The worker's fetch handler runs on the reload; let its errors arrive over CDP
+// before the socket is torn down.
+await page.waitForTimeout(500);
+if (swWatcher.sessionCount() === 0) {
+  console.error('\nCHECK 4 FAILED — no service-worker CDP session attached, so sw.js ran unwatched.');
+  console.error('  Green here would mean "nothing was looking", which is the gap this closes.');
+  swWatcher.close(); await context.close(); await browser.close(); server.close();
+  process.exit(1);
+}
+swWatcher.close();
 await context.close();
 await browser.close();
 server.close();
@@ -242,6 +257,7 @@ server.close();
 // ---------- report ----------
 console.log(`  document title: ${JSON.stringify(title)}`);
 console.log(`  service worker: ${swState}; page controlled by it after reload: ${controlled}`);
+console.log(`  service worker CDP sessions watched: ${swWatcher.sessionCount()}`);
 console.log(`  third-party requests blocked (expected, not failures): ${foreignBlocked.length}`);
 for (const u of [...new Set(foreignBlocked)].slice(0, 10)) console.log(`    blocked  ${u}`);
 console.log(`  third-party console errors IGNORED (a naive check would go red on these): ${foreignErrors.length}`);
