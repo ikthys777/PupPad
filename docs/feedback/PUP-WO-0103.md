@@ -364,3 +364,138 @@ turn boundary, would have made this cost nothing.
 
 I would rather that than be trusted to remember, because I have now demonstrated twice
 that the moment I most need to remember is the moment I am least able to.
+
+---
+
+# ROUND 3 — the surface removed, and what that dissolved
+
+## F1 and F2 were DISSOLVED, not dropped
+
+A future reader will find F1 and F2 in the pass record marked **disqualifying**, with
+no fix commit against either. That is deliberate and it is the whole story: **the
+feature they lived in was deleted.**
+
+CC-A ruled the rollback lever out after verifying the branch ruleset directly —
+`Protect-stable`'s `bypass_actors` carries repository-admin at `bypass_mode: always`
+while refusing every minted token with `GH013`. So the human's promotion and rollback
+authority is **structural**, and a workflow lever was a second, weaker mechanism for an
+authority already correctly implemented. F1 had already shown the lever never moved
+`refs/heads/stable`, so the next push to `main` silently republished the tip and undid
+it.
+
+Removing `mode`, `main_sha`, `stable_sha`, the verify/rollback branching, the ancestry
+gate and the deploy boolean deleted **both** findings at once.
+
+**One thing I pushed back on, and CC-A adopted it.** The ruling's stated reasoning was
+that the `demo/refuse-*` branches already demonstrate the archive refusals "through the
+ordinary PR path." They did not and could not: **the publish job did not run on pull
+requests**, so every one of those refusals had only ever been exercised by dispatch.
+Removing the surface with no substitute would have *deleted* that evidence and left the
+three steps between a poisoned tree and Buddy's tablet untested forever — F15 exactly.
+
+The fix was better than either option: **let the publish job run on `pull_request`
+without upload or deploy.** It costs nothing (`contents: read`; every publishing
+credential lives on `deploy`, which is push-only) and it makes the original reasoning
+true rather than aspirational.
+
+## The first second-pass was killed against a superseded artifact
+
+I froze at `62d0f01` and dispatched a pass; CC-A's ruling to remove the surface arrived
+minutes later. I recommended killing it and did.
+
+The reason is sharper than "it would waste a run": **~150 lines of what it was
+attacking were about to cease to exist, and its silence on the new shape would read as
+coverage.** That is the failure this project has spent more effort on than any other,
+and it would have been self-inflicted. It is also the freeze problem in a different
+tense — instead of the artifact moving under the reviewer mid-run, it moves out from
+under the finished report.
+
+**Three of its delegated children finished after the kill and returned real findings.**
+I verified them rather than discarding them on a technicality: the kill was correct
+about the *artifact*, and those findings were still true about the *code*. F-A came
+from one of them and is the reason the publish job can run at all.
+
+## The archive refusals moved from dispatch to the PR path — verified by CC-A
+
+Item 4 was verified by CC-A rather than me, which is the right division: verification of
+evidence is reviewer work. All three demo PRs, `head_sha` matched against the commit
+under test rather than a stale run:
+
+| Branch | Failing step |
+|---|---|
+| `demo/pr-refuse-gitattributes` | Reject trees that can publish something other than their own bytes |
+| `demo/pr-refuse-symlink` | Reject trees that can publish something other than their own bytes |
+| `demo/pr-refuse-stable-path` | Build the site from the COMMITS, not the working trees |
+
+**The byte assertion was SKIPPED in all three**, so it was not the cause — which is what
+distinguishes this from my earlier runs, where it was. **`deploy` was SKIPPED in all
+three**, so publish-on-PR works in both directions: it verifies, and it cannot publish.
+
+And the anomaly I flagged rather than assumed away — `#16` showing no publish job — was
+the **stale run**, exactly as suspected. Worth recording that it was flagged as
+unexplained rather than waved through, because the alternative was to report a green.
+
+## The ordering constraint that outlives this work order
+
+**§1.4 is currently asserted only by check 5**, which is one line of sandbox detection
+away from nothing. That is acceptable **only** because the sequencing puts a correct
+worker on both copies — Scotty fast-forwards `stable` before Pages flips — so there is
+no live hazard today.
+
+It is defence against a **future** bad worker. Therefore:
+
+> **`PUP-WO-0104` MUST LAND BEFORE ANY FUTURE `sw.js` CHANGE REACHES PUBLICATION — i.e.
+> before `PUP-WO-0600`.**
+
+That is a hard dependency, not bookkeeping, and it is the single most important line in
+this document for anyone sequencing later work.
+
+## What moved to PUP-WO-0104, and why it is shape rather than patching
+
+**M9** — a root worker deleting the promoted copy's cache on the production origin
+passes all seven checks, because check 5 is the only check on `ikthys777.github.io` and
+is a detectable sandbox, while both real browsers serve `127.0.0.1`. **Two separable
+gates.** `ci.yml`'s own written reasoning — "check 6 is the only thing that catches
+it" — is wrong in the file, because check 6 is not on the site's origin.
+
+**M7** — nothing asserts cache *contents* beyond a single URL. Empty every entry except
+`/stable/index.html` and all seven stay green.
+
+Neither is a bug in a fix. They are shape, and the direction CC-A named is right: run
+the real browser at the production origin (`--host-resolver-rules`) and the two gates
+collapse into one, making M9 **inexpressible** rather than merely detected.
+
+## Two assertions deleted rather than repaired
+
+Per the ruling that false coverage is worse than none. Each check now **prints what it
+does not assert**, so the absence is visible instead of silent:
+
+```
+NOT ASSERTED: navigation-poisoning of the root cache by /stable/ — see PUP-WO-0104
+NOT ASSERTED: survival of the promoted cache through the root worker's FIRST activation
+```
+
+Both were mine. The first tested `startsWith('/stable/')` against a harness serving
+`/PupPad/stable/` — it could not match any input, and the correct value was passed into
+the evaluate and never read. **The stale literals survived the rename that made the file
+serve the real paths, which is exactly why the fix looked complete: the serving agreed
+with the deployment and the assertions did not.**
+
+## The habit this work order cost the most to learn
+
+**Four times a red run read as a successful demonstration:**
+
+1. My input validator failed the runs it existed to let through.
+2. My root-red demo was masked by the `/stable/` check firing first.
+3. The demo PRs built `main` instead of the PR head, so the defect was never checked out.
+4. I read a run whose `head_sha` was the *previous* demo commit.
+
+Every one was caught by reading **which step failed** or **what commit ran** — never by
+the conclusion. That is not four mistakes; it is one missing habit, and it is
+mechanisable: **assert the run's `head_sha` and the failing step name, never the
+conclusion alone.**
+
+Recommended for architecture §6.1, beside the existing family. It is a distinct member:
+0102's was *an assertion that passes by not running*; the §3.2 self-catch was *an
+assertion that passes and certifies the forbidden state*; this is **a failure whose
+cause is not the one under test**. All three look identical from the exit code.
