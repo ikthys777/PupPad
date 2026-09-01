@@ -123,7 +123,7 @@ jobs:
         # rather than letting the mutation set rot unnoticed.
         run: node .github/ci/check-mutations.mjs .
 
-      - name: "Check 8 — an HTTP error never replaces a cached entry, and the fix can install"
+      - name: "Check 8 — an HTTP error never replaces a cached entry"
         # PUP-WO-0105. Architecture §6.4 lets that work order go BEFORE the
         # PUP-WO-0104 cache gate on the condition that a worker change is gated by a
         # check for the class it changes — 0105 brings its own, and this is it.
@@ -137,12 +137,13 @@ jobs:
         #                test, and the worker made ZERO write attempts — not merely
         #                that a seeded entry survived, which is equally true when
         #                nothing was ever fetched.
-        #   the INSTALL — a device with no quota headroom cannot precache, so the
-        #                install fails, the new worker goes redundant, and the OLD
-        #                unguarded worker stays activated. The fix must survive a
-        #                quota failure AND still fail loudly on a bad deploy; a
-        #                blanket catch passes the first and destroys the second, so
-        #                both are asserted and neither is sufficient alone.
+        #   the INSTALL — a bad deploy (404 on a precached URL) must still fail
+        #                install loudly, so the old worker keeps serving rather than
+        #                activating over a cache it never provisioned. The QUOTA half
+        #                is CHARACTERISED, not asserted: a squeezed device does not
+        #                receive the fix, that is an open defect (PUP-WO-0108), and a
+        #                round-3 attempt to fix it here was reverted for leaving the
+        #                device with an activated worker and no app shell at all.
         run: node .github/ci/check-error-caching.mjs .
 
       - name: "Check 9 — the poisoning, and the repair, in a real browser"
@@ -160,7 +161,7 @@ jobs:
         # to stop exactly that kind of unverified claim reaching the gate.
         run: node .github/ci/demo-error-poisoning.mjs .
 
-      - name: "Check 10 — the fix can ARRIVE on a squeezed device, and a bad deploy still cannot"
+      - name: "Check 10 — a bad deploy cannot install, and no device is left with a worker but no shell"
         # PUP-WO-0105 §0a. Check 8 asserts this class in a Node sandbox; only a
         # browser has the SERVICE WORKER LIFECYCLE, and the lifecycle is the whole
         # finding: `installed` means the update arrived, `redundant` means it was
@@ -170,7 +171,7 @@ jobs:
         # before the app is cached squeezes the wrong thing and the scenario tests
         # nothing — then ships the new worker and watches which way it goes.
         #
-        # Both halves in one run, because either alone is passable by a wrong fix:
-        # a blanket .catch(){} on install survives the squeeze AND lets a 404 on a
-        # precached URL activate over a cache it never provisioned.
+        # It CHARACTERISES the squeezed case (the update does not arrive; PUP-WO-0108)
+        # and ASSERTS the harm boundary: never an activated worker with no app shell,
+        # which is the state the reverted round-3 fix produced.
         run: node .github/ci/demo-quota-install.mjs .

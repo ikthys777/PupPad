@@ -10,7 +10,7 @@ spontaneously and caught the drift I had not declared.
 
 ## Frozen at
 
-    commit  99aca4b30721d34c7c3638d0c301595ab8f8b25d
+    commit  b9d6870608d3d8e13aa443f5b084d8e7d5ad03ad
     branch  build/wo-0105
 
 ## SHA-256 at freeze
@@ -21,7 +21,7 @@ d9a1c3b3d30d992212799dec017299253c557b77319cdf3f8a39c1c074919130  sw.js
 2019537fd0a52fe84124a9eff4d20461888239391d6263035d85c5aa66cab221  manifest.json
 d397a4e1da464b0acb0b49ef45b5b2968b854341f60feae8e0744ec95dda313d  icon-192.png
 07117f432c777c14f44a5a33fce0e3161a11a61aadb74aa114a6a1af0f011660  icon-512.png
-155a86dc623ba537f150ba3c31667e5470e75117f70919a9a805eb6223ff142f  .github/workflows/ci.yml
+2d3f9fca6dd1050e1f5aafbb05b4cf464dea8ddf3e83b584fd9a76a2e560cc12  .github/workflows/ci.yml
 7555828b4688da980f944425e0513faba467c86c07c94944b9008dbdffa8d201  .github/ci/check-error-caching.mjs
 59d64710116450c178c624f4328ab7134089a096177a3cda91118cf481681cd0  .github/ci/demo-error-poisoning.mjs
 b205b04eed6920033888cb5d785769bcf403aea00dc3f2aa0a16f266f5e90b19  .github/ci/demo-quota-install.mjs
