@@ -54,7 +54,7 @@ import { tmpdir } from 'node:os';
 const REPO = process.argv[2] || process.cwd();
 const results = [];
 
-function run(label, { sw = [], harness = [], expect }) {
+function run(label, { sw = [], harness = [], expect, expectFail }) {
   const dir = mkdtempSync(join(tmpdir(), 'puppad-red-'));
   try {
     cpSync(join(REPO, 'sw.js'), join(dir, 'sw.js'));
@@ -94,8 +94,20 @@ function run(label, { sw = [], harness = [], expect }) {
     const observed = expect === 'RED' || expect === 'GREEN'
       ? (red ? 'RED' : 'GREEN')
       : (red ? 'LOUD' : 'SILENT');
-    const pass = observed === expect;
+    let pass;
     const fails = out.split('\n').filter((l) => l.includes('FAIL')).map((l) => l.trim());
+    /* FINDING B — THE EXIT CODE IS NOT THE VERDICT.
+     * This compared `code !== 0` and nothing else, so ANY red counted as "the defect
+     * was caught" — including a red for a completely different reason. A mutation that
+     * merely breaks sw.js with a syntax error would have scored as proof that the
+     * assertion under test still works. `expectFail` names the assertion that must be
+     * the one to fire; a red produced by anything else is now a misprediction, which
+     * is what it always was. */
+    const matched = !expectFail || fails.some((f) => f.includes(expectFail));
+    pass = observed === expect && matched;
+    if (observed === expect && !matched) {
+      console.log(`        RED, but NOT on the expected assertion: wanted ${JSON.stringify(expectFail)}`);
+    }
     results.push({ label, expect, got: observed, pass, fails, code });
     console.log(`${pass ? '  ok  ' : '  MISPREDICTED'} ${label}`);
     console.log(`        expected ${expect}, got ${observed} (exit ${code})`);
@@ -113,14 +125,14 @@ console.log('\n=== PART A — restore the defect, check 5 must go RED ===');
 
 /* §3.3 THE HEADLINE. Invariant 7's own falsification test. */
 run('A1  origin-wide READ restored (invariant 7, architecture §6.1)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "SERVED the other deploy path",
   sw: [[`      return caches.open(CACHE_NAME).then(function(cache) {
         return cache.match(event.request);
       }).then(function(hit) {`, `      return caches.match(event.request).then(function(hit) {`]],
 });
 
 run('A2  origin-wide REAP restored (architecture §6)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "reap DELETED",
   sw: [[`          if (!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT) return true;
           /* Otherwise: this worker's own prefix, and never outside it. */
           return name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME;`,
@@ -128,17 +140,17 @@ run('A2  origin-wide REAP restored (architecture §6)', {
 });
 
 run('A3  legacy exception becomes a PATTERN, not a literal', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "NEAR MISS",
   sw: [[`name === LEGACY_CACHE_EXACT`, `name.indexOf('pup-pad-v1') === 0`]],
 });
 
 run('A4  /stable/ exclusion removed (root serves the promoted copy)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "SERVES /stable/",
   sw: [[`  if (FOREIGN_SUBTREE !== null) {`, `  if (false) {`]],
 });
 
 run('A5  prefix delimiter dropped — root\'s prefix nests inside stable\'s name', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "STARTS WITH",
   sw: [[`  return 'puppad|' + encodeURIComponent(path) + '|';`,
         `  return 'puppad|' + encodeURIComponent(path);`]],
 });
@@ -147,26 +159,26 @@ run('A5  prefix delimiter dropped — root\'s prefix nests inside stable\'s name
  * PUP-WO-0101 encoding fix that closed an attack and opened an invariant 3
  * violation. It must be caught by assertion 9, not by anyone remembering. */
 run('A6  F7 regression: require paths to ARRIVE canonical (refuses /my%20photo.png)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "legitimately encoded asset",
   sw: [[`  var parts = pathname.split('/');`,
         `  try { if (pathname !== decodeURIComponent(pathname)) return null; } catch (e) { return null; }
   var parts = pathname.split('/');`]],
 });
 
 run('A7  stable worker allowed to delete the ROOT\'s legacy cache', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "DELETED pup-pad-v16",
   sw: [[`if (!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT) return true;`,
         `if (name === LEGACY_CACHE_EXACT) return true;`]],
 });
 
 run('A8  non-canonical scope no longer unregisters (orphan cache)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "stayed registered",
   sw: [[`  if (CACHE_PREFIX === null || canonicalPath(SCOPE_PATH) !== SCOPE_PATH) {`,
         `  if (CACHE_PREFIX === null) {`]],
 });
 
 run('A9  bare foreign directory served (/PupPad/stable with no slash)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "foreign directory",
   sw: [[`    if (canon === FOREIGN_SUBTREE.slice(0, -1)) return false;`, ``]],
 });
 
@@ -175,7 +187,7 @@ run('A9  bare foreign directory served (/PupPad/stable with no slash)', {
  * sandbox to HAVE setTimeout — without it this mutant dies on a ReferenceError and
  * the check would appear to catch a defect it cannot actually host. */
 run('A10 reap moved outside waitUntil onto a timer (F9)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "reap did NOT delete",
   sw: [[`  event.waitUntil(
     caches.keys().then(function(names) {
       return Promise.all(
@@ -203,7 +215,7 @@ run('A10 reap moved outside waitUntil onto a timer (F9)', {
  * assertion in sections 1-2 passes, because at the moment they measure the worker
  * has behaved impeccably. Only the trap sees what happens next. */
 run('A11 correct reap PLUS a deferred origin-wide sweep — the exact F9 shape', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "AFTER activate settled",
   sw: [[`  self.clients.claim();
 });
 
@@ -226,7 +238,7 @@ self.addEventListener('fetch', function(event) {`]],
 /* F4. The sandbox could not express a navigation, so a worker that exempts
  * top-level navigations from the /stable/ decline was structurally invisible. */
 run('A12 navigations exempted from the /stable/ decline (pass F4)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "SERVES /stable/ for a top-level navigation",
   sw: [[`  if (!servesRequest(event.request.url)) return;`,
         `  if (!servesRequest(event.request.url) && event.request.mode !== 'navigate') return;`]],
 });
@@ -234,7 +246,7 @@ run('A12 navigations exempted from the /stable/ decline (pass F4)', {
 /* F5. Check 5 ran the MIRROR of northstar invariant 7's stated test — it seeded
  * stable and read from root. The promoted copy's own offline read was unexercised. */
 run('A13 the PROMOTED copy reads origin-wide (invariant 7 in its own direction, pass F5)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "PROMOTED COPY SERVED THE TEST BUILD",
   sw: [[`        return hit || new Response('', { status: 504, statusText: 'Offline and not cached' });`,
         `        if (hit) return hit;
         if (IS_STABLE_WORKER) return caches.match(event.request);
@@ -244,7 +256,7 @@ run('A13 the PROMOTED copy reads origin-wide (invariant 7 in its own direction, 
 /* F7. install was never dispatched and addAll recorded nothing, so the precache —
  * a third way for a worker to touch what it does not own — was unobservable. */
 run('A14 the precache reaches into the other deploy path (pass F7)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "precached OUTSIDE",
   sw: [[`  './icon-512.png'
 ];`, `  './icon-512.png',
   './stable/index.html'

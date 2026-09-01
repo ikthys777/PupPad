@@ -313,3 +313,54 @@ solve.** F2 came from making the pipeline exercisable; F0 came from building the
 two-tree harness. That is fixes generating defects, which is the evidence that split
 `PUP-WO-0101` — and it is a scope signal for CC-A to weigh, not for me to absorb by
 fixing quietly.
+
+---
+
+# ROUND 2 — fixes applied under CC-A's rulings
+
+All eight checks green; protected surfaces still diff to empty. **Every fix below was
+demonstrated red first with the mutant it exists to catch, then green.**
+
+| # | Fix | Red demonstration |
+|---|---|---|
+| **F2** | The ancestry gate applies to **any** named `stable_sha`, in **every** mode. `verify` no longer takes a branch that skips it on the strength of a claim about a different job. | main's tip refused as a promoted copy |
+| **F0** | Promoted copy comes up **first** so its cache exists before the root worker activates; baseline sampled **before** that activation; both browser harnesses serve `/PupPad/` and `/PupPad/stable/` | `THE ROOT WORKER DESTROYED THE PROMOTED COPY'S CACHE` in check-two-trees; `the /stable/ cache was DELETED by the root worker activating` in check 6 |
+| **F3** | Check 5's full reap matrix and install inspection at **both** scopes | a reaper active only at the promoted scope — 5 assertions fire |
+| **F5/B** | Check 7's verdict names **which** assertion must fire, not just the exit code | wrong expected assertion → `RED, but NOT on the expected assertion` |
+| **F6** | Every dispatch input via `env:`; no expression interpolated into any `run:` | — (no trade-off; the payload no longer reaches a shell) |
+| **F7** | The validation step runs on every dispatch, so its rollback guard is reachable | — |
+| **F9** | Both copies judged every run: `continue-on-error` plus a fail-closed GATE | — |
+| **F4** | Cross-serving markers unconditional; `distinct` not vacuous at n=1 | covered by F0's mutant |
+| **F10a** | Symlinks refused in the directory about to be published | — |
+| **F13/F14** | The two over-broad greps tightened | — |
+
+**The three cache checks now agree with the deployment and with each other.** All use
+`/PupPad/` and `/PupPad/stable/` — the shape whose nesting is the reason `sw.js` has a
+trailing-`|` delimiter at all, and which neither browser check had ever exercised.
+
+**On check 7's scope (F5, remaining half).** Its verdict is fixed but its *subject* is
+still one check. Adding `check-two-trees` mutations means a browser launch per
+mutation. Flagged rather than done: `decision-needed`.
+
+**Not addressed, and why:** F1 and the lever await Scotty's ruling on whether
+`refs/heads/stable` can be moved backward — Ruling 5 removes the lever entirely if it
+can, which deletes F1 and F2's original cause. F8 and F15 are CC-A's and Scotty's.
+F11 needs a CI run to confirm. F12's correction stands above, unedited.
+
+## On the commit discipline — the sharp version is right, and I would go further
+
+CC-A's version — *commit each coherent unit as you complete it, not when you are
+done* — is correct, and the reasoning is the part worth keeping: **a rule that fires
+when you decide to stop protects only the cases that were already safe.** A stall is
+not a decision.
+
+Where I would push: it should not be a discipline at all. Architecture §5 now says one
+that keeps needing to be remembered is a candidate for something that remembers it
+instead — and this is the clearest case yet, because the failure mode is *silence*.
+Nothing announces an uncommitted tree; it looks exactly like a clean one until someone
+runs `git status`. The detection half already exists. What is missing is anything that
+acts on it, and it does not need to be clever: a checkpoint commit on a timer, or on
+turn boundary, would have made this cost nothing.
+
+I would rather that than be trusted to remember, because I have now demonstrated twice
+that the moment I most need to remember is the moment I am least able to.
