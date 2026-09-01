@@ -369,6 +369,11 @@ Stated because folding it into either was the obvious move and both are wrong.
   *(Added 2026-09-01 — `PUP-WO-0000` §3.1 and `PUP-WO-0100`'s first draft both
   carried the wrong form; CC-B happened to use the right one anyway, which is
   exactly why the rule belongs here rather than in one work order's memory.)*
+- **Every work order: the adversarial pass is its own dispatch.** The builder
+  builds, freezes every named deliverable *including its feedback file*, parks,
+  notifies, and **stops — which is correct, not a stall**. CC-A dispatches the pass
+  as a fresh turn. *(Added 2026-09-01 after two stalls at that exact handoff;
+  architecture §5.)*
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.
