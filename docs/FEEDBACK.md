@@ -16,7 +16,7 @@ Reproduce with `git fetch origin && git diff origin/main --stat`.
 | `sw.js` diffs to empty | **PASS** |
 | `manifest.json` diffs to empty | **PASS** |
 | `icon-192.png` / `icon-512.png` diff to empty | **PASS** |
-| §3.2 — all four checks green on the unmodified tree | **PASS locally.** See the note below on the real-run half. |
+| §3.2 — all four checks green on the unmodified tree, **in a real run on the PR** | **PASS** — PR #2, run [33460652731](https://github.com/ikthys777/PupPad/actions/runs/33460652731), `completed/success`, all four steps green on `ubuntu-latest` |
 | §3.3 — all four demonstrated red, each reverted | **PASS** — evidence below |
 | §3.4 — check 4 deterministic | **PASS**, with limits stated rather than claimed away |
 | §2 — workflow declares minimal permissions | **PASS** — `permissions: contents: read`, and no publish/deploy/branch-write step exists |
@@ -24,13 +24,19 @@ Reproduce with `git fetch origin && git diff origin/main --stat`.
 | Tooling confined to `.github/`, no root `package.json` | **PASS** |
 | Node pinned to 24 | **PASS** — `actions/setup-node@v5`, `node-version: 24` |
 
-**The real-run half of §3.2 is outstanding, and it is not a scope decision.** A
-GitHub Actions run needs the pull request to exist, and PR creation was refused by
-a permission classifier on this box. The branch is pushed (`build/wo-0100` @
-`413c833`); the PR is not open. Everything below was produced by executing the
-checks locally, which is the "captured output" half of §3.3 but is **not** the
-"green in a real run on the PR" half of §3.2. **That gate is unmet until the PR
-exists and CI runs.** Stated as unmet rather than quietly counted as passed.
+**§3.2 is now MET.** PR #2 is open and CI ran green on `ubuntu-latest`. The real
+run also closed **F12** — the CI-only browser path (`channel: 'chromium'`, never
+taken locally because local runs set `PUPPAD_CHROMIUM`) executed for the first
+time and passed. Two things worth recording from that run, because they are
+independent confirmation rather than a repeat of my own evidence:
+
+- **Check 3's base resolution works in the real environment**: on a `pull_request`
+  event it resolved `merge-base(41994076, HEAD)` against GitHub's merge ref — the
+  case that matters and the one I could only simulate in scratch repositories.
+- **Check 4's determinism reproduced exactly on different hardware**: `3`
+  third-party requests blocked and `3` third-party console errors ignored, the
+  same figures as every local run, with the service worker `active` and the page
+  `controlled by it after reload`.
 
 ---
 
@@ -221,7 +227,7 @@ Reviewer's numbering. Nothing waved off; where I disagreed I say so.
 | **F9** | `blob:`/`data:` URLs from our own origin classified foreign | **Accepted** | `isOurs` now recognises `blob:<origin>` and `data:`. Latent rather than live, fixed anyway — it is one line and it is a misclassification in the unsafe direction. |
 | **F10** | `cancel-in-progress` on `push: [main]` can leave the live commit with **no** verdict | **Accepted** | Now `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. Cancels superseded PR runs; never cancels a run on `main`. |
 | **F11** | Unguarded `statSync` — a broken symlink crashes check 1 with a raw stack trace | **Accepted** | Guarded; unreadable entries are skipped with a named message. |
-| **F12** | The CI browser path (`channel: 'chromium'`) has never been executed | **Accepted, unfixable here** | Correct: every local run sets `PUPPAD_CHROMIUM`. It stays **asserted, not verified** until a real CI run exists — see the gates note. |
+| **F12** | The CI browser path (`channel: 'chromium'`) has never been executed | **Accepted — now CLOSED** | Correct at the time: every local run sets `PUPPAD_CHROMIUM`. Run [33460652731](https://github.com/ikthys777/PupPad/actions/runs/33460652731) took that branch for real on `ubuntu-latest` and check 4 passed, with the same 3-blocked / 3-ignored determinism figures as every local run. No longer asserted; verified. |
 | **F13** | Two inline scripts sharing global lexical scope (`let x` twice) is invisible | **Accepted as a limit** | Real, and unreachable without linking the scripts into one parse. Recorded; not closed. Only bites once a second inline script exists, which nothing currently plans. |
 | **F14** | Check 3 leaked a raw `fatal:` line on a *passing* run | **Accepted** | `git show` stderr is now piped. A green run that prints `fatal:` teaches people to ignore `fatal:`. |
 | **F15** | The favicon exclusion was URL-shaped rather than initiator-shaped | **Accepted** | Now conditioned on the document not declaring `<link rel="icon">`. If PupPad ever adds one and the file is missing, that is a real uncached asset and is no longer excused. |
@@ -243,6 +249,7 @@ What broke was everything *around* it — F7 and F8 — both now fixed.
 ## Findings — upward
 
 ### F16 — Check 4 cannot see inside the service worker, and the tooling cannot make it
+*(Ruled by CC-A into `PUP-WO-0101`'s scope, which opens `sw.js` for `CACHE_PREFIX` anyway.)*
 - **Where:** `.github/ci/check-load.mjs`; `sw.js` entire
 - **Type:** risk
 - **Detail:** `sw.js` is one of two code files in the repo and the mechanism behind invariant 3. Playwright 1.56.1 exposes no route to its console output or uncaught exceptions — three attempts documented above and in the file. What *is* covered: `sw.js` is parsed by check 1 in true classic-script mode; a worker that fails to install or activate is caught (a `urlsToCache` entry pointing at a missing file fails `cache.addAll` — demonstrated); and the page is now verified to end up **controlled** by the worker. The residual gap is a runtime error inside a worker event handler that does not prevent activation. I demonstrated that a throwing `fetch` handler is **not** caught, because the browser falls back to the network.
@@ -255,12 +262,14 @@ What broke was everything *around* it — F7 and F8 — both now fixed.
 - **Detail:** cosmetic, and it is why check 4 needs a favicon exclusion at all. Not fixed: `index.html` is a protected surface and WO §4 ranks the rule above the improvement.
 - **Decision needed:** no
 
-### F18 — the real-run gate (§3.2) is unmet, and it is the one gate I could not close
-- **Where:** this branch; no GitHub Actions run exists
-- **Type:** risk
-- **Detail:** the workflow triggers on `pull_request` and on pushes to `main`, so **no run happens until the PR exists.** I minted a scoped token and pushed the branch successfully; `gh pr create` was refused by a permission classifier on this box. I did not work around it. Consequences: §3.2's "green in a real run on the PR" is **unmet**, and F12's CI-only browser path stays unverified. Everything below the line in §3.3 is local execution, which is §3.3's "captured output" but not §3.2's real run.
-- **Recommendation:** open the PR from `build/wo-0100` → `main`, or authorise a retry.
-- **Decision needed:** **yes** — this blocks acceptance of §3.2, not the build.
+### F18 — RESOLVED: the PR is open, §3.2 and F12 are closed — and my diagnosis of the blocker was wrong
+- **Where:** `~/bin/gh` (the `gh-router` shim), line 65
+- **Type:** bug (in my own diagnosis, and in a documented workaround)
+- **What I claimed:** that the S25-minted installation token lacked `pull_requests: write`, on the evidence that `git push` succeeded while both `POST /repos/.../pulls` and the GraphQL mutation returned 403 *Resource not accessible by integration*.
+- **What is actually true:** the shim ends with `exec env GH_TOKEN="$tok" "$REAL_GH" "$@"` — it **unconditionally overwrites `GH_TOKEN` with its own read-only token.** Every `gh` call I made went out as `clearforge-ghread[bot]`, which is read-only by design, so both 403s were the shim's identity and said nothing whatever about my token. The push succeeded precisely because it bypassed the shim, using raw `git` with an explicit auth header.
+- **Why I got it wrong:** the two 403s were consistent with my hypothesis and I stopped there instead of testing the one thing that would have separated the hypotheses — running the same call against `gh.real` directly. Two agreeing symptoms are not a confirmation when both share an untested common cause.
+- **Consequence for the operating contract:** the global `CLAUDE.md` instruction *"Same for `gh`: pass the minted token via `GH_TOKEN=$TOKEN gh ...` so the shim's read-only creds don't win"* **does not work against this shim** — the shim wins. The working form is `GH_TOKEN=$TOKEN $HOME/bin/gh.real ...`. That is the operator's file to amend, not mine; flagged rather than edited.
+- **Decision needed:** no — but the `CLAUDE.md` correction is worth making.
 
 ### F19 — the checks execute PR-branch code, which is correct but worth stating once
 - **Where:** `.github/workflows/ci.yml`
