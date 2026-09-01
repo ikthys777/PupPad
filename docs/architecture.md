@@ -281,7 +281,19 @@ never been the fix for any of them.
 
 **Member 4 is one line, and being mechanisable makes it a rule rather than advice**
 (§5): before dispatching a pass, resolve every path and every section the prompt
-cites **against the frozen tree, not against `main`**. *Not assigned to a work order
+cites **against the frozen tree, not against `main`** — and **when the resolver
+reports a miss, print the surrounding lines of the cited file, never the count.**
+
+That second clause is not decoration. **Member 4's enforcement is itself subject to
+member 3, and not incidentally: a pointer resolver's entire job is to turn absence
+into red, so every bug in it presents as a dangle.** It is the one check on this list
+whose false positives are indistinguishable from its true positives without opening
+the file. *(Demonstrated within a minute of member 4 being ratified: a case-sensitive
+grep for a quoted invariant reported zero matches, and the invariant was present and
+materially identical at `docs/northstar.md:62` — the prompt embeds the quote
+mid-sentence with a lowercase article. A dangling pointer was nearly reported that
+had never dangled.)* Printing the lines rather than the count is what makes the
+tool built to enforce *read what produced the verdict* obey it. *Not assigned to a work order
 here — it belongs wherever CI is next opened, and this project has learned what
 happens when scope is added to a work order already in flight.*
 
@@ -535,6 +547,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.2 records the `stable` ruleset verified in **both** directions and removes `PUP-WO-0103`'s rollback lever and its whole dispatch surface; §6.3 rules that no `github-pages` branch exists or should, and that its appearance is an alarm. | The ruleset permits repository admin and refuses installation tokens, both now proven — the second by a real push returning `GH013` with `stable` unmoved. The authority the lever was built to provide already existed structurally, so the lever is removed rather than hardened, taking F1 and F2 with it. **Ordering matters: the dispatch surface could only be removed once the publish job gained a `pull_request` path, or the archive refusals would have become undemonstrable.** **The reusable finding is an instrument that cannot return a negative:** a shim response omitting `bypass_actors` was read as an empty list, and a `--dry-run` push was read as a verdict though it never reaches the server. Both could only produce the answer they produced. |
 | 2026-09-01 | §5 gains: red is not a demonstration — assert the commit that ran and the failing step's name, never the conclusion alone. | Four times in `PUP-WO-0103` a red run was read as a successful refusal demonstration, each red for the wrong reason, the last of them a stale run for a superseded commit. The builder named it as one missing habit rather than four mistakes and observed it was mechanisable, which is what makes it a ruling. It completes a pair with §6.1: a green run certifying nothing and a red run proving nothing are the same defect — the verdict read instead of what produced it. |
 | 2026-09-01 | §6.1 gains the family stated as one shape, with a fourth member: a pointer that resolves in the author's head and not in the reviewer's tree. Plus: a freeze verifies stillness, not correctness. | The builder's, and its form is better than CC-A's: *every path a review prompt cites is an assertion that the file exists in the tree the reviewer is given*, and a freeze checklist resolves none of them. Found when a frozen pass prompt cited two files that existed on `main` and not on the branch, making its own out-of-scope fence inert. Members 1–2 are green, 3 is red, 4 never runs — the reason "look harder at the result" has never fixed any of them. |
+| 2026-09-01 | §6.1: member 4's rule gains its second clause — print the cited file's surrounding lines on a miss, never the count — because **member 4's enforcement is itself subject to member 3**. | The builder's, found while running member 4's first real enforcement, about a minute after it was ratified: a case-sensitive grep reported a quoted invariant as missing when it was present and materially identical. A pointer resolver exists to turn absence into red, so every bug in it presents as a dangle — making it the one check whose false positives are indistinguishable from its true positives without opening the file. The tool built to enforce *read what produced the verdict* did not obey it. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
