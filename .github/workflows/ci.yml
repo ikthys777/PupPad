@@ -1,7 +1,14 @@
 # PupPad CI — seven checks, each of which can go red for exactly one reason.
 #
-# This workflow REPORTS. It does not publish, deploy, or write to any branch
-# (northstar invariant 4). Publication is PUP-WO-0103's.
+# THIS WORKFLOW PUBLISHES (PUP-WO-0103). main goes to the site root, stable to
+# /stable/, and Buddy's tablet points at /stable/. Northstar invariant 4 — the copy
+# Buddy uses advances only when a human promotes it — is enforced here by the publish
+# job's verification of the PUBLISHED BYTES, not by convention and not by the ref.
+#
+# THE RULE THAT MATTERS MOST: every copy that gets published is CHECKED IN THE RUN
+# THAT PUBLISHES IT. An earlier version checked only the triggering ref, so a push to
+# main published stable's content — to the promoted copy — with stable never checked
+# in that run. "A red check means nothing publishes" was false in both directions.
 #
 # Checks 5 and 6 were added by PUP-WO-0102 and verify THE WORKER, which is the seam
 # between the two work orders: a check that verifies the worker lives here, a check
@@ -19,7 +26,22 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # stable republishes the promoted copy when a human fast-forwards it. A push to
+    # either ref rebuilds BOTH copies from their own refs, so publication is
+    # idempotent and neither copy goes stale because the other moved.
+    branches: [main, stable]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "verify = run the whole publish pipeline and STOP before deploying. rollback = publish with stable pinned to an explicit commit."
+        type: choice
+        options: [verify, rollback]
+        default: verify
+        required: true
+      stable_sha:
+        description: "rollback ONLY: the full 40-character commit SHA to publish at /stable/. A human names the commit; nothing infers it."
+        type: string
+        required: false
 
 # Minimal by construction. A workflow that inherits write scope it does not use is
 # a credential sitting in the blast radius of every future edit to this file.
@@ -27,11 +49,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Cancel superseded PR runs, but NEVER a run on main. A cancelled run is neither
-  # green nor red, and main is what publishes to the tablet — two quick pushes
-  # must not leave the live commit with no verdict at all. Matters more once
-  # PUP-WO-0103 gates publication on this.
+  # KEYED BY SHA FOR PUSHES, BY REF FOR PULL REQUESTS — and the difference is a real
+  # defect, not tidiness.
+  #
+  # This was `ci-${{ github.ref }}` with `cancel-in-progress` false for pushes, whose
+  # comment said "two quick pushes must not leave the live commit with no verdict at
+  # all." That is exactly what happened. `cancel-in-progress: false` protects a run
+  # that is ALREADY RUNNING; GitHub permits only ONE PENDING run per group, and a
+  # newly queued run evicts an already-pending one REGARDLESS of the flag. Three
+  # merges landed back to back and the middle one — 922c2dc, the merge that put the
+  # service worker on Buddy's tablet — was cancelled while pending. That commit has
+  # no verdict of its own on main. Verified against the API, not inferred:
+  #     gh api repos/ikthys777/PupPad/actions/runs --jq '...' -> 922c2dc concl=cancelled
+  #
+  # Giving every pushed COMMIT its own group means no push can evict another's
+  # pending run, so every commit that lands gets a verdict. Superseded PR runs are
+  # still cancelled, which is the behaviour that was actually wanted.
+  #
+  # This does NOT let two publications race: the publish job below carries its own
+  # `pages-publish` group with cancel-in-progress false, so deployments serialise
+  # even though their runs no longer share a group.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -122,3 +160,379 @@ jobs:
         # text, so a legitimate edit to sw.js breaks an anchor and turns this red
         # rather than letting the mutation set rot unnoticed.
         run: node .github/ci/check-mutations.mjs .
+
+  # ==========================================================================
+  # Publication — two copies, one Pages deployment.
+  #
+  # Gated on the checks BY CONSTRUCTION: `needs: checks` means a red check does not
+  # fail the deploy, it prevents the deploy job from existing (architecture §6).
+  #
+  # WHY THERE IS A `verify` MODE. On a pull request this job cannot run at all —
+  # publishing from an unmerged branch is exactly what invariant 4 forbids — so
+  # without a dispatch path every line below would reach `main` having never once
+  # executed. That is PUP-WO-0101's F15, and the work order says to close it by
+  # construction rather than by promise. `verify` runs the ENTIRE pipeline —
+  # checkout both refs, verify against the server, refuse dangerous trees, build from
+  # the commits, check every published copy, load each in a browser, stamp — and
+  # STOPS before upload and deploy.
+  #
+  # What `verify` does NOT prove, stated so nobody reads more into a green run than
+  # is there: the upload and the Pages deployment themselves. Those two steps first
+  # execute for real on the first push to main after this merges.
+  # ==========================================================================
+  publish:
+    name: Publish both copies
+    needs: checks
+    if: >-
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable'))
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Scoped to THIS job; the workflow default stays contents: read.
+    # pages: write and id-token: write are exactly what actions/deploy-pages needs
+    # (OIDC for the deployment). Nothing else is widened. PUP-WO-0103 §7 requires
+    # this to be stated rather than assumed: publication needs more than
+    # contents: read, and this is the whole of what it needs.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      # Never cancel a publication in flight — a cancelled deploy can leave the site
+      # serving a half-updated pair of copies. This group is shared across every ref
+      # deliberately: two deployments must serialise even though their runs no longer
+      # share a concurrency group (see the workflow-level group above).
+      group: pages-publish
+      cancel-in-progress: false
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'verify' }}
+    steps:
+      - name: "Rollback input — a human must name the commit"
+        # PUP-WO-0103 §1.7 and §7. The lever exists because a promoted copy nobody
+        # can roll back is a safety mechanism welded shut in the emergency it was
+        # built for. It must never become a path by which content reaches /stable/
+        # without a human naming the commit, so: a full 40-hex SHA only. No branch
+        # names, no tags, no "latest", no abbreviations that could resolve
+        # ambiguously, and no default. The SHA is verified to exist and to be an
+        # ancestor of a real ref further down, before anything is built from it.
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'rollback'
+        run: |
+          set -euo pipefail
+          sha='${{ github.event.inputs.stable_sha }}'
+          case "$sha" in
+            *[!0-9a-f]* | "") echo "::error::stable_sha must be a full 40-character lowercase hex commit SHA."; exit 1 ;;
+          esac
+          [ "${#sha}" -eq 40 ] || { echo "::error::stable_sha must be exactly 40 characters; got ${#sha}."; exit 1; }
+          echo "rollback requested by ${{ github.actor }} to stable_sha=$sha"
+
+      - name: Check out the CI tooling from the triggering ref
+        uses: actions/checkout@v7
+
+      - name: Use Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .github/ci/package-lock.json
+
+      - name: Install CI tooling
+        working-directory: .github/ci
+        run: npm ci
+
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          path: src/main
+          fetch-depth: 0
+
+      - name: Check out stable
+        uses: actions/checkout@v7
+        with:
+          # refs/heads/stable explicitly, never the bare name: a bare ref can be
+          # satisfied by a TAG of the same name, and invariant 4 says the promoted
+          # copy advances only when a human promotes it.
+          #
+          # On a rollback the human-named SHA wins, and it is checked below for both
+          # existence and ancestry before a byte of it is published.
+          ref: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'rollback') && github.event.inputs.stable_sha || 'refs/heads/stable' }}
+          path: src/stable
+          fetch-depth: 0
+
+      - name: "Invariant 4 — each checkout is the commit its remote ref names"
+        # An earlier version of this step was tautological: it compared a stamp field
+        # against the literal it had just written, and its sha check fell back to
+        # `rev-parse HEAD` of the checkout under test. Both are gone. `git ls-remote`
+        # asks the SERVER, and there is no fallback — if the remote tip cannot be
+        # established, publication fails.
+        run: |
+          set -euo pipefail
+          remote="https://github.com/${GITHUB_REPOSITORY}.git"
+          rollback_sha=''
+          if [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ github.event.inputs.mode }}" = rollback ]; then
+            rollback_sha='${{ github.event.inputs.stable_sha }}'
+          fi
+          for ref in main stable; do
+            head_sha=$(git -C "src/$ref" rev-parse HEAD)
+            # Exact-match the ref: `ls-remote <pattern>` matches on path-component
+            # tails, so a branch literally named decoy/refs/heads/main would return
+            # two lines and wedge publication (fail-closed, but wedged).
+            remote_sha=$(git ls-remote "$remote" "refs/heads/${ref}" \
+                          | awk -v r="refs/heads/${ref}" '$2 == r { print $1; exit }')
+            [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
+            echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
+
+            if [ "$ref" = stable ] && [ -n "$rollback_sha" ]; then
+              # A rollback deliberately publishes something OTHER than the current
+              # tip, so equality is the wrong test. Two things are required instead,
+              # and together they are strictly narrower than "any commit in the repo":
+              #   1. the checkout is exactly the SHA the human typed;
+              #   2. that SHA is an ANCESTOR of refs/heads/stable as the SERVER
+              #      reports it — so the lever can only move the promoted copy
+              #      BACKWARD along its own history. It cannot be used to promote
+              #      main, a PR head, or any commit a human has not already promoted.
+              # That is what keeps §7's "no path by which main's content reaches
+              # /stable/ without a human naming the commit" true of the lever itself.
+              [ "$head_sha" = "$rollback_sha" ] || {
+                echo "::error::src/stable is ${head_sha}, not the requested ${rollback_sha}."; exit 1; }
+              git -C src/stable fetch --quiet origin "refs/heads/stable:refs/remotes/origin/stable-tip"
+              tip=$(git -C src/stable rev-parse refs/remotes/origin/stable-tip)
+              [ "$tip" = "$remote_sha" ] || {
+                echo "::error::fetched stable tip ${tip} disagrees with ls-remote ${remote_sha}."; exit 1; }
+              git -C src/stable merge-base --is-ancestor "$rollback_sha" "$tip" || {
+                echo "::error::${rollback_sha} is NOT an ancestor of refs/heads/stable (${remote_sha})."
+                echo "::error::The rollback lever can only move the promoted copy backward along its own"
+                echo "::error::history. REFUSING — northstar invariant 4."; exit 1; }
+              echo "stable: ROLLBACK to ${rollback_sha:0:12}, verified an ancestor of ${tip:0:12}"
+              continue
+            fi
+
+            [ "$head_sha" = "$remote_sha" ] || {
+              echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}"
+              echo "::error::REFUSING TO PUBLISH — northstar invariant 4."; exit 1; }
+          done
+
+      - name: "Reject trees that can publish something other than their own bytes"
+        # `git archive` does NOT simply write the commit's tree — it honours
+        # .gitattributes FROM THE TREE IT IS ARCHIVING. Both directions demonstrated:
+        #   export-subst  interpolates the COMMIT MESSAGE into a published file, so
+        #                 arbitrary JS reaches /stable/ while the tree reads clean in
+        #                 review and every check passes. The payload lives in
+        #                 `git log`, which no gate reads.
+        #   export-ignore silently DROPS files from the published copy. Removing
+        #                 manifest.json makes cache.addAll reject, so the promoted
+        #                 copy has no working worker — fail-OPEN, on a green build.
+        # And actions/upload-pages-artifact tars with --dereference, so a committed
+        # symlink is FOLLOWED and its target published off the runner filesystem.
+        # None of it is reachable if a publishable tree may contain neither.
+        run: |
+          set -euo pipefail
+          for ref in main stable; do
+            if git -C "src/$ref" ls-tree -r --name-only HEAD | grep -q '\.gitattributes$'; then
+              echo "::error::$ref carries a .gitattributes. git archive honours it, so the published"
+              echo "::error::bytes need not be the committed bytes. REFUSING TO PUBLISH."
+              exit 1
+            fi
+            if git -C "src/$ref" ls-tree -r HEAD | awk '$1 == "120000" { found=1 } END { exit !found }'; then
+              echo "::error::$ref contains a symlink. The Pages artifact is tarred with --dereference,"
+              echo "::error::so its target would be published from the runner filesystem. REFUSING."
+              exit 1
+            fi
+          done
+          echo "OK: both trees can only publish their own committed bytes."
+
+      - name: Build the site from the COMMITS, not the working trees
+        # With .gitattributes and symlinks refused above, `git archive HEAD` now does
+        # write the commit's tree and nothing else, so no working-tree edit, stray
+        # file, or later step can put unpromoted bytes into a published copy. The
+        # previous version copied working trees and merged stable OVER main's, which
+        # meant a `stable/` path in main survived into /stable/ — main's content on
+        # the promoted copy, which is invariant 4 falsified.
+        run: |
+          set -euo pipefail
+          if git -C src/main ls-tree -r --name-only HEAD | grep -q '^stable/'; then
+            echo "::error::main carries a 'stable/' path, which collides with the promoted copy's mount point."
+            echo "::error::REFUSING TO PUBLISH — the two copies would merge."
+            exit 1
+          fi
+          rm -rf dist && mkdir -p dist
+          git -C src/main archive HEAD | tar -x -C dist
+          # rm -rf, not mkdir -p: `mkdir -p` is a no-op over an existing directory and
+          # `tar | tar -x` merges rather than replaces, so both leave main's bytes
+          # underneath stable's. The directory is destroyed and recreated.
+          rm -rf dist/stable && mkdir -p dist/stable
+          git -C src/stable archive HEAD | tar -x -C dist/stable
+          echo "root copy:     $(find dist -maxdepth 1 -type f | wc -l) files"
+          echo "promoted copy: $(find dist/stable -maxdepth 1 -type f | wc -l) files"
+
+      - name: "Assert the PUBLISHED BYTES are the commit's, not merely the ref's"
+        # PUP-WO-0103 §1.2. Everything above verifies refs and refuses dangerous
+        # trees; this verifies the RESULT. It hashes what is actually in the
+        # directory about to be uploaded and compares it against the tree object of
+        # the commit it claims to be. Any step between the archive and here that
+        # added, removed or altered a byte fails it.
+        #
+        # The build stamp is written AFTER this step precisely so that this
+        # comparison can be exact rather than carrying an exception for one file.
+        run: |
+          set -euo pipefail
+          fail=0
+          check_copy() {
+            local dir="$1" src="$2" label="$3"
+            local expected actual
+            # `git archive` of the commit, hashed as a sorted path+blob listing.
+            expected=$(git -C "$src" ls-tree -r HEAD --format='%(path) %(objectname)' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+            # The same listing computed from the files on disk.
+            actual=$(cd "$dir" && find . -type f -not -path './stable/*' -printf '%P\n' \
+                     | LC_ALL=C sort \
+                     | while read -r f; do printf '%s %s\n' "$f" "$(git hash-object "$f")"; done \
+                     | sha256sum | cut -d' ' -f1)
+            echo "$label: tree=${expected:0:16} published=${actual:0:16}"
+            [ "$expected" = "$actual" ] || {
+              echo "::error::$label — the bytes about to be published are NOT the commit's tree."
+              echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
+              fail=1; }
+          }
+          check_copy dist       src/main   "root (/)"
+          check_copy dist/stable src/stable "promoted (/stable/)"
+          [ "$fail" = 0 ] || exit 1
+          echo "OK: both published copies are byte-for-byte their own commit's tree."
+
+      - name: "Check EVERY published copy, in the run that publishes it"
+        # PUP-WO-0103 §1.3. The rule an earlier version got wrong: the checks job only
+        # ever examines the TRIGGERING ref, so a push to main would publish stable's
+        # content — to Buddy's tablet — with stable never checked in that run.
+        #
+        # §1.4 falls out of this rather than needing its own special case: a /stable/
+        # copy whose worker reaps or READS outside its own prefix fails check 5 here,
+        # so it cannot be published whatever order the human steps happen in. A
+        # sequencing paragraph in a work order is not a mechanism; this is.
+        #
+        # WHICH CHECKS, AND WHY EACH IS OR IS NOT HERE:
+        #   1 syntax          yes — a copy whose sw.js does not parse caches nothing.
+        #   2 assets          yes — an asset missing from urlsToCache breaks offline.
+        #   5 cache-isolation yes — THE call site for §1.4. See the named step below.
+        #   6 two-path        yes — check 5's sandbox is detectable by a one-line
+        #                     `typeof ExtendableEvent` gate and check 6 is the only
+        #                     thing that catches it. PUP-WO-0101 omitted it here,
+        #                     leaving that hole open on exactly the path that
+        #                     publishes while the report said all six ran.
+        #   3 cache-name      NO — it compares two REVISIONS, not a property of a
+        #                     tree. There is no "previous revision" of a published
+        #                     directory. It runs in the checks job, where it belongs.
+        #   4 load            yes, but separately below — it needs a browser.
+        #   7 mutations       NO — it mutates .github/ci and re-runs check 5 against
+        #                     the mutants. It is a property of the TOOLING, not of a
+        #                     published copy, and a published copy has no .github/ci
+        #                     to mutate. It runs once in the checks job.
+        run: |
+          set -euo pipefail
+          fail=0
+          for copy in dist dist/stable; do
+            label="/$([ "$copy" = dist ] && echo '' || echo 'stable/')"
+            echo "::group::checking published copy: $label"
+            for chk in check-syntax check-assets check-cache-isolation demo-two-path-caches; do
+              if node ".github/ci/$chk.mjs" "$copy"; then
+                echo "  ok  $chk"
+              else
+                echo "::error::$chk FAILED for published copy '$label' — refusing to publish."
+                fail=1
+              fi
+            done
+            echo "::endgroup::"
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: "Check 5 against the /stable/ copy specifically — invariant 4's call site"
+        # PUP-WO-0103 §1.3, ruled from PUP-WO-0102's F1. The loop above already runs
+        # check 5 on both copies; this exists as a SEPARATE, NAMED step because a
+        # principle buried inside a loop is a principle nobody can point at, and
+        # because acceptance item 5a names it by step. If someone later narrows that
+        # loop, this step still fails and the failure says why.
+        #
+        # THE LIVE CASE: refs/heads/stable is 2952aa1, whose sw.js is
+        # `var CACHE_NAME = 'pup-pad-v16'` with `names.filter(n => n !== CACHE_NAME)`
+        # and `caches.match(event.request)` — origin-wide on BOTH the reap and the
+        # read. Published at /stable/ alongside a v17 root, it would delete the root
+        # cache on every activation, and the root worker's legacy exception would
+        # delete pup-pad-v16 — which IS stable's live cache — on every activation of
+        # its own. Mutual destruction, forever, not once.
+        run: |
+          set -euo pipefail
+          if node .github/ci/check-cache-isolation.mjs dist/stable; then
+            echo "the promoted copy's worker touches only what it owns."
+          else
+            echo "::error::THE /stable/ COPY'S WORKER IS NOT PREFIX-BOUNDED."
+            echo "::error::Publishing it would destroy the root copy's cache on every activation,"
+            echo "::error::and the root worker would destroy this one's. REFUSING TO PUBLISH."
+            echo "::error::If refs/heads/stable is still behind PUP-WO-0102, fast-forward it."
+            exit 1
+          fi
+
+      - name: Install the browser
+        working-directory: .github/ci
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: "Load every published copy in a real browser"
+        run: |
+          set -euo pipefail
+          fail=0
+          for copy in dist dist/stable; do
+            node .github/ci/check-load.mjs "$copy" || { echo "::error::check-load FAILED for '$copy'"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: "The two PUBLISHED workers, exercised as a pair"
+        # PUP-WO-0103 §1.5, carried from PUP-WO-0101's F8 and the hardest item in the
+        # work order. Everything above checks each copy ALONE. Check 6 registers one
+        # sw.js at two scopes, which is the deployed pair only when the copies are
+        # identical — and the case that matters is precisely when they are NOT:
+        # promotion lag, root at v18 while /stable/ is still v17. Two different
+        # workers, one origin, both live.
+        run: node .github/ci/check-two-trees.mjs dist dist/stable
+
+      - name: Stamp each copy with the ref and commit it was built from
+        # Written AFTER every check so the stamp cannot influence one, and after the
+        # published-bytes assertion so that comparison stays exact rather than
+        # carrying an exception for this file. It makes P1 gate item 3 two curls and
+        # keeps invariant 4 auditable afterwards rather than only at the gate.
+        run: |
+          set -euo pipefail
+          stamp() {
+            # The sha is ASSIGNED first. As an argument to printf, a failing
+            # $(git rev-parse) is not a command failure — `set -e` does not fire and
+            # the stamp is written with an empty sha at exit 0. The invariant-4 step
+            # above looks identical and behaves the opposite way, because there the
+            # substitution IS an assignment.
+            local sha
+            sha=$(git -C "src/$2" rev-parse HEAD)
+            [ -n "$sha" ] || { echo "::error::could not resolve HEAD for src/$2"; exit 1; }
+            printf '{"ref":"%s","sha":"%s","path":"%s","built_at":"%s","run":"%s"}\n' \
+              "$2" "$sha" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GITHUB_RUN_ID}" > "$1/build-stamp.json"
+          }
+          stamp dist        main   /
+          stamp dist/stable stable /stable/
+          cat dist/build-stamp.json dist/stable/build-stamp.json
+
+      - name: "verify mode — everything above ran; stop before publishing"
+        if: env.DRY_RUN == 'true'
+        run: |
+          echo "VERIFY ONLY — the full publication pipeline ran and passed."
+          echo "Upload and deploy were skipped on purpose; nothing was published."
+          echo "What this run did NOT exercise: actions/upload-pages-artifact and"
+          echo "actions/deploy-pages themselves. Those first execute on the first"
+          echo "push to main after this merges."
+
+      - name: Upload the site
+        if: env.DRY_RUN != 'true'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        if: env.DRY_RUN != 'true'
+        id: deploy
+        uses: actions/deploy-pages@v4

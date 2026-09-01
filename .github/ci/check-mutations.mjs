@@ -65,7 +65,16 @@ function run(label, { sw = [], harness = [], expect }) {
       if (!subs.length) return;
       let s = readFileSync(file, 'utf8');
       for (const [a, b] of subs) {
-        if (!s.includes(a)) throw new Error(`${label}: anchor not found in ${file}:\n${a}`);
+        if (!s.includes(a)) throw new Error(
+          `${label}: anchor not found in ${file}\n\n` +
+          `  THIS IS MAINTENANCE, NOT FLAKINESS, AND THE FIX IS NOT TO DELETE THIS CHECK.\n` +
+          `  Mutations are anchored to exact source text. This anchor stopped matching\n` +
+          `  BECAUSE the file it points into was edited — red precisely because of the\n` +
+          `  change, which is the opposite of flaky. Update the anchor below to the\n` +
+          `  edited text, keeping the mutation's MEANING the same, and re-run.\n` +
+          `  Deleting the mutation removes the only evidence that the defect it\n` +
+          `  restores would still be caught (architecture §6.1).\n\n` +
+          `  anchor:\n${a}`);
         s = s.replace(a, b);
       }
       writeFileSync(file, s);
