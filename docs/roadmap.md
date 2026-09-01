@@ -69,6 +69,29 @@ stares at code:**
   unmoved). Rollback is the same authority in reverse, which is why
   `PUP-WO-0103`'s workflow lever was removed rather than hardened. See
   `docs/architecture.md` §6.2.
+
+  **THE PROMOTION PROCEDURE HAS TWO STEPS, AND THE SECOND IS REQUIRED.**
+
+  1. Push `refs/heads/stable` to the commit being promoted.
+  2. **Verify it landed:**
+     ```sh
+     curl -s https://ikthys777.github.io/PupPad/stable/build-stamp.json
+     ```
+     and confirm `.sha` is the commit you just pushed. *(`curl -s`, not `-sI`:
+     `-I` is `--head` and returns no body.)*
+
+  **Step 2 is not a formality and a green run is not a substitute for it.**
+  `pages-publish` and `pages-deploy` are each a single concurrency group, and GitHub
+  keeps only ONE PENDING RUN per group — a newly queued run evicts an already-pending
+  one regardless of `cancel-in-progress`. A promotion's publish or deploy job evicted
+  **while pending** never gets a runner, so it emits no annotation, no failure, and no
+  log line anywhere: the promotion silently does not land, and the push that caused it
+  shows no error. The stamp reports the sha actually **served**, so it catches that
+  whatever ate it — including eviction paths nobody has enumerated. Serialise-and-
+  never-drop is not obtainable from `concurrency:` at all (`ci.yml`, both blocks);
+  redesigning the publication model is a work order behind P2. **Until then this curl
+  is the mechanism, not a suggestion — absence of an error is not evidence that a
+  promotion landed.**
 - **Every human-track item above is an instruction, and gets the same
   satisfiability test a work order gets** before it is relied on (architecture §5).
   Test it with an instrument that could return the *other* answer: a dry run and a

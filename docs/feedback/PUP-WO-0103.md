@@ -668,6 +668,34 @@ below was reproduced by me against the artifact before being written down — tw
 lenses contradicted each other on one finding and one lens overturned a round-5
 correction of mine, so this was not a formality.
 
+## THE MERGE CONFLICTS WERE CODE, NOT DOC TEXT — and that assumption has been load-bearing
+
+**"Additive, both sides kept" has been true of every conflict in this project until
+today, and it stopped being true.** Merging `origin/main` into `build/wo-0103` produced
+two conflicts and neither was prose:
+
+- **`check-cache-isolation.mjs`** — this branch had wrapped the precache assertion in a
+  `[root]`/`[stable]` loop; `PUP-WO-0105` had corrected the fixture so `cache.keys()`
+  yields Request-**like** objects, as the real Cache API does, and normalised at that
+  call site. **Taking either side alone reinstates the A14 false green that 0105
+  caught**: without the normalisation, `precached` holds objects, every
+  `new URL(u, scopeUrl)` stringifies one, no path can start with `scopePath`, and the
+  precache-escape test passes on an empty filter. Resolved by keeping both, and the
+  comment now says the normalisation is load-bearing for the scope test beneath it.
+- **`ci.yml`** — the two sides were not alternatives but an ORDER. `HEAD` contributed
+  the `publish` and `deploy` jobs; `main` contributed checks 8, 9 and 10, which are
+  **steps of the `checks` job**. Resolved as checks 8–10 closing out `checks`, then
+  `publish` (`needs: checks`), then `deploy` (`needs: publish`).
+
+Verified after resolving rather than asserted: YAML parses, jobs are
+`checks`(14 steps) → `publish` → `deploy`, `node --check` clean over every `.mjs` and
+`sw.js`, check 5 green on both scope labels, and check 7 green at 21/21 — which is what
+re-screens A14.
+
+**Recorded here because CC-A merges on the additive assumption.** A semantic conflict
+between a branch's own change and a fix that landed on `main` in the interval is now a
+demonstrated shape in this repo, not a hypothetical.
+
 ## HOW TO READ THIS FILE'S OWN CITATIONS — the same treatment the findings file got
 
 The `ROUND 4` section above was written against `246c5f7`. **Its seven line citations

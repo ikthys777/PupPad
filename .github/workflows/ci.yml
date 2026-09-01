@@ -299,6 +299,33 @@ jobs:
       # Pushes still all share one group and serialise. Each PR ref now gets its own,
       # so PR churn cannot contend with a publication at all; superseded PR runs are
       # still cancelled by the workflow-level group above.
+      #
+      # ================= WHAT THIS LOCK CANNOT DO =================
+      # ROUND 5 §7 FLAGS 1 AND 3, ruled by CC-A: real and NOT fixable here.
+      # Every push shares the single slot `pages-publish-push`, and GitHub keeps ONE
+      # PENDING RUN PER GROUP — a newly queued run evicts an already-pending one
+      # REGARDLESS of cancel-in-progress. So a promotion's publish job waiting behind a
+      # running one can be EVICTED BY ANY THIRD PUSH, and because it was never assigned
+      # a runner IT PRINTS NOTHING AT ALL: no annotation, no cancelled() step, no line
+      # in any log. Usually the evicting run rescues it, since publish checks out LIVE
+      # refs and republishes both copies — but only if THAT run's publish succeeds, and
+      # publish carries refusals `checks` does not. A checks-green/publish-red evictor
+      # destroys the promotion, and it cannot be re-pushed because the ref is already
+      # at that SHA.
+      #
+      # RENAMING THIS GROUP CANNOT FIX IT. Serialise-and-never-drop is not obtainable
+      # from a primitive whose pending depth is one: per-ref groups let two publications
+      # race instead, and no group at all removes the serialisation this lock exists for.
+      # A redesign of the publication model is a numbered work order behind P2.
+      #
+      # SO THE HARM IS DETECTED, NOT THE EVENT — which is strictly stronger, because it
+      # cannot be defeated by an eviction path nobody has thought of yet. The stamp step
+      # writes /stable/build-stamp.json with the RESOLVED SHA of the ref it published,
+      # and the post-stamp step declares it published. After promoting, fetch
+      #     https://ikthys777.github.io/PupPad/stable/build-stamp.json
+      # and read whether `.sha` is the commit you pushed. If it is not, the promotion did
+      # not land — whatever ate it. That check is a REQUIRED step of the promotion
+      # procedure in docs/roadmap.md, not an optional one, and it needs no run to survive.
       group: pages-publish-${{ github.event_name == 'pull_request' && github.ref || 'push' }}
       cancel-in-progress: false
     env:
@@ -376,9 +403,68 @@ jobs:
             [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
             echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
 
+            # ROUND 5 §7 FLAG 4, RULED BLOCKING — AND IT IS A REGRESSION MY OWN O2 FIX
+            # INTRODUCED. Under the old `ci-<sha>` concurrency key, a merge to main and
+            # a promotion of that same commit shared a group and evicted each other, so
+            # this race could not arise. Keying by ref+sha lets them run in PARALLEL,
+            # and `refs/heads/stable` moving between the checkout six steps up and this
+            # `ls-remote` now reaches here.
+            #
+            # This used to print "REFUSING TO PUBLISH — northstar invariant 4" for ANY
+            # mismatch, with no remedy. That is M1's exact shape with the stakes raised:
+            # the gravest message in the project, fired by a BENIGN race, at the moment
+            # a human is doing precisely what the flip sequence instructs — and a false
+            # invariant-4 alarm there invites reaching for something destructive.
+            #
+            # The two causes are distinguishable by ANCESTRY, so distinguish them:
+            #   the ref moved FORWARD   someone pushed after this run checked out. On
+            #                           `stable` that IS a human promoting. The bytes
+            #                           are fine; this checkout is merely stale, and the
+            #                           push that moved it has its own run.
+            #   the ref DIVERGED        rewound or force-pushed. That is the invariant-4
+            #                           shape and it is named as such.
+            # Both still REFUSE — a stale checkout must not publish — but they refuse
+            # for the reason that is true, and neither remedy is "fast-forward stable".
             [ "$head_sha" = "$remote_sha" ] || {
-              echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}"
-              echo "::error::REFUSING TO PUBLISH — northstar invariant 4."; exit 1; }
+              moved=unknown
+              if git -C "src/$ref" fetch -q --no-tags origin "refs/heads/${ref}" 2>/dev/null \
+                 && git -C "src/$ref" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+                if git -C "src/$ref" merge-base --is-ancestor "$head_sha" "$remote_sha" 2>/dev/null
+                then moved=forward; else moved=diverged; fi
+              fi
+              case "$moved" in
+                forward)
+                  echo "::error::refs/heads/${ref} MOVED FORWARD while this run was building."
+                  echo "::error::checkout=${head_sha} is an ANCESTOR of remote=${remote_sha}."
+                  echo "::error::THIS IS NOT AN INVARIANT 4 FAILURE. Nothing is wrong with any"
+                  echo "::error::bytes. Someone pushed to refs/heads/${ref} after this run"
+                  echo "::error::checked it out — on 'stable' that is A HUMAN PROMOTING, which is"
+                  echo "::error::exactly what the flip sequence instructs."
+                  echo "::error::Refusing anyway, because this run's checkout is now stale and a"
+                  echo "::error::stale copy must not publish."
+                  echo "::error::REMEDY: none needed here. The push that moved the ref has its own"
+                  echo "::error::run, and that run publishes ${remote_sha:0:12}. Wait for it, or"
+                  echo "::error::re-run this one. Do NOT fast-forward anything to answer this, and"
+                  echo "::error::do NOT read it as the promoted copy having been corrupted."
+                  ;;
+                diverged)
+                  echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha},"
+                  echo "::error::and the checkout is NOT an ancestor of the remote tip — the ref was"
+                  echo "::error::rewound or force-pushed."
+                  echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
+                  echo "::error::REMEDY: find out who rewrote refs/heads/${ref} and why. Do NOT"
+                  echo "::error::fast-forward anything until that is answered."
+                  ;;
+                *)
+                  echo "::error::src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha},"
+                  echo "::error::and this run COULD NOT ESTABLISH which way the ref moved (the fetch"
+                  echo "::error::or the object lookup failed). REFUSING TO PUBLISH."
+                  echo "::error::Nothing is established about the bytes in either direction, so this"
+                  echo "::error::is NOT an invariant 4 finding. REMEDY: read the git error above."
+                  echo "::error::Do NOT fast-forward anything."
+                  ;;
+              esac
+              exit 1; }
           done
 
       - name: "Reject trees that can publish something other than their own bytes"
@@ -1029,15 +1115,42 @@ jobs:
         # should look for in the log. Until then item 8a is WAIVED, not demonstrated,
         # and this comment is the flag rather than a green tick standing in for one.
         #
-        # One honest limit: a SECOND cancel request force-kills the job and this step
+        # ================= WHAT THIS STEP CANNOT SEE =================
+        # ROUND 5 §7 FLAG 2. This step covers a job that STARTED and was then
+        # cancelled: a manual cancel, or a superseded pull-request run.
+        #
+        # IT CANNOT FIRE ON THE PATH O1 AND O2 EXIST TO ELIMINATE. `pages-publish-push`
+        # is one concurrency slot for every push and GitHub keeps only ONE PENDING run
+        # per group, so a promotion's publish job waiting behind a running one is
+        # EVICTED WHILE PENDING — no runner is ever assigned, and a step that never
+        # runs cannot report. The same is true of `pages-deploy`.
+        #
+        # That distinction is written down because an unfireable reporter is worse than
+        # no reporter: it makes the silence look covered. This step's presence must not
+        # be read as "a lost publication would have said so." It would not.
+        # WHAT CATCHES THAT INSTEAD is the post-condition, not a log line — see the
+        # concurrency block above and the promotion procedure in docs/roadmap.md:
+        # after promoting, fetch /PupPad/stable/build-stamp.json and read whether `sha`
+        # is the commit you just pushed. A promotion that was evicted is visible there
+        # whatever ate it, including eviction paths nobody has thought of yet.
+        #
+        # Second honest limit: a SECOND cancel request force-kills the job and this step
         # will not run either. Silence after a double-cancel is expected, not a defect.
         if: cancelled()
         run: |
-          echo "::warning::This run was CANCELLED before it could finish verifying."
+          echo "::warning::This run STARTED and was then CANCELLED before it finished verifying."
           echo "::warning::NOTHING WAS UPLOADED and NOTHING WAS DEPLOYED — the site still"
           echo "::warning::serves whatever it served before this run started."
           echo "::warning::This is the fail-closed path, not a failure to check. Re-run or"
           echo "::warning::push again when you want a verdict on this commit."
+          echo "::warning::"
+          echo "::warning::THIS MESSAGE DOES NOT COVER EVERY WAY A RUN CAN FAIL TO PUBLISH."
+          echo "::warning::A publish or deploy job EVICTED WHILE PENDING (one concurrency slot,"
+          echo "::warning::one pending run) never gets a runner, so it prints NOTHING AT ALL."
+          echo "::warning::If you were promoting: verify it landed by fetching"
+          echo "::warning::  https://ikthys777.github.io/PupPad/stable/build-stamp.json"
+          echo "::warning::and checking that .sha is the commit you pushed. Absence of an error"
+          echo "::warning::is not evidence your promotion landed."
 
   # ==========================================================================
   # Deployment — the ONLY job that can change what the site serves.
@@ -1074,6 +1187,15 @@ jobs:
     concurrency:
       # Never cancel a deployment in flight — a cancelled deploy can leave the site
       # serving a half-updated pair of copies.
+      # ROUND 5 §7 FLAG 3. This group is global across every ref with
+      # cancel-in-progress false, so it inherits the identical depth-1 rule: a deploy
+      # job pending behind a running one is EVICTED by a third, silently — and unlike
+      # `publish`, this job has NO `if: cancelled()` step at all, so it is silent by
+      # construction rather than by accident. The artifact uploads, `publish` goes
+      # green, and nothing deploys.
+      # Caught by the same post-condition, for the same reason: /stable/build-stamp.json
+      # reports the sha actually SERVED, so a deployment that never happened is visible
+      # to the human who promoted, with no dependence on any job having run.
       group: pages-deploy
       cancel-in-progress: false
     steps:
