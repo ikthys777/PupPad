@@ -879,3 +879,81 @@ here that round 5 edited that file and left it, deliberately.
 **`check-two-trees.mjs` crashes (`ENOENT` via `cpSync`) on a Latin-1 filename.** Found
 because my adversarial fixture had one. No such file is in the tree, but the byte
 assertion now handles such names, so the two checks disagree about what is publishable.
+
+---
+
+# ROUND 5b — CC-A's ruling, and the narrow pass that caught me overcorrecting
+
+Subject frozen at `ae7911b` (23 deliverables, `PUP-WO-0103-r5b-freeze.sums`). CC-A
+ruled §7 flags 2 and 4 in scope (**4 blocking**), and flags 1 and 3 real but not
+fixable by `concurrency:` — answered by a **post-condition** instead. One narrow pass
+over those two changes only.
+
+**Re-verified at disposition: 21 of 23 unchanged; `ci.yml` and `docs/roadmap.md` moved,
+and only those.** `sw.js` byte-identical across both freezes — round 5 touched no worker
+code at all.
+
+## THE RULING'S BEST MOVE WAS NOT MINE
+
+I reported flags 1 and 3 as *"`concurrency:` cannot solve this"* and treated that as the
+obstacle. CC-A treated it as **the answer**: stop detecting the EVENT and detect the
+HARM. A pending depth of one means serialise-and-never-drop is unobtainable from that
+primitive, so the thing that catches a lost promotion is not a log line — it is the
+stamp the publish already writes. That works whatever ate the run, including eviction
+paths nobody has enumerated. Both concurrency blocks now state the depth-1 property and
+that an evicted-while-pending job **emits no log line anywhere**, and the roadmap's
+promotion procedure has a required second step.
+
+## AND THE PASS CAUGHT ME DOING THE OPPOSITE THING TO M1
+
+My first fix for flag 4 classified by ancestry and then announced *"Nothing is wrong
+with any bytes"* and *"do NOT read it as the promoted copy having been corrupted."*
+**Ancestry is a fact about the commit DAG and says nothing about trees.** A reviewer
+built a descendant of `stable` carrying main's exact tree; my step denied anything was
+wrong. Reproduced before fixing:
+
+```
+stable tip tree : e7b997589b8b
+main       tree : e7b997589b8b   <-- identical
+is descendant of old stable? YES
+-> "THIS IS NOT AN INVARIANT 4 FAILURE. Nothing is wrong with any bytes."
+```
+
+M1 was an over-broad ALARM. I replaced it with a confident DENIAL, which is not an
+improvement — it is the same defect pointing the other way. Ancestry proves
+**staleness**; that is now all the forward branch claims, and it says outright that the
+run has not examined the new commit.
+
+**I disagree with the severity, and record why rather than adopting it.** The reviewer
+rated it DISQUALIFYING as a false negative on invariant 4. Northstar invariant 4 reads
+*"the copy Buddy uses advances only when a **human** promotes it"*, falsified by
+*"observe the promoted copy change **without a human action**."* Only a human can push
+`refs/heads/stable` — `Protect-stable` refuses installation tokens and this workflow
+holds no ref-write capability — so a human putting main's tree on `stable` **is** a
+promotion, which the invariant permits. The over-claim was real; the severity rested on
+reading invariant 4 as being about *which tree lands* rather than *what caused it to
+land*.
+
+## THE REST OF THE PASS
+
+| | finding | disposition |
+|---|---|---|
+| SERIOUS | `merge-base --is-ancestor` reports an **unreadable graph as exit 1** — the same code as "not an ancestor" — and I had discarded the only distinguishing signal with `2>/dev/null` while telling the reader to *"read the git error above"* | stderr captured and classified on. Unit-tested: `0`→forward, `1`+no stderr→diverged, `1`+stderr→**unknown** (was diverged), `128`→**unknown** (was diverged) |
+| SERIOUS | **annotation cap.** GitHub renders 10 annotations per level per step. The forward branch emitted **12** errors, so both `Do NOT` guardrails — the point of the change — fell past the cap. The cancelled step emitted **13** warnings, one of them EMPTY, putting the URL past it too | one annotation each via `%0A`; plain text still to the log |
+| SERIOUS | the roadmap's REQUIRED stamp check **returns 404 today** — Pages is still `build_type: legacy` serving `main:/`, so no publish job has ever run. A 404 reads exactly like *"my promotion did not land"* | roadmap now states the dependency on the flip, what a 404 means before it, and `cache-control: max-age=600` — a stamp read within ten minutes can be the previous one |
+| REAL | a **promotion red-marked every in-flight pull request**: a promotion IS a forward move of `stable`, and a PR has `DRY_RUN=true` and cannot deploy | forward is non-fatal on `pull_request`. Verified: PR exit 0, push exit 1, same state |
+| REAL | fetching `origin` rather than `"$remote"` — when they differ the fetch **succeeds** and the object is simply absent, a silent success landing in `unknown` with no error to read | fetch by URL |
+| REAL | forward's *"REMEDY: none needed here, wait for it"* contradicted this file's own concurrency block | points at the stamp check |
+| REAL | the cancelled step's likeliest blind spot was missing: `publish` has `needs: checks`, so a cancel during the fourteen-step browser job — the longest window and the likeliest moment to hit Cancel — leaves publish cancelled **before it gets a runner** | recorded in the step and its output |
+| COSMETIC | *"NOTHING WAS UPLOADED"* was not guaranteed — upload is the step before | only *"NOTHING WAS DEPLOYED"* claimed, via `needs: publish` |
+
+## WHAT THE PASS CONFIRMED HELD
+
+No path publishes — every classification exits 1 and baseline equality exits 0 silently.
+SIGPIPE is unreachable in `ls-remote | awk` (server-side ref filtering means 57 bytes
+cross the pipe; driven against a bare repo advertising 20,002 refs). Shallow clones are
+not a defect — both checkouts pin `fetch-depth: 0`. `shellcheck -s bash` clean on the
+extracted block. The `pull_request` path skips `main` correctly and still asserts
+`stable` against the server. And the roadmap's stamp claims (b), (c) and (d) hold:
+`.sha` is the resolved `refs/heads/stable`, it is the same `HEAD` the build archives,
+nothing mutates `src/stable` in between, and `curl -s` vs `-sI` is stated correctly.
