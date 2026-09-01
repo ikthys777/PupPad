@@ -36,11 +36,19 @@ renumbered once issued.
 ## 3. Critical path
 
 ```
-P0 investigate ──▶ P1 firebreak+CI ──▶ P2 games shell ──┬──▶ P3 Gyre
-                                                         └──▶ P4 Block Pop
-                                                                   │
-                                                          P5 co-op (deferred)
+P0 investigate ──▶ P1 firebreak+CI ──┬──▶ P6 shipped-app remediation   [run first]
+                                     │
+                                     └──▶ P2 games shell ──┬──▶ P3 Gyre
+                                                           └──▶ P4 Block Pop
+                                                                     │
+                                                            P5 co-op (deferred)
 ```
+
+**P6 is numbered last and runs early.** Phases are dependency-ordered (§1) and ids
+are never renumbered (§2), so a phase discovered after P5 was named appends as P6
+even though it runs before P2. The diagram is the authority on order; the number is
+only a label. **P6 is prioritised ahead of P2**: it fixes defects on the tablet
+Buddy uses today, and P2 adds a feature.
 
 **Where risk concentrates: P1.** Not because it is hard, but because everything
 after it merges against a firebreak P1 builds. Until P1's gate passes, a merge to
@@ -72,6 +80,7 @@ stares at code:**
 | **P3** | Gyre is playable from the pad | Buddy can open and drive the particle field |
 | **P4** | Block Pop is playable from the pad | Buddy can play both board sizes |
 | **P5** | Co-op — deferred, not scoped | — |
+| **P6** | Fix what P0 found in the shipped app | Buddy's console works offline and contains its own adult surfaces |
 
 ---
 
@@ -100,7 +109,17 @@ terms a work order can cite: (a) the exact function signature a game module must
 export; (b) the exact registry entry fields; (c) a file-by-file disposition of both
 Grok workspaces marked port / rewrite / discard; (d) a list of contradictions found
 against architecture §3, which may be empty but must be explicitly stated as empty.
-`git diff main --stat` for this work order shows changes under `docs/` only.
+`git fetch origin && git diff origin/main --stat` for this work order shows changes
+under `docs/` only. *(Form corrected 2026-09-01 per §5 — a local `main` ref is not
+fast-forwarded and this gate would have measured against a stale base. The gate's
+substance is unchanged and its PASS below stands: it was verified against
+`origin/main` at review time.)*
+
+**Gate status: PASSED**, 2026-09-01, merged at `1690617`. All four answered — (a)
+findings §8.1, (b) §9.1, (c) §7 with 487 files reconciled against an independent
+`find`, (d) §10 with three contradictions, not empty. Diff was `docs/` only and the
+protected surfaces diffed to empty. Reviewed by CC-A against `PUP-WO-0000` §3;
+citations spot-checked at source rather than accepted.
 
 ---
 
@@ -245,6 +264,70 @@ costs a fraction of what the network layer does.
 
 **Not started until P3 and P4 gates pass.**
 
+---
+
+## P6 — Shipped-app remediation
+
+**Goal.** Fix the defects `PUP-WO-0000` found in PupPad as it stands today. None of
+these are games work; all of them reach the tablet Buddy already uses.
+
+**Depends on:** P1, and hard. **These fixes touch `index.html`, which Pages serves
+from `main:/`.** Architecture §6's bootstrap exception covers `docs/` and
+`.github/` — paths Pages does not serve — and covers nothing else. Merging a P6
+work order before P1's gate passes publishes it straight to Buddy's tablet with no
+firebreak, which is the exact failure P1 exists to build against.
+
+**Runs parallel to:** P2–P4, and **ahead of P2 in priority.**
+
+### Why this is a phase and not extra work orders inside P1 or P2
+
+Stated because folding it into either was the obvious move and both are wrong.
+
+- **Not P1.** P1's merges are safe *only* on the narrow property that their diffs
+  avoid the served paths. A P6 diff cannot have that property — changing
+  `index.html` is the point. Putting these in P1 would mean merging live app
+  changes during the one phase where no firebreak exists.
+- **Not P2.** P2 is the games shell. A phase whose exit gate mixes "the picker
+  renders from the registry" with "the map no longer traps a child" is a gate that
+  no longer means one thing.
+- **Not renumbered in.** §2 and `repo-genesis` forbid renumbering issued ids, so
+  this appends as P6 and the critical path in §3 carries the real order.
+
+**Work orders:**
+
+- **`PUP-WO-0600` — Offline integrity and the un-closable overlay.** Two defects
+  with one root. (a) `index.html:11-13` load Supabase and Leaflet from two
+  third-party CDNs and are absent from `urlsToCache`, so they exist offline only as
+  runtime cache — which `sw.js:19-29` reaps on every `CACHE_NAME` change. (b) When
+  `L` is undefined, `openTreasureMap()` appends its full-bleed overlay at
+  `index.html:1361`, throws at `:1368`, and never reaches the CLOSE listener at
+  `:1550`. There are **zero** `window` or `document` event listeners in the file, so
+  nothing can dismiss it: **recovery requires killing the app.** So a version bump,
+  then an offline tap on Map, traps a three-year-old — northstar invariants 3 and 5,
+  on his own tablet. Vendor the third-party assets into `urlsToCache`, and wire
+  every panel's back affordance **before** the work that can throw.
+  **Blocked on** architecture §10's northstar §5 ruling for the vendoring half; the
+  overlay half is not blocked and may ship first.
+- **`PUP-WO-0601` — Adult surfaces.** Settings is bound unconditionally
+  (`index.html:1736-1737`) and renders the Supabase anon key into a cleartext input
+  (`:1818`), persisted at `:173`. Architecture §3.1 is explicit that the lock
+  contains nothing, so "locked" is not containment and must not be presented as it.
+  **Blocked on** architecture §10's ruling on intended containment.
+
+**Exit gate.**
+1. Airplane mode, cold start on a device whose cache has been cleared, then open
+   every panel including Map. All open and all close. *(Northstar invariants 3, 5.)*
+2. Bump `CACHE_NAME`, reload online once, go offline, tap Map. It opens, or it
+   declines to open — it does not appear and refuse to close. *(Invariant 5.)*
+3. `grep -n "https://" index.html` returns no `<script>` or `<link>` fetching
+   executable code or stylesheets from a third-party origin. *(Northstar §5, once
+   ruled.)*
+4. Every panel's CLOSE affordance is wired before any call that can throw, verified
+   by reading the three openers. *(Structural, per `PUP-WO-0000` §1.6 — the trap is
+   not Leaflet-specific and all three openers have its shape.)*
+5. No credential renders into the DOM in a state reachable without an adult action
+   whose containment is specified.
+
 ## 5. Standing cadence
 
 - **Every phase boundary: audit the numbering and the documents.** Has anything
@@ -261,6 +344,20 @@ costs a fraction of what the network layer does.
 - **Every work order boundary, architect:** pull the fresh HEAD of `main` before
   reviewing or authoring. Reviewing against a stale tree is how a merged change gets
   reviewed twice, or missed once.
+- **Every scope-fence and protected-surface check, both sessions: fetch, then
+  measure against `origin/main`.** Never against a local `main` branch ref — nothing
+  fast-forwards it, and in this repo's worktrees it has run four commits stale.
+  **A work order must write the check as `git fetch origin && git diff origin/main
+  --stat`, never `git diff main --stat`.** The two questions take two refs: *what
+  this PR contains* is measured against `origin/main`; *what the builder actually
+  touched* against `git merge-base origin/main HEAD`. This is not bookkeeping — the
+  scope fence is what makes a pre-firebreak merge safe (architecture §6), so a fence
+  checked against the wrong ref is a safety check measuring the wrong thing. And
+  when the live base has moved, another session's merged commits appear in the
+  diff: they are never to be reverted to make the fence clean.
+  *(Added 2026-09-01 — `PUP-WO-0000` §3.1 and `PUP-WO-0100`'s first draft both
+  carried the wrong form; CC-B happened to use the right one anyway, which is
+  exactly why the rule belongs here rather than in one work order's memory.)*
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.
@@ -272,7 +369,8 @@ planned and what was built; history is left as written and never renumbered.
 
 | Number as built | What it actually was | What this roadmap planned |
 |---|---|---|
-| — | — | — |
+| `PUP-WO-0000` | As planned. Produced both specifications, plus three contradictions against architecture §3 and seven load-bearing defects from its own adversarial pass. | As planned. |
+| **P6 (new)** | A phase that did not exist when this roadmap was written. | Nothing. P0 was scoped to *find* contradictions against architecture §3; it also found defects in the shipped app that belong to no planned phase. The roadmap had no home for "fix what the investigation found," which is a gap in the roadmap rather than in the investigation. |
 
 ## 7. Amendments
 
@@ -280,6 +378,8 @@ planned and what was built; history is left as written and never renumbered.
 |---|---|---|
 | 2026-08-31 | Document created. | First roadmap; also the first dual-CC pilot, so CC-A needs a sequencing authority that is not a conversation. |
 | 2026-08-31 | P2's live-path rule gains an explicit bootstrap exception; standing cadence gains the per-work-order sync rules for both sessions. | The rule as written was violated by P0 and P1 by necessity — found by CC-A on its first read, before any dispatch. The sync rules close a gap where no party owned keeping the builder's tree current. |
+| 2026-09-01 | **P6 added** — shipped-app remediation, depending on P1, running parallel to P2–P4 and prioritised ahead of P2. §3's critical path and §4's phase map updated; reconciliation opened. | `PUP-WO-0000` found two defects in the app as it stands — three unconditional third-party CDN loads, and an un-closable full-screen overlay reachable offline — that belong to no planned phase. They cannot go in P1 (their diffs touch a served path, and P1 is the phase with no firebreak) and must not go in P2 (a games phase whose gate would then mean two things). Recorded as a phase rather than folded, so the decision is visible and reviewable. |
+| 2026-09-01 | P1 gate item 3's prove-it-red requirement is extended by `PUP-WO-0100` §3.3 from two checks to all four. | `PUP-WO-0000`'s lesson, generalised: its module contract passed a demonstration against both games in hand while still holding two defects, because neither game exercised them. A check demonstrated red on the two cases its gate names is the same shape of insufficient proof. |
 
 ## 8. Provenance
 
