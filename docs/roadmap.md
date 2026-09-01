@@ -138,9 +138,20 @@ being persuaded.
   `sw.js`'s `urlsToCache`; asserts `CACHE_NAME` changed when any cached asset
   changed; and runs a headless load that opens the console and fails on any console
   error.
-- **`PUP-WO-0101` — Two-path publication.** Extend the workflow to publish `main`
+- **`PUP-WO-0101` — Two-path publication.** ~~Extend the workflow to publish `main`
   to the site root and `stable` to `/stable/`. Namespace `CACHE_NAME` per deploy
-  path and assert in CI that the two differ.
+  path and assert in CI that the two differ.~~ **SUPERSEDED 2026-09-01 by
+  `PUP-WO-0102` + `PUP-WO-0103`** after two adversarial passes each found serious
+  defects. Not renumbered; the document stands on `main` as written. See §6.
+- **`PUP-WO-0102` — Cache correctness in `sw.js`.** A worker touches only what it
+  owns: prefix-bounded reap, the offline read scoped to its own cache
+  (architecture §6.1), the legacy cache removed by exact literal string, and
+  `/stable/` requests declined. **The only half that reaches Buddy's tablet.**
+- **`PUP-WO-0103` — Two-path publication.** `main` at the root, `stable` at
+  `/stable/`, from one deployment. Invariant 4 verified against the published
+  **bytes**; every copy checked in the run that publishes it; publication refuses a
+  copy whose worker is not prefix-bounded. **Touches `.github/` only, so it cannot
+  reach Buddy** — which is what makes it safe to iterate against real CI runs.
 
 **Exit gate.** All four must hold:
 1. A pull request with a deliberate syntax error in `index.html` shows CI **red**.
@@ -370,6 +381,7 @@ planned and what was built; history is left as written and never renumbered.
 | Number as built | What it actually was | What this roadmap planned |
 |---|---|---|
 | `PUP-WO-0000` | As planned. Produced both specifications, plus three contradictions against architecture §3 and seven load-bearing defects from its own adversarial pass. | As planned. |
+| `PUP-WO-0101` → `PUP-WO-0102` + `PUP-WO-0103` | One work order carrying both the `sw.js` cache fix and the publication workflow. Split after its **second** adversarial pass; the first found 18 defects (5 disqualifying), the second confirmed 11 fixed and found 13 more (4 serious). | One work order. The roadmap's P1 line bundled them because both were "the firebreak". They are one dependency and two concerns, and the seam is sharp: `sw.js` reaches Buddy's tablet, `.github/` cannot. |
 | **P6 (new)** | A phase that did not exist when this roadmap was written. | Nothing. P0 was scoped to *find* contradictions against architecture §3; it also found defects in the shipped app that belong to no planned phase. The roadmap had no home for "fix what the investigation found," which is a gap in the roadmap rather than in the investigation. |
 
 ## 7. Amendments
@@ -379,6 +391,7 @@ planned and what was built; history is left as written and never renumbered.
 | 2026-08-31 | Document created. | First roadmap; also the first dual-CC pilot, so CC-A needs a sequencing authority that is not a conversation. |
 | 2026-08-31 | P2's live-path rule gains an explicit bootstrap exception; standing cadence gains the per-work-order sync rules for both sessions. | The rule as written was violated by P0 and P1 by necessity — found by CC-A on its first read, before any dispatch. The sync rules close a gap where no party owned keeping the builder's tree current. |
 | 2026-09-01 | **P6 added** — shipped-app remediation, depending on P1, running parallel to P2–P4 and prioritised ahead of P2. §3's critical path and §4's phase map updated; reconciliation opened. | `PUP-WO-0000` found two defects in the app as it stands — three unconditional third-party CDN loads, and an un-closable full-screen overlay reachable offline — that belong to no planned phase. They cannot go in P1 (their diffs touch a served path, and P1 is the phase with no firebreak) and must not go in P2 (a games phase whose gate would then mean two things). Recorded as a phase rather than folded, so the decision is visible and reviewable. |
+| 2026-09-01 | `PUP-WO-0101` superseded by `PUP-WO-0102` + `PUP-WO-0103`; P1's work-order list and §6 updated. | Two adversarial passes each found serious defects and the second found one — an origin-wide offline **read** — that no check could see, because the work order was broad enough that its own harness stub went blind. The deciding evidence was not the count but the shape: its fixes had begun producing new defects (an encoding fix closed an attack and opened an invariant 3 violation). When fixes generate defects the change is too large to hold at once, which is a scope problem and the architect's to fix. The split also isolates every tablet-reaching byte of P1 into one small file. |
 | 2026-09-01 | P1 gate item 3's prove-it-red requirement is extended by `PUP-WO-0100` §3.3 from two checks to all four. | `PUP-WO-0000`'s lesson, generalised: its module contract passed a demonstration against both games in hand while still holding two defects, because neither game exercised them. A check demonstrated red on the two cases its gate names is the same shape of insufficient proof. |
 
 ## 8. Provenance

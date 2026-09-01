@@ -127,6 +127,8 @@ sw.js          asset manifest + cache identity
 | What exactly does the freeze cover? | **Every file the work order names as a deliverable — not only code.** | *Amended 2026-09-01.* `PUP-WO-0100` froze `.github/` and then rewrote its feedback file while the pass ran, so §3.3's red demonstrations and §3.4's determinism justification were not in the frozen artifact and went unreviewed — **the two things that work order most wanted scrutinised were the two the reviewer could not see.** Raised by CC-B against a rule CC-B had itself asked for, and led with rather than footnoted. CC-A closed that specific gap by reproducing the demonstrations independently; the rule closes it for everyone else. |
 | `FEEDBACK.md` at the repo root or under `docs/`? | **Under `docs/`.** *(Path superseded by the row above — now `docs/feedback/<WO-id>.md`. The ruling is kept because its reasoning, not its filename, is what governs.)* | Ratified at `PUP-WO-0000` review. A root file fails the `docs/`-only gate, and §6's bootstrap exception makes that gate *the property that makes a P0/P1 merge safe* — so the placement is a safety question, not hygiene. Found by `PUP-WO-0000`'s adversarial pass (F24). |
 | Can a game make a sound the bank does not have? | **Yes — `api.tone(hz, ms, wave)` joins the module contract.** The twelve-cue bank stays for console cues; `api.tone` is the primitive. | Found by `PUP-WO-0000`'s adversarial pass and escalated rather than self-granted, correctly. `api.sound` offers twelve fixed cues with no pitch and no duration, so a xylophone, a lullaby or an aquarium — plausibly the next toy after a drawing pad — is **inexpressible**, and the only escape was editing a switch table ~1,500 lines from the registry, which is structurally the defect §2 condemns in `attachEvents` and makes invariant 6's "nothing else" false. **Corrected cost:** the findings estimate this at one shell function over existing helpers; `mk()` and `sw()` are declared *inside* `doSound`'s try block (`index.html:62-68`, `:69-75`), not at module scope, so the real cost is lifting both out and adding one function. Still cheap; not one line. *(Cost corrected by CC-A, 2026-09-01.)* |
+| How is deploy ordering enforced? | **By the workflow, never by prose.** Publication refuses any copy whose worker reaps or reads outside its own prefix, and **every copy a run publishes is checked in that same run.** | *Ruled 2026-09-01.* `PUP-WO-0101` §6 recorded the required order — merge, fast-forward `stable`, then flip Pages — in a paragraph, and a paragraph is not a mechanism. `refs/heads/stable` still carries the origin-wide reaper, so flipping Pages between the merge and the fast-forward publishes a worker that deletes the root cache on every activation. Restating it as a *property* rather than a *sequence* is what makes it survive: properties hold, sequences get performed wrong once, at 2am. The second clause comes from the same finding — the checks job saw only the triggering ref while publication carried both, so a push to `main` published `stable` unchecked, and "a red check means nothing publishes" was false in both directions. |
+| After fixing a defect, what else must be asked? | **What legitimate behaviour does this fix now refuse?** | *Ruled 2026-09-01, as standing discipline.* Three times this project has been bitten by verifying a fix against the failure that was imagined and stopping there: `PUP-WO-0000`'s contract passed a two-game demonstration while holding two defects invisible from those games; `PUP-WO-0101`'s invariant-4 step gained a third assertion while both tautologies it was meant to remove still shipped; and an encoding fix closed an attack by refusing anything non-canonical, which also refused `/my%20photo.png` — working online, silently absent offline, invariant 3. **A fix that introduces a violation while closing one is the normal outcome of testing only the attack you thought of.** The question above is cheap and catches all three. |
 | A third review layer? | **No — add a check that can go red instead.** | Two judgment-based reviewers already share a context and a disposition; a third correlates with them, inflating findings-count while lowering real detection. CI cannot be persuaded. |
 | Realtime co-op | **Do not build. Wire the seams, spike it later.** | See §7. |
 
@@ -177,12 +179,53 @@ merely fail to help — it guarantees mutual deletion on every activation, and t
 symptom is Buddy's tablet losing offline capability whenever the dev build activates
 (northstar invariants 3 and 7, both).
 
-**Required fix, owned by `PUP-WO-0101`:** each deploy carries a `CACHE_PREFIX`, and
+**Required fix, owned by `PUP-WO-0102`:** each deploy carries a `CACHE_PREFIX`, and
 the activate handler reaps only caches matching **its own prefix** —
 `name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME`. CI asserts both that the two
 prefixes differ and that the reap is prefix-bounded. *(Found by CC-A, 2026-08-31,
 before `PUP-WO-0101` was authored. The earlier ruling — "namespace `CACHE_NAME`" —
 was insufficient and is superseded.)*
+
+### 6.1 The read is origin-wide too, and that is the harder half
+
+*Added 2026-09-01, from `PUP-WO-0101`'s second adversarial pass. **This section
+previously documented only the reap, and was incomplete in a way that read as
+complete** — the more dangerous kind of gap, because it invited the conclusion that
+prefix-bounding the reap closed the hazard.*
+
+`sw.js:40` — the offline path — is `caches.match(event.request)`. That is
+**`CacheStorage.match`, which searches every cache on the origin.** The write beside
+it at `sw.js:35` is correctly scoped to `CACHE_NAME`. The worker is asymmetric: it
+writes only what it owns and reads anything on the origin.
+
+**Consequence:** the promoted copy, offline, serves the test build's bytes. That is
+**northstar invariant 7 falsified by the invariant's own stated falsification
+test** — *"load the promoted copy after the test copy has been cached; find any
+asset served from the other build"* — and it does so with every check green. It is
+this project's sharpest demonstration that a passing suite is not evidence.
+
+**Required fix, owned by `PUP-WO-0102`:** the read is scoped to the worker's own
+cache. The rule, stated once so both halves inherit it: **a worker touches only what
+it owns — on read and on write, not only on reap.**
+
+**Three things worth keeping, because the finding generalises past this bug:**
+
+1. **The line is unchanged since `2952aa1`. It is not a regression.** What turns it
+   into a violation is a *work order* putting two caches on one origin. **A change
+   can break an invariant without touching the code that breaks it** — so "what did
+   this diff touch" is the wrong question to ask of an invariant, and the northstar's
+   falsification column is the right one. Run the falsification test, not the diff.
+2. **No check could see it, structurally.** The harness's `match()` returned
+   `undefined` unconditionally, so the check reporting on cache isolation was blind
+   by construction. **A stub that cannot fail is not a test.** Any check standing in
+   for a browser API must be able to produce the failure it exists to detect, and
+   that capability is itself a thing to verify.
+3. It sat three lines below two hundred lines of prose arguing that no worker may
+   touch what it does not own. Proximity to a correct principle is not compliance
+   with it.
+
+*(Found by `PUP-WO-0101`'s adversarial pass; confirmed at source by CC-A. All three
+points are the builder's, ratified here substantially as written.)*
 
 ## 7. Deferred with intent — realtime co-op
 
@@ -275,6 +318,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §4's console↔module seam replaced with the concrete contract; §5 gains `api.tone`; §7 seam 4 becomes a real channel and seams 2–3 are re-costed as net-new construction; §3's cached-assets row corrected. | All from `PUP-WO-0000` and the seven load-bearing defects its adversarial pass found. The two that mattered most were **invisible from the two games the contract was demonstrated against** — configuration and sound — which is the finding of that work order above either specification it produced. §3's row was wrong in a way that made the §6 reap look survivable. |
 | 2026-09-01 | §5 gains the two-artifact adversarial record and the freeze-before-dispatch rule; `docs/FEEDBACK.md` placement ratified. | A 341-line transcript inside a 582-line `FEEDBACK.md` buries the findings it evidences. The freeze rule closes the one question `PUP-WO-0000`'s record could not answer about itself. Placement was found by that pass's own reviewer (F24) and matters because §6's exception rests on the `docs/`-only property. |
 | 2026-09-01 | §5: feedback becomes per-work-order (`docs/feedback/<WO-id>.md`) and the freeze covers every file a work order names as a deliverable, not only code. `docs/FEEDBACK.md` migrated to `docs/feedback/PUP-WO-0100.md`; `PUP-WO-0000`'s transcript recovered to `docs/findings/PUP-WO-0000-adversarial.md`. | Two defects from `PUP-WO-0100`, one on each side. **The naming defect was CC-A's:** the two-artifact ruling made transcripts durable but left feedback a single rolling file, so the builder — following it exactly — destroyed the previous work order's record at the tip on the rule's first application. **The freeze defect was CC-B's**, self-reported and led with: it froze the code and rewrote its feedback mid-pass, so the red demonstrations and the determinism justification went unreviewed. Both are cases of a rule being right in intent and underspecified in scope. |
+| 2026-09-01 | **§6.1 added — the offline read is origin-wide too.** §5 gains two rulings: deploy ordering enforced by the workflow rather than by prose (with every published copy checked in the run that publishes it), and the standing question *"what legitimate behaviour does this fix now refuse?"* | `PUP-WO-0101`'s second adversarial pass. §6 documented only the *reap* and was incomplete in a way that **read as complete**, which is the more dangerous kind: it invited the conclusion that prefix-bounding the reap closed the hazard. The read makes the promoted copy serve the test build's bytes offline — invariant 7 falsified by the invariant's own stated test, with every check green. The ordering ruling comes from the same pass: `refs/heads/stable` still carries the origin-wide reaper, so a paragraph was the only thing standing between a flip and a deleted cache. All three points in §6.1 are the builder's, ratified substantially as written. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 
 ## 12. Provenance
