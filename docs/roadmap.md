@@ -381,6 +381,10 @@ Stated because folding it into either was the obvious move and both are wrong.
 - **Every coherent unit of work: commit it.** Not at the end, and not "before you
   stop" — a stall is not a chosen stop, so that rule never fires when it is needed.
   A wip commit is recoverable; a dirty tree is not. *(Architecture §8, 2026-09-01.)*
+- **Every prove-it-red demonstration: assert the commit and the step, not the
+  conclusion.** A red run is not evidence until you know it ran on the commit under
+  test and failed at the step whose refusal is being claimed. *(Architecture §5,
+  2026-09-01, after four false demonstrations in one work order.)*
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.
