@@ -369,6 +369,10 @@ Stated because folding it into either was the obvious move and both are wrong.
   *(Added 2026-09-01 — `PUP-WO-0000` §3.1 and `PUP-WO-0100`'s first draft both
   carried the wrong form; CC-B happened to use the right one anyway, which is
   exactly why the rule belongs here rather than in one work order's memory.)*
+- **Every prove-it-red demonstration: assert the commit and the step, not the
+  conclusion.** A red run is not evidence until you know it ran on the commit under
+  test and failed at the step whose refusal is being claimed. *(Architecture §5,
+  2026-09-01, after four false demonstrations in one work order.)*
 - **Every work order boundary: an unconditional heartbeat** on the info topic,
   whether or not anything needs attention. Silence must mean stopped, never still
   going.
