@@ -133,6 +133,11 @@ sw.js          asset manifest + cache identity
 | When correcting a belief that appears in several places, what do you search for? | **The belief, not its wording.** | *Ruled 2026-09-01, after the same wrong belief survived two corrections.* `PUP-WO-0102`'s fence was fixed in §2 and §7 by searching for the string `.github/`. §3.1 stated the same fence **positively** — an allowlist of `sw.js` + `docs/` — so it contained no such string and the search could not see it. **Searching for the token finds the copies that name the thing; only searching for the belief finds the rest.** A constraint written as an allowlist and the same constraint written as a denylist share no vocabulary. |
 | A discipline keeps having to be remembered. Then what? | **Find the mutation that makes CI remember it instead.** Any rule whose violation has a concrete shape can be moved out of memory and into a check that goes red. | *Ruled 2026-09-01; the builder's, and it generalises past the case that produced it.* `PUP-WO-0102` turned the after-fixing question — *what legitimate behaviour does this fix now refuse?* — into mutation A6, a regression test. The discipline stopped depending on a builder recalling it under time pressure and started depending on CI. This is the same reasoning as §5's "add a check that can go red instead of a third reviewer", applied to **process rules rather than to code**: a rule that must be remembered is a rule that will eventually not be. |
 | A check went red. Is that the demonstration? | **No. Red is not a demonstration — assert the COMMIT that ran and the NAME of the step that failed, never the conclusion alone.** | *Ruled 2026-09-01, after this happened **four times in one work order**.* Each time a red run was read as proof a refusal worked, and each time it was red for the wrong reason: an input validator rejected the very runs it existed to let through; a root-copy demonstration was masked by a different check failing first; three demo pull requests built `main`'s clean tree because the publish job checked out `refs/heads/main` unconditionally, so the defect in the PR head was never present; and a wait-loop filter that matched nothing exited immediately and returned a **stale run for an older commit**. Four occurrences, one missing habit. **Every one was caught by asking *which step* failed or *what commit ran* — never by looking harder at the conclusion.** It is mechanisable, and being mechanisable is why it is a ruling rather than advice: a demonstration asserts `head_sha` against the commit under test and the failing step's name against the refusal it claims to prove. Note the shape it shares with §6.1: a green run that certifies nothing and a red run that proves nothing are the same defect, because **in both the verdict was read instead of what produced it.** |
+| A gate that cannot see its subject? | **Is not a gate.** Before trusting a check's verdict, verify it was pointed at the thing under test. | *Ruled 2026-09-02, on three occurrences in twelve hours.* `check-cache-name` resolves its diff base from the PR event and falls back to `HEAD~1`; run in a bare clone it compared a commit to its own predecessor and **passed on a defect CI caught immediately** — the builder's "did not reproduce" was that. A park pushed with **no PR** produced **zero CI runs**, and a local suite was reported as the gate. And CC-A's own fence check **passed vacuously against a ref that did not exist**, because the push had failed on an expired token. The check was not wrong in any of the three; **it was not asked the question.** |
+| A derived count in a name, title, or comment? | **No — unless something recomputes it.** | *Ruled 2026-09-02; the builder's, and it is better than the instruction it answered.* `ci.yml`'s job read **"Ten checks" while running fourteen** — a wrong number in the highest-traffic string in the file. CC-A authorised "rename it to what it runs"; the builder named it **`Checks`** and asked to be overruled if a count was meant. It was not: **"Fifteen checks" is the same defect with a fresher number and a shorter fuse.** A countless name is permanently accurate. Same family as the freeze manifest's self-referential SHA. |
+| A measurement whose subject includes itself? | **Cannot be stated as a constant.** State the property, and let any count name its own subject. | *Ruled 2026-09-02.* A gate row read "9 files" — true one commit earlier and **12 at the SHA that shipped it**, because the count excluded the feedback file making the claim. Third of its shape after the manifest SHA and the job name: **an identifier or a tally that describes a thing from inside it.** |
+| Where does a work order state its fence? | **ONCE. Every other section references it and none restates it.** | *Ruled 2026-09-02 after four self-contradicting work orders, three of them CC-A's:* `PUP-WO-0102` §2/§3.1, `PUP-WO-0105` §0a.4/§3.1, `PUP-WO-0200` §2/§3.1, and roadmap P2 gate 1. Every one was the same mechanism — a constraint written in a fence **and restated** in an acceptance criterion, drifting the moment either changed — and an allowlist and a denylist of one constraint **share no vocabulary**, so a search for the token never finds the other copy. Not a discipline problem; a shape problem. `PUP-WO-0300` §0 is the first built this way. |
+| How is a frozen tree isolated from its pass? | **`git archive` for a read-only pass; `git clone` when it must run git-dependent checks. NEVER `cp -r` of a worktree.** | *Ruled 2026-09-02, on the builder's diagnosis.* The old protocol said "copy it and treat it as read-only" — but **in a worktree `.git` is a POINTER FILE**, so `cp -r` copies the pointer and the copy writes to **the real repository**. A lens committed on top of a frozen HEAD and reset it. The instruction was **a convention with nothing enforcing it**, which is the defect class the pass was auditing for. `git archive` yields a tree with **no `.git` at all**, making a commit *inexpressible* rather than forbidden. **`git worktree add --detach` was considered and rejected: a worktree shares the object store**, so a commit still writes real objects; detaching only stops a branch ref moving. Remove the capability, do not constrain it. |
 | A third review layer? | **No — add a check that can go red instead.** | Two judgment-based reviewers already share a context and a disposition; a third correlates with them, inflating findings-count while lowering real detection. CI cannot be persuaded. |
 | Realtime co-op | **Do not build. Wire the seams, spike it later.** | See §7. |
 
@@ -253,7 +258,7 @@ true while looking nothing like a degenerate stub:
   once — redundancy working, and a badly designed meta-test. *(Recorded because the
   failed first attempt is what makes the second worth anything.)*
 
-**The family, stated once, because it now has four members and one shape.** Each is
+**The family, stated once, because it now has five members and one shape.** Each is
 a run whose exit code is indistinguishable from a sound one:
 
 1. **An assertion that passes by not running** — neuter a stub with an *ordinary
@@ -275,9 +280,28 @@ a run whose exit code is indistinguishable from a sound one:
    lever was unreadable — leaving a reviewer to read a removed surface as an
    unexplained deviation from a work order that still demanded it.)*
 
-**In all four the verdict was read instead of what produced it.** Members 1–2 are
-green, 3 is red, 4 never runs at all — which is why "look harder at the result" has
-never been the fix for any of them.
+5. **A RECORD THAT STAYS TRUSTED BECAUSE IT STAYED UNCHANGED.** *(Added 2026-09-02.)*
+   The freeze protocol hashes every deliverable so nobody can alter one unnoticed —
+   and **hashes verify that the BYTES did not change, never that the CLAIMS are still
+   true.** So the same mechanism that makes a file tamper-evident makes it *easier to
+   leave wrong*: a verified hash reads as a verified document. `PUP-WO-0105`'s round-3
+   pass read the feedback file **as a deliverable** and measured its statements
+   against the tree — nobody had been doing that — and found two that a revert had
+   made false while all 27 hashes verified.
+   **The rule:** read the feedback and findings files as deliverables and measure
+   their claims, not only their hashes. **Where a statement has become false, leave it
+   standing with the measurement beside it** rather than editing it away — the
+   correction is the record. *(The builder's finding, and the disposition is its own.)*
+   **Its two corollaries, both earned the same week:** a demonstration written only
+   into a commit message or a feedback file is **evidence about a tree that no longer
+   exists** — put it in CI where it can be re-run; and **a field that can never be
+   correct is worse than no field**, because a reader trusts it (the freeze manifest
+   recorded its own commit SHA, written before that commit existed, so it named the
+   previous one every time — deleted rather than worked around).
+
+**In all five the verdict was read instead of what produced it.** Members 1–2 are
+green, 3 is red, 4 never runs at all, and 5 is not a run — which is why "look harder
+at the result" has never been the fix for any of them.
 
 **Member 4 is one line, and being mechanisable makes it a rule rather than advice**
 (§5): before dispatching a pass, resolve every path and every section the prompt
@@ -527,6 +551,31 @@ that class of check in CI but is not what makes items 3 and 4 answerable. So
 `PUP-WO-0103` merged, plus the flip, plus items 3 and 4, closes P1 — with **0104
 recorded as P1 work carried past the phase gate**, not as a gate item quietly waived.
 
+### 6.6 Ratified and never built — the tally, because it has four instances
+
+*Added 2026-09-02. **Nothing in this project ever asked whether a recommendation
+became a commit** (§6.1), and by the time that was written it had already happened
+four times. Listed together because the pattern is invisible one instance at a time.*
+
+| Ratified | Where | Found missing | By what |
+|---|---|---|---|
+| The cache gate for the class `sw.js` changes | §6.4's ordering premise | `PUP-WO-0105` | CC-A, asking whether its own ruling had landed |
+| `check-error-caching.mjs` + `demo-error-poisoning.mjs` | `PUP-WO-0105` §3.5 | same work order, after `d53dfbc` stripped them | CC-A, at merge |
+| The `games/*.js` network grep | `PUP-WO-0000` §8.3 — *"invariant 3 and 'strictly offline' rest on that check"* | `PUP-WO-0200` §1.1 | CC-A, **before** the artifact shipped |
+| `api.tone(hz, ms, wave)` | §5, ratified 2026-09-01 | `PUP-WO-0300` §2.1 — `grep -c tone index.html` = **0** | the builder |
+
+**What makes this class invisible:** each was ratified in a document, cited
+afterwards *as though it existed*, and its absence could only be seen by someone
+running the grep. Three of the four were load-bearing for an invariant. **The `games/`
+one is the instructive case** — it was specified to enforce invariant 3, was never
+built, and **its absence could not be detected at all**, because `games/` did not
+exist so the check would have scanned nothing and passed. **A false green arriving
+before there was anything to be green about.**
+
+**The rule, and it is cheap:** when a work order cites a ratified mechanism as
+existing, **resolve it the way §6.1 member 4 resolves a path** — run the grep, before
+dispatch. Every entry above was found by one command.
+
 ## 7. Deferred with intent — realtime co-op
 
 Not in scope, and deliberately not left to be bolted on. Phase 1 shapes itself so
@@ -683,6 +732,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.1 gains the trigger-list rule and the disposition gap: a new trigger for a known defect is a new decision, and this project's near-misses are failures of disposition rather than discovery. | The builder's, stating properly why CC-A's P6 scheduling of the Map trap was defensible when made and wrong once quota eviction was measured. Paired with the round-1 `puts`-counter recommendation that was recorded and not applied — every control here checks that a finding was written down, none checks that it was acted on. Named as wanting a control; none proposed, by two parties who each shipped an unnecessary mechanism today. |
 | 2026-09-01 | §6.1: *nothing ever asks whether a recommendation became a commit*. §6.5 added: the quota path, and that `PUP-WO-0600` cannot receive the tiles question. | Both the builder's. The disposition rows were accurate — they said *Recommendation* — so the gap is not recording but that nothing reads one and asks whether it became a diff. And the tiles are map data fetched per coordinate: unvendorable, the bulk of the opaque entries, and the whole of the quota path, pointed by a deferral at a work order that provably cannot receive it. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
+| 2026-09-02 | **§6.1 gains member 5 — a record that stays trusted because it stayed unchanged.** §5 gains five rulings: a gate that cannot see its subject is not a gate; no derived count in a name unless something recomputes it; a measurement whose subject includes itself cannot be a constant; a work order states its fence ONCE; and the freeze protocol becomes `git archive` / `git clone`, never `cp -r` of a worktree. **§6.6 added — the ratified-but-unbuilt tally.** | P1 closing and P2 opening, across `PUP-WO-0103`, `0105`, `0200` and `0300`. **Member 5 is the builder's**, found by reading a feedback file as a deliverable — which nobody had been doing — and it names the cost of the freeze protocol this project adopted the same week: hashes prove the bytes did not move and say nothing about whether the claims survived. The §5 rulings are four builder findings and one of CC-A's; the fence ruling is the structural fix for four self-contradicting work orders, **three of them CC-A's**, and `PUP-WO-0300` §0 is the first written that way. |
 
 ## 12. Provenance
 
