@@ -273,8 +273,13 @@ run('A13 the PROMOTED copy reads origin-wide (invariant 7 in its own direction, 
  * a third way for a worker to touch what it does not own — was unobservable. */
 run('A14 the precache reaches into the other deploy path (pass F7)', {
   expect: 'RED', expectFail: "precached OUTSIDE",
-  sw: [[`  './icon-512.png'
-];`, `  './icon-512.png',
+  /* Re-anchored by PUP-WO-0200: the last urlsToCache entry moved when the placeholder
+   * module's line was added. The MUTATION'S MEANING IS UNCHANGED — inject a precache
+   * entry pointing into the other deploy path — only its insertion point moved, which
+   * is exactly what the anchor diagnostic asks for. It fired correctly and named
+   * sw.js, so this is maintenance, not flakiness. */
+  sw: [[`  './games/hello.js'
+];`, `  './games/hello.js',
   './stable/index.html'
 ];`]],
 });
