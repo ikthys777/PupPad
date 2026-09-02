@@ -1,4 +1,6 @@
-# PupPad CI — ten checks, each of which can go red for exactly one reason.
+# PupPad CI — a set of checks, each of which can go red for exactly one reason.
+# No count on this line. It said "ten" while the job ran sixteen — the same defect as
+# the job name that used to say "Ten checks", in the highest-traffic string in the file.
 #
 # THIS WORKFLOW PUBLISHES (PUP-WO-0103). main goes to the site root, stable to
 # /stable/, and Buddy's tablet points at /stable/. Northstar invariant 4 — the copy
@@ -1316,7 +1318,7 @@ jobs:
         # superseded pull-request run.
         #
         # AND THE LIKELIEST MANUAL CANCEL IS NOT ONE OF THEM. `publish` has
-        # `needs: checks`, and `checks` is fourteen steps including two browser
+        # `needs: checks`, and `checks` is every check in this file plus two browser
         # installs — by far the longest window and the moment a human is most likely to
         # hit Cancel. A cancel arriving then leaves `publish` cancelled BEFORE it is
         # assigned a runner, so this step never executes. "Manual cancels are covered"

@@ -140,9 +140,26 @@ const TIER3 = [
   { name: '.action = <remote>', re: new RegExp(`\\.\\s*action\\s*=\\s*${REMOTE_LIT}`), why: 'a form posts to it' },
   { name: 'new Image(<remote>)',re: new RegExp(`new\\s+(Image|Audio)\\s*\\(\\s*${REMOTE_LIT}`), why: 'constructs and fetches' },
   { name: 'location.assign(',   re: /location\s*\.\s*(assign|replace)\s*\(/,           why: 'navigates away from the app' },
+  /* A REMOTE `url(`, WHICH IS HOW A FONT GETS FETCHED. PUP-WO-0300 §3 states that this
+   * check "will red on" a remote font — and it did not, by either natural form: a
+   * stylesheet whose text contains `@font-face{src:url(https://…)}` and
+   * `new FontFace('g','url(https://…)')` both matched nothing, because the `.src =`
+   * patterns need an assignment and `src:url(` is not one. Both were demonstrated
+   * fetching from an off-origin server through a module this check passed GREEN. The
+   * ground-truth document was right about the requirement and wrong about the coverage;
+   * this is the coverage. It also catches `style.backgroundImage = "url('https://…')"`,
+   * which was through by the same gap. */
+  { name: 'url(<remote>)',      re: /url\(\s*['"`]?(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\//, why: 'a stylesheet, background-image or @font-face fetches it' },
 ];
 const SOFT = [   // notes, never failures
   { name: '.src = <non-literal>',  re: /\.\s*src\s*=\s*[A-Za-z_$]/,  why: 'assigned from a variable — this check cannot tell where it points' },
+  /* THE FORM THE NOTE ABOVE PROMISED AND DID NOT COVER. `[A-Za-z_$]` requires an
+   * IDENTIFIER after the `=`, so `i.src = 'https:' + '//evil/x.png'` — which starts with
+   * a quote — matched neither this note nor TIER 3's literal pattern, whose REMOTE_LIT
+   * needs the `//` inside ONE literal. Total silence on the single most likely way to
+   * write a URL you do not want scanned, under a comment promising a visible note for
+   * exactly that. Demonstrated fetching off-origin from a green module. */
+  { name: '.src/.href/.action = <concatenation>', re: /\.\s*(?:src|href|action)\s*=\s*[^;\n]*\+/, why: 'built by concatenation — this check cannot tell where it points' },
   { name: 'innerHTML',             re: /\.\s*innerHTML\s*=/,          why: 'can inject <img>/<iframe>; not judged here, but a reviewer should look' },
 ];
 
@@ -284,7 +301,16 @@ function scanModule(full) {
       notes.push(`${rel}: "${t.name}" appears in the source but only inside a comment or string — not a finding, but shown so the stripper is not silently hiding it`);
     }
   }
-  if (/(^|[^\\])\/(?![/*])[^\n]*[^\\]\//.test(stripped) || /=\s*\/[^/*\n]/.test(src)) {
+  /* A REGEX-LITERAL HEURISTIC THAT DOES NOT FIRE ON DIVISION. The previous one was
+   * "any line containing two slashes", which is also every line containing two
+   * divisions: it fired four times on games/gyre.js, a file with no regex literal in it
+   * at all, the first being `count * (1 + size / 100 + tail / 100)`. A note that is lit
+   * on every green run carries no information, and it was the ONLY signal that would
+   * have surfaced a token hidden from the stripper — so the noise was not cosmetic, it
+   * was covering the one thing the note exists for. A regex literal can only START
+   * where an operator or a keyword can be followed by one. */
+  const REGEX_START = /(?:^|[(,=:[!&|?{};]|\breturn|\btypeof|\bcase)\s*\/(?![/*\s=])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+\/[gimsuyd]*/;
+  if (REGEX_START.test(stripped)) {
     notes.push(`${rel}: contains what looks like a REGEX LITERAL. This scanner does not track regex literals, so a token after one on the same line can be hidden. Read this module by eye.`);
   }
   for (const t of SOFT) {

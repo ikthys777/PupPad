@@ -30,7 +30,12 @@ let COMMIT = 'unknown';
 try { COMMIT = execFileSync('git', ['-C', join(HERE, '..', '..'), 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
 
 const results = [];
-function run(label, { files, expect, expectText }) {
+/* `noteText`/`noNoteText` are checked WHATEVER the colour. Check 11's notes are a
+ * deliberate middle ground — a construct it cannot judge from text becomes a visible
+ * note rather than a build break — and a note is only worth having if it fires when it
+ * should AND stays quiet when it should not. One of them fired on every green run of
+ * this repo's own game module, which is a note carrying no information. */
+function run(label, { files, expect, expectText, noteText, noNoteText }) {
   const dir = mkdtempSync(join(tmpdir(), 'puppad-games-'));
   try {
     if (files !== null) {
@@ -52,7 +57,11 @@ function run(label, { files, expect, expectText }) {
      * a typo would be red too and would score as proof. A RED case must NAME what it
      * was built to catch. */
     const matched = observed !== 'RED' || !expectText || out.includes(expectText);
-    const pass = observed === expect && matched;
+    const noteOk = (!noteText || out.includes(noteText)) && (!noNoteText || !out.includes(noNoteText));
+    const pass = observed === expect && matched && noteOk;
+    if (observed === expect && matched && !noteOk) {
+      console.log(`        the COLOUR was right but the NOTES were not: wanted ${JSON.stringify(noteText || '')}, refused ${JSON.stringify(noNoteText || '')}`);
+    }
     if (observed === expect && !matched) console.log(`        RED, but NOT on the expected construct: wanted ${JSON.stringify(expectText)}`);
     results.push({ label, expect, observed, pass });
     console.log(`${pass ? '  ok  ' : '  MISPREDICTED'} ${observed.padEnd(5)} ${label}`);
@@ -94,6 +103,17 @@ const SOLO = [
   ['el.href = remote',      "const l = document.createElement('link'); l.href = 'https://e/x.css';", '.href = <remote>'],
   ['form.action = remote',  "const f2 = document.createElement('form'); f2.action = 'https://e/c';", '.action = <remote>'],
   ['location.assign(',      "location.assign('https://e/nav');",      'location.assign('],
+  /* THE THREE THE ADVERSARIAL PASS DEMONSTRATED FETCHING OFF-ORIGIN THROUGH A GREEN
+   * MODULE. PUP-WO-0300 §3 says this check "will red on" a remote font; it did not, by
+   * either form, and neither on a CSS background. A ground-truth document claiming
+   * coverage that does not exist is the defect this project has a standing rule about,
+   * and the cheaper end of the fix is to make the claim true. */
+  ['@font-face with a remote src in a <style>',
+                            "const st = document.createElement('style'); st.textContent = '@font-face{font-family:g;src:url(https://e/f.woff2)}'; host.appendChild(st);", 'url(<remote>)'],
+  ['new FontFace(name, url(remote))',
+                            "new FontFace('g', 'url(https://e/f.woff2)').load();", 'url(<remote>)'],
+  ['style.backgroundImage = url(remote)',
+                            "host.style.backgroundImage = \"url('https://e/bg.png')\";", 'url(<remote>)'],
 ];
 for (const [name, body, text] of SOLO) run(`${name} alone`, { files: { 'x.js': wrap(body) }, expect: 'RED', expectText: text });
 
@@ -171,6 +191,29 @@ run('retrieval( and itself[ — a dog game, not eval( and self[', {
   files: { 'x.js': wrap('function retrieval(n){ return n; } retrieval(0); const itself = [host]; itself[0];') },
   expect: 'GREEN',
 });
+run('a LOCAL url( in CSS: backgroundImage = url("./bg.png")', {
+  files: { 'x.js': wrap('host.style.backgroundImage = "url(\'./bg.png\')";') },
+  expect: 'GREEN',
+});
+
+console.log('\n=== PART E — the NOTES: they must fire when they should, and be quiet when they should not ===');
+console.log('    (a note lit on every green run carries no information, and the regex-literal');
+console.log('     note was lit on this repo\'s own game module, which contains no regex at all)');
+run('.src built by CONCATENATION must produce the non-literal note', {
+  files: { 'x.js': wrap("const i = new Image(); i.src = 'https:' + '//e/p.png'; host.appendChild(i);") },
+  expect: 'GREEN',
+  noteText: '<concatenation>',
+});
+run('ORDINARY DIVISION must NOT produce a regex-literal note', {
+  files: { 'x.js': wrap('const cost = (n, a, b) => n * (1 + a / 100 + b / 100); host.textContent = String(cost(2, 50, 50));') },
+  expect: 'GREEN',
+  noNoteText: 'REGEX LITERAL',
+});
+run('a REAL regex literal must still produce the note', {
+  files: { 'x.js': wrap("const RE = /ab+c/g; host.textContent = RE.test('abc') ? 'y' : 'n';") },
+  expect: 'GREEN',
+  noteText: 'REGEX LITERAL',
+});
 
 console.log('\n' + '='.repeat(78));
 const bad = results.filter((r) => !r.pass);
@@ -183,13 +226,21 @@ if (bad.length) {
   process.exit(1);
 }
 console.log(`CHECK 12 PASSED at ${COMMIT.slice(0, 12)} — ${results.length} controls, all as predicted.`);
-console.log('  PART A  three fail-closed conditions; scanning nothing is a FAILURE.');
-console.log('  PART B  21 constructs, each ALONE and each NAMED — detect EACH, not ANY.');
-console.log('  PART B2 seven cases the adversarial pass got through the first version:');
+/* NO PER-PART COUNTS IN THIS SUMMARY. Three of them went stale the moment PART E was
+ * added, which is the same defect as a CI job named for a number of checks it no longer
+ * runs. The one number here is `results.length`, and the run computes it. */
+console.log('  PART A  fail-closed conditions; scanning nothing is a FAILURE.');
+console.log('  PART B  each forbidden construct ALONE and NAMED — detect EACH, not ANY,');
+console.log('          including the remote font and the CSS url() that PUP-WO-0300 §3');
+console.log('          claimed this check covered and it did not.');
+console.log('  PART B2 the cases the adversarial pass got through the first version:');
 console.log('          an unscanned subdirectory, a .mjs sibling, an escaping import, a');
 console.log('          second template substitution, two static-import evasions, and a');
 console.log('          non-literal dynamic specifier.');
 console.log('  PART C  the removal ladder: retiring one construct retires exactly one');
-console.log('          finding and leaves the other three standing.');
-console.log('  PART D  six cases that must stay GREEN, including the two the pass showed');
-console.log('          were wrongly refused: local code-splitting, and a local image.');
+console.log('          finding and leaves the others standing.');
+console.log('  PART D  what must stay GREEN, including the cases the pass showed were');
+console.log('          wrongly refused: local code-splitting, a local image, a local url().');
+console.log('  PART E  the NOTES — they fire when they should and stay quiet when they');
+console.log('          should not. One of them was lit on every green run of this repo\'s');
+console.log('          own game module, which contains no regex literal at all.');

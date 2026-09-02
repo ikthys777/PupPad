@@ -75,7 +75,10 @@ const BACKGROUND_MAP = {};
 for (const b of BACKGROUNDS) BACKGROUND_MAP[b.id] = b;
 
 /* ============================ PARAMETERS ====================================
- * Ranges and defaults are store.ts's, unchanged, plus `polarity`. Every one of them
+ * Ranges are store.ts's unchanged. ONE DEFAULT IS NOT: `count` ships at 1200 against
+ * the source's 1800, which is a measured decision made twice — the first commit on this
+ * branch shipped 1600 and a throttled measurement lowered it again. The reasoning and
+ * both numbers are in docs/feedback/PUP-WO-0300.md section 6. `polarity` is new. Every one of them
  * is clamped on the way in from BOTH directions — a control in PUP-WO-0301 and a
  * saved blob from api.load() — because `api.load()` returns whatever localStorage
  * holds, and localStorage is a place a previous version, a corrupted write or a
@@ -129,8 +132,17 @@ const clampNum = (n, lo, hi, fallback) => {
   const v = typeof n === 'number' && isFinite(n) ? n : fallback;
   return Math.min(hi, Math.max(lo, v));
 };
-const clampCount = (n) => clampNum(Math.round(clampNum(n, COUNT_MIN, COUNT_MAX, DEFAULT_COUNT_WIDE) / COUNT_STEP) * COUNT_STEP, COUNT_MIN, COUNT_MAX, DEFAULT_COUNT_WIDE);
-const clampForce = (n) => clampNum(n, FORCE_MIN, FORCE_MAX, 0.68);
+/* EVERY CLAMP TAKES THE FALLBACK FROM ITS CALLER. An earlier version hard-coded a
+ * factory value inside `clampCount` and `clampForce` while the range clamps fell back
+ * to the CURRENT value, so `set('count', someInput.value)` on a non-numeric string
+ * silently reset the field to 1200 while `set('tail', …)` on the same garbage held its
+ * ground. Two behaviours for one mistake, and PUP-WO-0301 will make that mistake the
+ * first time it passes an <input>'s value through. Now a bad write is always a no-op. */
+const clampCount = (n, fallback) => {
+  const base = clampNum(n, COUNT_MIN, COUNT_MAX, fallback);
+  return clampNum(Math.round(base / COUNT_STEP) * COUNT_STEP, COUNT_MIN, COUNT_MAX, fallback);
+};
+const clampForce = (n, fallback) => clampNum(n, FORCE_MIN, FORCE_MAX, fallback);
 const clampRange = (n, fallback) => Math.round(clampNum(n, RANGE_MIN, RANGE_MAX, fallback));
 const clampPolarity = (n) => (n === POLARITY_REPEL ? POLARITY_REPEL : POLARITY_ATTRACT);
 const clampPalette = (v) => (typeof v === 'string' && PALETTE_MAP[v] ? v : 'ice');
@@ -150,8 +162,8 @@ function sanitise(raw, width) {
   const d = defaultsFor(width);
   const o = raw && typeof raw === 'object' ? raw : {};
   return {
-    count: clampCount(typeof o.count === 'number' ? o.count : d.count),
-    force: clampForce(typeof o.force === 'number' ? o.force : d.force),
+    count: clampCount(typeof o.count === 'number' ? o.count : d.count, d.count),
+    force: clampForce(typeof o.force === 'number' ? o.force : d.force, d.force),
     burst: clampRange(o.burst, d.burst),
     tail: clampRange(o.tail, d.tail),
     size: clampRange(o.size, d.size),
@@ -192,6 +204,11 @@ const RANDOM_BOUNDS = {
 
 const randIn = ([lo, hi]) => lo + Math.random() * (hi - lo);
 const pickOther = (list, current) => {
+  /* `list[0]` on a one-element list returns the CURRENT value, and on an empty list
+   * returns undefined — which becomes PALETTE_MAP[undefined] and a throw in draw().
+   * Unreachable from the shipped tables, both of which are non-empty literals, but the
+   * guard read as though it handled those cases and it did not. */
+  if (!list || !list.length) return current;
   if (list.length < 2) return list[0];
   let v = current;
   /* Bounded, not a while(true): a PRNG that returns the same value forever is a
@@ -214,9 +231,17 @@ function randomSettings(current) {
    * has to draw already is — see DRAW_BUDGET. The floor is the bounds' own floor: a
    * budget that could starve the field down to nothing would be trading one unusable
    * result for another. */
-  const countHi = Math.max(RANDOM_BOUNDS.count[0], Math.min(RANDOM_BOUNDS.count[1], DRAW_BUDGET / (1 + size / 100 + tail / 100)));
+  /* Solved through `drawCost` itself rather than by re-inlining the formula. An earlier
+   * version wrote the expression twice and left `drawCost` unreferenced — two
+   * specifications of one cost model, which is the exact thing this file warns
+   * PUP-WO-0301 not to do with the ranges. */
+  const countHi = Math.max(RANDOM_BOUNDS.count[0], Math.min(RANDOM_BOUNDS.count[1], DRAW_BUDGET / (drawCost(1, size, tail))));
+  /* FLOORED TO THE STEP, not rounded. `clampCount` rounds to the nearest 50, so a
+   * ceiling of 1240.9 became 1250 and a cost of 3425 against a stated budget of 3400 —
+   * a bound the code was described as respecting and did not. */
+  const countMax = Math.max(COUNT_MIN, Math.floor(countHi / COUNT_STEP) * COUNT_STEP);
   return {
-    count: clampCount(randIn([RANDOM_BOUNDS.count[0], countHi])),
+    count: clampCount(randIn([RANDOM_BOUNDS.count[0], countMax]), RANDOM_BOUNDS.count[0]),
     force: clampForce(randIn(RANDOM_BOUNDS.force)),
     burst: clampRange(randIn(RANDOM_BOUNDS.burst), 50),
     tail: tail,
@@ -256,7 +281,9 @@ function toneForHeight(fraction) {
  * sim.ts, near 1:1. It was already framework-free apart from its typing, which is why
  * this is a port and not a rewrite. What changed, and only these:
  *
- *   1. `polarity` multiplies the attract term          (section 3, addition 1)
+ *   1. `polarity` multiplies the attract term AND, when it is negative, the swirl
+ *      term is cut as well — see the block in step(). The first version of this list
+ *      said only "the attract term", which understated what the code does.
  *   2. `pal.cycle` rotates hueBase with time            (section 3, "more colour")
  *   3. tap RINGS — a coloured ring expands from every touch
  *   4. `reduced` comes from api.prefersReducedMotion rather than a second
@@ -264,6 +291,13 @@ function toneForHeight(fraction) {
  *      sources for one fact is how they drift
  *   5. `stop()` is idempotent and clears the handle, so a double teardown cannot
  *      cancel a frame id that has since been reissued to somebody else
+ *   6. a tap RE-SEEDS THE FIELD FROM A ZERO-SIZED START. `resize()` reseeds if the
+ *      first layout it saw was 1x1, which the original never recovered from
+ *   7. a burst follows the polarity: in repel it PULLS particles to the tap instead of
+ *      pushing them away, because in repel there are none under the finger to push
+ *   8. a ring is drawn even at `burst: 0`, where the original did nothing at all. That
+ *      is deliberate — the ring answers "did I do that?", and a tap that registers
+ *      should say so whether or not the burst parameter moves anything
  *
  * RINGS ARE ADDITION 3 AND THE REASON IS CAUSATION. A three-year-old's tap moves a
  * few hundred particles a few pixels; that is a consequence he can miss. A ring is
@@ -274,6 +308,33 @@ const HUE_BUCKETS = 16;
 const MAX_DPR = 2;
 const RING_LIFE = 0.55;
 const RING_MAX = 8;
+
+/* THE FLOOR UNDER A PARTICLE'S STROKE, AND IT IS THE FIX FOR AN ALL-BLACK SCREEN.
+ *
+ * A particle is drawn as a line from where it is to where it was: `lineTo(x - vx*tail,
+ * …)`. The length of that line is PROPORTIONAL TO SPEED, and a repelled field settles —
+ * the wrap makes every edge continuous, so "away from the finger" converges on the
+ * pointer's antipode, the force there is zero, and the damping (0.935 per 60ths of a
+ * second) takes the rest. Measured on the field this shipped with, at settings squarely
+ * inside the randomizer's own range, with nobody touching it:
+ *
+ *     t = 3 s    6.4% of pixels lit      t = 30 s   0.0%, max luminance 9
+ *     t = 10 s   0.9%                    t = 45 s   0.0%, max luminance 9
+ *
+ * Nine is the background. The screen was BLACK — and a tap bought a 400 ms flash and
+ * went black again, and dragging into the corners where the particles actually are made
+ * it worse, because repel pins them harder the closer the finger gets. Half of every
+ * randomize press sets repel. PUP-WO-0300 section 3 says in as many words: "every
+ * result must be a usable field — no all-black, no zero particles."
+ *
+ * The particles were all still there and all still being drawn: 1200 moveTo/lineTo pairs
+ * a frame, every coordinate finite. They were sub-pixel, and a sub-pixel stroke paints
+ * nothing. So a stroke shorter than this floor is drawn at the floor instead — a dot
+ * rather than nothing. It cannot change the look at any setting where the field is
+ * moving, because there the stroke is already longer; it can only ever put back a
+ * particle that would have been invisible. A still field is a starfield, which is a
+ * field. A blank screen is not. */
+const MIN_SEG = 0.4;
 /* See the block in step(). Both are measured, not guessed: the pair below is what
  * opens a visible hole within a second without ever flinging the field off canvas —
  * and it cannot, because the wrap conserves every particle whatever the force. */
@@ -306,6 +367,7 @@ class GyreSim {
     this.coarse = false;
     this.time = 0;
     this.bgId = null;
+    this.seeded = false;
     this.rings = [];
     this.frames = 0;          /* frames drawn — the frame-rate demonstration reads this */
     this.frame = this.frame.bind(this);
@@ -342,6 +404,20 @@ class GyreSim {
     this.canvas.style.width = nextW + 'px';
     this.canvas.style.height = nextH + 'px';
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    /* A FIELD SEEDED INTO A 1x1 CANVAS NEVER RECOVERS, and the original does not either.
+     * `start()` seeds every particle into [0,w)x[0,h); if the host had not been laid out
+     * the whole field is a single pixel, and the rescale below is guarded on
+     * `oldW > 1` — which is false exactly then — so real dimensions arriving later
+     * rescale nothing. Measured on the source's logic: 6 of 48 grid cells ever inked,
+     * still 6 after three seconds. Not reachable through today's shell, because `host`
+     * is fixed inset:0 and mount runs after layout. Reachable the moment anything
+     * mounts this into a hidden or unlaid-out node, which is what a picker overlay
+     * might do. Reseeding is one line and removes the whole class. */
+    if (this.seeded && oldW <= 1 && oldH <= 1 && nextW > 1 && nextH > 1) {
+      this.w = nextW; this.h = nextH;
+      this.reseed();
+      return;
+    }
     if (!this.pointerSeen) {
       this.px = nextW * 0.5; this.py = nextH * 0.5;
       this.lastPx = this.px; this.lastPy = this.py;
@@ -370,18 +446,31 @@ class GyreSim {
     if (burstMul <= 0) return;
     const count = Math.min(COUNT_MAX, Math.max(0, settings.count | 0));
     const force = settings.force;
+    /* THE TAP FOLLOWS THE POLARITY, and this is a correction the adversarial pass
+     * earned. In repel the disc under the finger is EMPTY — that is the whole point of
+     * repel — so a burst that only ever pushes outward has nothing to push, and
+     * `burst` becomes an invisible parameter in a mode `randomize` picks half the time.
+     * Measured: attract moved the ink under the finger by 18%, repel by 0.0%. Roadmap
+     * P3 gate 1 is per-parameter, so an invisible one is a failed gate.
+     * Flipping the sign makes the tap GATHER in repel mode — it briefly fills the hole
+     * and then the field pushes it back out, which is both visible and a nicer toy than
+     * a shove. One multiplier, and the parameter is observable in both modes. */
+    const dir = settings.polarity < 0 ? -1 : 1;
     for (let i = 0; i < count; i++) {
       const dx = this.x[i] - x, dy = this.y[i] - y;
       const d = Math.hypot(dx, dy) + 0.001;
       if (d > 190) continue;
       const falloff = 1 - d / 190;
-      const mag = (280 + force * 220) * burstMul * falloff * falloff;
+      const mag = (280 + force * 220) * burstMul * falloff * falloff * dir;
       this.vx[i] += (dx / d) * mag;
       this.vy[i] += (dy / d) * mag;
     }
   }
 
   clearTrails() { this.paintBackground(1); }
+  /* A partial repaint. `clearTrails` erases the field; this only dims what is already
+   * drawn, which is what a palette change needs — see the note at `set`. */
+  fadeTrails(alpha) { this.paintBackground(Math.min(1, Math.max(0, alpha))); }
 
   reseed() {
     const pal = PALETTE_MAP[this.getSettings().palette];
@@ -397,6 +486,7 @@ class GyreSim {
       this.mass[i] = 0.55 + Math.random() * 0.95;
     }
     this.rings.length = 0;
+    this.seeded = true;
     this.paintBackground(1);
   }
 
@@ -497,13 +587,34 @@ class GyreSim {
       vx[i] *= damp; vy[i] *= damp;
       x[i] += vx[i] * dt; y[i] += vy[i] * dt;
 
-      /* The wrap is what makes repel safe. Nothing can be flung off-canvas and lost:
-       * a particle leaving one edge re-enters at the other, so the field is
-       * conserved whatever the force and whichever the sign. */
-      if (x[i] < -20) x[i] = this.w + 20;
-      else if (x[i] > this.w + 20) x[i] = -20;
-      if (y[i] < -20) y[i] = this.h + 20;
-      else if (y[i] > this.h + 20) y[i] = -20;
+      /* THE WRAP IS WHAT MADE REPEL BLACK THE SCREEN, AND THIS COMMENT USED TO SAY THE
+       * OPPOSITE. It said the wrap "is what makes repel safe — nothing can be flung
+       * off-canvas and lost". Nothing is lost. Everything ends up in the twenty-pixel
+       * MARGIN OUTSIDE THE CANVAS that the wrap needs in order to hide the seam.
+       *
+       * A repelled particle is pushed outward until it passes `w + 20`, is teleported to
+       * `-20`, and is immediately outside on the other side — where the force points
+       * outward again. It ping-pongs across the two invisible margins and never comes
+       * back. Measured on the shipped field: particle 0 sitting at exactly (920, 660) on
+       * a 900x640 canvas, every particle in the same state, 1200 strokes a frame all
+       * drawn off-screen, and a screen whose maximum luminance was the background value.
+       * Thirty seconds of repel, from settings the randomizer picks half the time.
+       *
+       * So repel does not wrap. It has WALLS: the field is pushed away from the finger
+       * and piles up against the edges, where a child can see it, and a small bounce
+       * keeps it alive rather than welded to the boundary. Attract keeps the torus
+       * exactly as the source had it — that path is unchanged and still bit-exact. */
+      if (repelling) {
+        if (x[i] < 0) { x[i] = 0; vx[i] = -vx[i] * 0.3; }
+        else if (x[i] > this.w) { x[i] = this.w; vx[i] = -vx[i] * 0.3; }
+        if (y[i] < 0) { y[i] = 0; vy[i] = -vy[i] * 0.3; }
+        else if (y[i] > this.h) { y[i] = this.h; vy[i] = -vy[i] * 0.3; }
+      } else {
+        if (x[i] < -20) x[i] = this.w + 20;
+        else if (x[i] > this.w + 20) x[i] = -20;
+        if (y[i] < -20) y[i] = this.h + 20;
+        else if (y[i] > this.h + 20) y[i] = -20;
+      }
 
       const spd = Math.hypot(vx[i], vy[i]);
       hue[i] = hueBase
@@ -559,8 +670,10 @@ class GyreSim {
         const bucket = Math.floor(((hue[i] - hueMin) / span) * HUE_BUCKETS);
         const bi = ((bucket % HUE_BUCKETS) + HUE_BUCKETS) % HUE_BUCKETS;
         if (bi !== b) continue;
+        let ex = -vx[i] * tail, ey = -vy[i] * tail;
+        if (ex * ex + ey * ey < MIN_SEG * MIN_SEG) { ex = MIN_SEG; ey = 0; }
         ctx.moveTo(x[i], y[i]);
-        ctx.lineTo(x[i] - vx[i] * tail, y[i] - vy[i] * tail);
+        ctx.lineTo(x[i] + ex, y[i] + ey);
         any = true;
       }
       if (any) ctx.stroke();
@@ -610,7 +723,9 @@ export default function mount(host, api) {
   host.appendChild(canvas);
 
   /* --- state, and the persistence that survives api.load() returning null --- */
-  const hostWidth = Math.round(host.getBoundingClientRect().width);
+  /* `|| window.innerWidth` because a host with no layout yet reports 0, and 0 is not
+   * "narrow" — it is "unknown", and the old expression sent it down the WIDE branch. */
+  const hostWidth = Math.round(host.getBoundingClientRect().width) || window.innerWidth || 0;
   /* `api.load()` MAY RETURN NULL AND THE GAME MUST RUN CORRECTLY WHEN IT DOES
    * (PUP-WO-0000 section 8.3). It returns null on a first run, in private mode, after
    * a storage clear, and whenever the stored JSON is unparseable. `sanitise` takes
@@ -619,7 +734,17 @@ export default function mount(host, api) {
    * not a branch that can rot untested. */
   let loaded = null;
   try { loaded = api.load(); } catch (e) { loaded = null; }
-  const settings = sanitise(loaded, hostWidth);
+  /* `api.entry.params` IS THE CONFIGURATION CHANNEL and this module was ignoring it.
+   * PUP-WO-0300 section 3 names it among the non-negotiables the latitude does not
+   * relax, and PUP-WO-0000 section 9.3 rules that two registry entries may share one
+   * module and differ only by their params — which is how a second, calmer Gyre tile
+   * would ship without a second file. Layered defaults < entry params < what the child
+   * saved, so a preset sets where he STARTS and never overrules where he got to. His
+   * saves are namespaced by entry id, so the two tiles do not fight. */
+  let preset = null;
+  try { preset = api.entry && api.entry.params; } catch (e) { preset = null; }
+  const seed = Object.assign({}, preset && typeof preset === 'object' ? preset : null, loaded && typeof loaded === 'object' ? loaded : null);
+  const settings = sanitise(seed, hostWidth);
 
   /* Saving is DEBOUNCED because PUP-WO-0301's sliders will call set() on every
    * pointermove — sixty localStorage writes a second, each a synchronous
@@ -669,7 +794,21 @@ export default function mount(host, api) {
      * having half worked. The other seven need no repaint: they change the next
      * frame, and the next frame is 16 ms away. Roadmap P3 gate 1 asks for "visibly
      * within one second" and this is the only parameter pair that would miss it. */
-    if (key === 'palette' || key === 'background') sim.clearTrails();
+    /* A PARTIAL FADE, NOT A WIPE, AND ONLY FOR `palette`.
+     *
+     * This was `clearTrails()` for palette OR background — a full-opacity repaint. The
+     * adversarial pass measured what that costs: at linger 90 it erased 80% of the
+     * drawn field in one frame. The source never did it at all; only its explicit
+     * "clear trails" button did. And PUP-WO-0301's swatch strip will fire `set` on
+     * every pointermove of a drag, which would strobe the field to bare background all
+     * the way along the strip.
+     *
+     * The problem it was solving is real — trails in the OLD palette sit on screen for
+     * as long as linger allows, which reads as the control half working — so the fade
+     * stays, at an opacity that removes the stale colour without erasing the field.
+     * `background` needs nothing at all: step() already repaints on the next frame when
+     * it sees the id change, so the old code was asking for the same paint twice. */
+    if (key === 'palette') sim.fadeTrails(0.6);
     scheduleSave();
     return true;
   }
@@ -688,6 +827,12 @@ export default function mount(host, api) {
    * is precisely the leak the returned-closure contract exists to prevent — the
    * closure can only reach what it was told about. */
   const listeners = [];
+  /* Declared HERE, not beside the seam, because `release()` closes over all four and
+   * the failure path below can call it before the seam section has run. A release
+   * function that throws on a TDZ reference is a release function that does not run. */
+  const watchers = [];
+  let dead = false;
+  let ro = null;
   const on = (target, type, fn, opts) => {
     target.addEventListener(type, fn, opts);
     listeners.push([target, type, fn, opts]);
@@ -698,10 +843,16 @@ export default function mount(host, api) {
     return { x: e.clientX - r.left, y: e.clientY - r.top, h: Math.max(1, r.height) };
   };
 
+  /* The captured pointer ids, so teardown can hand them back BY NAME. Removing the
+   * canvas from the document releases a capture implicitly, and that is what made this
+   * correct before it was written down — a guarantee held by a side effect of one line
+   * elsewhere. PUP-WO-0000 section 8.1 lists "capture" among the things that must not
+   * survive teardown, so it is released on purpose now. */
+  const captured = [];
   const onDown = (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const p = local(e);
-    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    try { canvas.setPointerCapture(e.pointerId); captured.push(e.pointerId); } catch (err) {}
     sim.setPointer(p.x, p.y);
     sim.setHeld(true);
     sim.burst(p.x, p.y);
@@ -709,14 +860,30 @@ export default function mount(host, api) {
      * method existing, because a module must run against the shell it is given and
      * not the one its work order assumed — an older cached index.html has no tone. */
     if (typeof api.tone === 'function') api.tone(toneForHeight(p.y / p.h), 180, 'sine');
-    api.vibrate(12);
+    /* Guarded for the same reason `tone` is, which the first version of this line was
+     * not: a module must run against the shell it is GIVEN. The pass was right that
+     * guarding one and not the other is a claim about which parts of the api are
+     * optional, made by accident. */
+    if (typeof api.vibrate === 'function') api.vibrate(12);
   };
   const onMove = (e) => { const p = local(e); sim.setPointer(p.x, p.y); };
   const onUp = () => sim.setHeld(false);
   const onHidden = () => { if (document.hidden) sim.setHeld(false); };
 
+  /* EVERYTHING FROM HERE TO `return release` HOLDS RESOURCES THE SHELL CANNOT REACH.
+   * See the teardown note below: `gameSession.teardown` is assigned only after mount
+   * returns, so a throw in this window leaves the shell reporting a clean recovery over
+   * seven listeners, an observer and a running loop. This try is what makes that
+   * impossible rather than merely unlikely. */
+  try {
   on(canvas, 'pointerdown', onDown);
-  on(canvas, 'pointermove', onMove, { passive: true });
+  /* ON `window`, WHICH IS WHERE THE SOURCE HAD IT. The port moved this to the canvas,
+   * and during a drag that is equivalent because `setPointerCapture` routes moves to the
+   * canvas anyway. It is NOT equivalent for a fine pointer moving with no button down:
+   * once the cursor is over anything else the field stops following it. Today that is
+   * only a mouse, but PUP-WO-0301 puts a control panel INSIDE this host, and the glow
+   * and the attractor would stop tracking the moment the cursor crossed it. */
+  on(window, 'pointermove', onMove, { passive: true });
   on(canvas, 'pointerup', onUp);
   on(canvas, 'pointercancel', onUp);
   /* A pointer released OUTSIDE the canvas — over the back button, off the edge of the
@@ -726,7 +893,7 @@ export default function mount(host, api) {
   on(window, 'pointercancel', onUp);
   on(document, 'visibilitychange', onHidden);
 
-  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => sim.resize()) : null;
+  ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => sim.resize()) : null;
   if (ro) ro.observe(host);
   else on(window, 'resize', () => sim.resize());
 
@@ -761,7 +928,18 @@ export default function mount(host, api) {
    *                                          every slider from one call.
    * `subscribe(fn)` fires after any change made through this object, so the sliders
    * can follow `randomize()` without polling. It returns its own unsubscribe. */
-  const watchers = [];
+  /* THE SEAM MUST DIE WITH THE SESSION, AND `delete host.gyre` DOES NOT KILL IT.
+   * Deleting the property removes the NAME. Anything that captured the object — a
+   * slider handler, a subscription, a timer — still holds a frozen object whose methods
+   * all still work, and the adversarial pass drove every one of them after teardown:
+   * `set` mutated the settings, `scheduleSave` created a fresh 300 ms timer that no
+   * teardown will ever clear, `subscribe` re-populated the watcher array teardown had
+   * just emptied, `randomize` reseeded a detached canvas, and localStorage was
+   * overwritten AFTER the child had left — silently changing the settings the toy comes
+   * back on. The comment here used to claim the opposite, which is the coverage-claiming
+   * comment this project has a standing rule about. The flag is declared with the rest
+   * of the release state at the top of the input section, so `release()` can be called
+   * from a failure at ANY point after acquisition begins. */
   const announce = () => { for (const fn of watchers.slice()) { try { fn(read()); } catch (e) {} } };
   const read = () => ({
     count: settings.count, force: settings.force, burst: settings.burst,
@@ -772,11 +950,26 @@ export default function mount(host, api) {
 
   host.gyre = Object.freeze({
     get: read,
-    set: (key, value) => { const changed = set(key, value); if (changed) announce(); return changed; },
-    randomize: () => { const next = randomize(); announce(); return next; },
-    toggle: () => { set('polarity', settings.polarity === POLARITY_ATTRACT ? POLARITY_REPEL : POLARITY_ATTRACT); announce(); return settings.polarity; },
+    set: (key, value) => { if (dead) return false; const changed = set(key, value); if (changed) announce(); return changed; },
+    randomize: () => { if (dead) return read(); const next = randomize(); announce(); return next; },
+    toggle: () => { if (dead) return settings.polarity; set('polarity', settings.polarity === POLARITY_ATTRACT ? POLARITY_REPEL : POLARITY_ATTRACT); announce(); return settings.polarity; },
+    /* The two controls the source shipped that this seam did not expose. `controls.tsx`
+     * binds a "clear trails" button and a "reset field" button, and PUP-WO-0301 could
+     * not have rebuilt either without editing this file — which would have made adding
+     * the control surface touch a second thing. Found by the adversarial pass reading
+     * the source's control set against what the seam offers. */
+    clear: () => { if (!dead) sim.clearTrails(); },
+    reset: () => {
+      if (dead) return read();
+      const d = defaultsFor(hostWidth);
+      for (const key of Object.keys(d)) settings[key] = d[key];
+      sim.reseed();
+      flushSave();
+      announce();
+      return read();
+    },
     subscribe: (fn) => {
-      if (typeof fn !== 'function') return () => {};
+      if (dead || typeof fn !== 'function') return () => {};
       watchers.push(fn);
       return () => { const i = watchers.indexOf(fn); if (i !== -1) watchers.splice(i, 1); };
     },
@@ -795,17 +988,41 @@ export default function mount(host, api) {
      * carrying a test mode. */
     frames: () => sim.frames,
   });
+  } catch (err) {
+    /* Release what was acquired, then rethrow so the shell's own obligation-5 handler
+     * still runs and the child still lands back on the console. `release` is a function
+     * DECLARATION at mount's top level, hoisted out of the try — an earlier version put
+     * it inside, where it is block-scoped and invisible from exactly the catch that
+     * needs it. The module then failed to mount at all, which is the one bug shape a
+     * failure path can have that is worse than not having one. */
+    release();
+    throw err;
+  }
 
   /* --- teardown ------------------------------------------------------------
-   * "After it returns the module holds no live rAF, listener, timer or observer"
-   * (PUP-WO-0300 section 2.3). Five things, in the order that makes each safe:
-   *   1. the rAF loop, first, so nothing below races a frame
-   *   2. the observer, which would otherwise call resize() on a stopped sim
-   *   3. every listener, from the array that recorded them
-   *   4. the save timer — CLEARED AND FLUSHED, so the last change is kept
-   *   5. the seam, so a stale reference to a dead session cannot drive anything
-   * The canvas itself goes with `host`, which the shell removes. */
-  return function teardown() {
+   * PUP-WO-0000 section 8.1: after this returns the module holds "no live
+   * requestAnimationFrame, interval, timeout, event listener, observer, CAPTURE, or
+   * media resource". Eight things, in the order that makes each safe — and the list is
+   * eight because an earlier version said five while the code did seven, then claimed
+   * the canvas "goes with host" one line above removing it explicitly:
+   *   1. the seam is marked dead FIRST, so nothing below races a stale caller
+   *   2. the rAF loop, so nothing below races a frame
+   *   3. the observer, which would otherwise call resize() on a stopped sim
+   *   4. every listener, from the array that recorded them
+   *   5. every watcher, which a stale subscribe() could otherwise refill
+   *   6. every pointer capture, by name rather than as a side effect of step 8
+   *   7. the save timer — CLEARED AND FLUSHED, so the last change is kept
+   *   8. the canvas, and the seam property
+   *
+   * IT IS ALSO THE FAILURE PATH. Between the first listener and the `return` below,
+   * this module holds seven listeners, an observer and a running loop while the shell
+   * has no teardown handle at all — `gameSession.teardown` is assigned only after mount
+   * RETURNS, so a throw in here leaves the shell reporting a clean recovery over a sim
+   * that runs forever. There is no reachable throw today; the pass had to plant one. But
+   * the seam block above invites PUP-WO-0301 to add code in exactly that window, so the
+   * window is closed structurally rather than by asking it not to. */
+  function release() {
+    dead = true;
     sim.stop();
     if (ro) ro.disconnect();
     for (const [target, type, fn, opts] of listeners) {
@@ -813,8 +1030,11 @@ export default function mount(host, api) {
     }
     listeners.length = 0;
     watchers.length = 0;
+    for (const id of captured) { try { canvas.releasePointerCapture(id); } catch (e) {} }
+    captured.length = 0;
     flushSave();
     try { delete host.gyre; } catch (e) { host.gyre = undefined; }
     if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
-  };
+  }
+  return release;
 }
