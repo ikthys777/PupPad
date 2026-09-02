@@ -429,3 +429,64 @@ the findings file with measurements.
 around it measures its own harness. It read as a 141-node-per-cycle leak that does not
 exist. **Every existing `.github/ci/demo-*.mjs` that uses `waitForSelector` inherits that
 artifact and none has been audited.**
+
+## 11. Two lessons this panel taught AFTER it merged, recorded because they generalise
+
+*Added 2026-09-02, after the fleet turned out to be three phones rather than a tablet and
+this work order's control panel was re-measured at 412px of height. Neither lesson is about
+the panel. Both were extracted by CC-A from cross-session messages and asked for here,
+because a sentence that exists only in a message between two sessions does not survive
+either of them.*
+
+### 11.1 A summary in your own head is still a summary
+
+I told CC-A that this drawer's height was capped by `min(78vh, calc(100vh - 140px))`, with
+the 140px binding on a short screen. **`100vh` occurs zero times in `index.html`.** The only
+rule is `max-height:78vh`. I had shipped that cap, replaced it with the left-gutter column
+rule for the reason my own comment records — and then reported the version I remembered
+writing rather than the version that shipped, **in a message another session was going to
+design a layout against.**
+
+> **A summary in my own head is still a summary, and it is worse than a stale ref because
+> it feels like knowledge.**
+
+The operating rule already said to check file contents and never a summary. What it did not
+say — because it did not occur to me that it needed to — is that memory of code *you wrote
+yourself* is the summary most likely to be trusted without checking. The correction cost
+CC-A a layout premise: a fixed cap is a constant to design around, and a content-bound
+height is a moving one that **grows when a future game adds a control**, with no layout
+change and nothing going red.
+
+### 11.2 Preserving today's bytes is not the same as preserving today's intent
+
+The drawer shipped open-by-default, which is right for Gyre — Scotty's ruling is that the
+controls *are* the toy. On a 412px screen an open drawer is **321px of 412, leaving 91px of
+field**: survivable for a particle background, impossible for a board game.
+
+The fix is that a module now declares `controlsOpen` on its seam. **The obvious shape is
+additive** — absent means open, today's bytes are preserved, and the new game opts out.
+That is the shape this project's invariants normally demand, and I would have built it.
+CC-A rejected it, correctly:
+
+> **Preserving today's bytes is not the same as preserving today's intent, and when they
+> diverge the intent is the thing worth keeping.**
+
+Additive would make *every future game* opt out of a default that is wrong for it — one
+game gets its default free and all the others pay, forever, in a field nobody remembers to
+set. Open is right for exactly one game, and that game should **say so**. It generalises
+past this drawer to every no-op-when-unwired decision here: ask whether "absent" is being
+given the meaning that happens to preserve the current bytes, or the meaning that is
+actually right.
+
+### 11.3 And the corollary that nearly shipped the regression anyway
+
+`startOpen` is assigned **three times** (`index.html:2609-2611`): an initializer, the
+`localStorage` comparison, and the `catch`. The one-character flip that looks exactly like
+the ruling — `!== '0'` becoming `=== '1'` — fixes the comparison and leaves the other two
+answering `true`. **The catch is the invisible one:** with storage disabled or in private
+mode the drawer opens regardless of what the seam said, on the one class of device nobody
+tests. *(Only two of the three are live today; the initializer is shadowed by both paths —
+and becomes live the moment the try body gains a branch, which is what this change is.)*
+
+**Two expressions that must agree, except there are three** — the same family as
+`PUP-WO-0700`'s sticker, found by CC-A checking the count rather than the expression.
