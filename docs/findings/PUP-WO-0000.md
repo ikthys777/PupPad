@@ -1186,6 +1186,26 @@ check passed (§6.1 member 6, and the reason gate 1 is split):
    mid-animation". The cheapest way to hold that for a mid-animation state is not
    to have one.
 
+**THE DRAWER'S BAND IS DEAD TO THE GAME, AND THAT IS WHAT DECIDES THE ASSISTS
+QUESTION.** The panel root is `pointer-events:none` at `PANEL_Z = GAMES_Z + 1`
+(`index.html:2042`, `:2180` — 501 against the host's 500), but **the drawer itself is
+`pointer-events:auto`** and bottom-anchored. So anything a game paints in the bottom
+band is not merely occluded: **`document.elementFromPoint` returns the drawer, and a
+drop there never reaches the game at all.** And the drawer **ships open**.
+
+**The band's size is CONTENT-BOUND, not capped, and that is the part to design
+against.** The only declaration is `max-height:78vh` (`index.html:2296`) — at 480px
+tall that is 374px, or **78% of the screen**. *(There is no `calc(100vh - 140px)` cap:
+`100vh` does not occur anywhere in `index.html`. An earlier version did cap the
+drawer's height below the exit's band, and `index.html:2290-2295` records that it was
+**removed** — it "worked only until the drawer was scrolled, at which point its top
+rows slid up under the exit again", and the left-gutter column rule replaced it
+precisely because it "lets the drawer keep its full height".)* Measured drawer heights
+below 78vh therefore mean the **content** is binding, and content is a function of how
+many controls the module publishes — **so a game that adds a control grows the dead
+band underneath it.** A layout that fits today can stop fitting because a slider was
+added, with no layout change and nothing going red.
+
 **What this means for `PUP-WO-0400`.** Block Pop's four assists (Undo, Hint, Help,
 Mix) are `action` descriptors and its board size is `api.entry.params`, **not** a
 `choice` — a control that changes the board mid-run is a different game, and §9.3
