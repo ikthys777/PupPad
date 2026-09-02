@@ -23,6 +23,7 @@
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, extname, normalize, resolve } from 'node:path';
 import { chromium } from 'playwright';
@@ -34,6 +35,21 @@ const REPO = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
 let COMMIT = 'unknown';
 try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch {}
 console.log(`CHECK 14 — games offline, cold. subject ${COMMIT.slice(0, 12)}\n`);
+
+/* The module the Games button loads is READ FROM THE REGISTRY, never assumed — see
+ * the same note in demo-games-back.mjs. Hard-coding the placeholder was true only
+ * while the placeholder was first in GAMES, and PUP-WO-0300 made it second. Fails
+ * closed: an unreadable registry throws rather than falling back to a guess. */
+function firstRegistryModule(repo) {
+  const html = readFileSync(join(repo, 'index.html'), 'utf8');
+  const reg = html.match(/var GAMES\s*=\s*\[([\s\S]*?)\n\];/);
+  if (!reg) throw new Error('demo-games-offline: cannot find `var GAMES = [ ... ];` in index.html');
+  const m = reg[1].match(/module\s*:\s*'([^']+)'/);
+  if (!m) throw new Error('demo-games-offline: the first registry entry has no `module` field');
+  return m[1].replace(/^\./, '');
+}
+const MODULE = firstRegistryModule(REPO);
+console.log(`  the Games button loads ${MODULE}\n`);
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
@@ -76,17 +92,17 @@ try {
   }, { timeout: 20000 });
   /* The precache is what the added urlsToCache line lands in. Assert it is THERE
    * before going offline, so a failure below cannot be blamed on the wrong step. */
-  const cached = await warm.evaluate(async () => {
+  const cached = await warm.evaluate(async (mod) => {
     const names = await caches.keys();
     for (const n of names) {
       const keys = await (await caches.open(n)).keys();
       const urls = keys.map((k) => k.url);
-      if (urls.some((u) => u.endsWith('/games/hello.js'))) return { name: n, count: urls.length };
+      if (urls.some((u) => u.endsWith(mod))) return { name: n, count: urls.length };
     }
     return null;
-  });
-  if (cached) ok(`the worker precached games/hello.js (cache ${cached.name}, ${cached.count} entries)`);
-  else bad('games/hello.js is NOT in any cache after install',
+  }, MODULE);
+  if (cached) ok(`the worker precached ${MODULE} (cache ${cached.name}, ${cached.count} entries)`);
+  else bad(`${MODULE} is NOT in any cache after install`,
     'the urlsToCache line is missing or install failed — a cold device has no module');
   await warm.close();
 
@@ -115,12 +131,18 @@ try {
 
   /* ---- 4. console -> games -> placeholder ---- */
   await cold.click('.pad-btn[data-id="7"]');
+  /* "THE HOST HAS TEXT IN IT" WAS NEVER THE PROPERTY, IT WAS THE PLACEHOLDER'S HABIT.
+   * The first game to ship — Gyre — draws a canvas and puts no text on screen at all,
+   * by design: northstar invariant 1 is that a non-reader can operate every surface,
+   * so a mounted-ness test that requires WORDS is a test that fails hardest on the
+   * games this project is trying to build. What "mounted" means is that the module put
+   * something in the host. */
   const mounted = await cold.waitForFunction(() => {
     const h = document.getElementById('gameHost');
-    return !!(h && h.textContent && h.textContent.trim().length > 0);
+    return !!(h && (h.children.length > 0 || (h.textContent || '').trim().length > 0));
   }, { timeout: 10000 }).then(() => true).catch(() => false);
-  if (mounted) ok('the placeholder MOUNTED offline — served from the precache');
-  else bad('the placeholder did not mount offline',
+  if (mounted) ok(`${MODULE} MOUNTED offline — served from the precache`);
+  else bad('the first registry module did not mount offline',
     'the module was not available with no network: check the urlsToCache line');
 
   const back = await cold.evaluate(() => {
@@ -157,14 +179,14 @@ if (failures.length) {
   console.error(`\nCHECK 14 FAILED — ${failures.length} at ${COMMIT.slice(0, 12)}:`);
   for (const f of failures) console.error(`  ${f.m}\n    ${f.d || ''}`);
   console.error('\n  northstar invariant 3: every core surface works with no network.');
-  console.error('  If games/hello.js is missing from the precache, the one urlsToCache line');
-  console.error('  PUP-WO-0200 added to sw.js has been dropped. Restore it; do NOT bump');
+  console.error(`  If ${MODULE} is missing from the precache, its urlsToCache line has`);
+  console.error('  been dropped. Restore it; do NOT bump');
   console.error('  CACHE_VERSION to force it (PUP-WO-0105 measured 24/24 map tiles before a');
   console.error('  bump and 0/24 after).');
   process.exit(1);
 }
 console.log(`CHECK 14 PASSED at ${COMMIT.slice(0, 12)} — cold start, no network:`);
-console.log('  console rendered → Games opened → the placeholder mounted from the precache');
+console.log(`  console rendered → Games opened → ${MODULE} mounted from the precache`);
 console.log('  → the way back was a thumb-sized target → back returned to the console.');
 console.log('  Offline is real here: the listener was closed and its keep-alive sockets');
 console.log('  destroyed, and a direct fetch to the origin was confirmed to fail first —');

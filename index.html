@@ -56,23 +56,112 @@ function getAudioCtx() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
 }
+/* mk() AND sw() LIVE HERE, NOT INSIDE doSound. That move is the whole cost of
+ * api.tone, and architecture §5 says so in the row that ratifies it: the findings
+ * estimated one function over existing helpers, and CC-A corrected the estimate
+ * because both helpers were declared inside doSound's try block and were therefore
+ * reachable from nowhere else. Nothing about either body changed; they take the
+ * audio context from getAudioCtx() instead of closing over doSound's local, which
+ * is the same object and the same currentTime read the cues always made per call. */
+function mk(freq, dur, wave, delay, vol) {
+  var c = getAudioCtx();
+  var o = c.createOscillator(), g = c.createGain();
+  o.type = wave; o.frequency.value = freq;
+  var t = c.currentTime + (delay || 0), v = vol || 0.12;
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
+  return o;
+}
+function sw(f1, f2, dur, wave, delay, vol) {
+  var c = getAudioCtx();
+  var o = c.createOscillator(), g = c.createGain();
+  o.type = wave; var t = c.currentTime + (delay || 0), v = vol || 0.12;
+  o.frequency.setValueAtTime(f1, t); o.frequency.linearRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
+}
+
+/* THE api.tone PRIMITIVE — ratified in architecture §5 on 2026-09-01, built here on
+ * 2026-09-02 by PUP-WO-0300 §2.1. The twelve-cue bank offers no pitch and no
+ * duration, so a xylophone, a lullaby or an aquarium is INEXPRESSIBLE through
+ * api.sound, and the only escape was editing the switch table above — which makes
+ * northstar invariant 6's "nothing else" false for any game that wants a note.
+ *
+ * EVERY ARGUMENT IS CLAMPED, and the reason is not tidiness. A game module runs in
+ * this realm and hands these values straight to a live AudioContext: a frequency of
+ * 0 or NaN throws, a negative duration schedules a stop before its start, and 40 kHz
+ * at 30 seconds is a sound a three-year-old is wearing headphones for. The bounds are
+ * a child's ears and a child's patience, and a game that wants more does not get it.
+ * An unknown wave name becomes 'sine' rather than throwing, because a game asking for
+ * a sound it cannot have should still make one. */
+var TONE_WAVES = ['sine', 'square', 'sawtooth', 'triangle'];
+
+/* A VOICE CAP AND A REGISTRY, BOTH ADDED AFTER THE ADVERSARIAL PASS MEASURED WHAT ONE
+ * CLAMP PER CALL IS WORTH. Two findings, both real:
+ *
+ *   THE SUM WAS NOT BOUNDED. Each voice is a gain of 0.12 straight to `destination` —
+ *   no master gain, no compressor — so roughly 8.3 simultaneous notes reach full scale.
+ *   Rendered offline: ten notes landing together peak at 1.16 and HARD CLIP, which is
+ *   audible as a crack rather than as loudness. Ten fingers landing together is not an
+ *   exotic case, it is a three-year-old drumming with both hands, and Gyre plays a note
+ *   per touch. Six voices peak at ~0.72 and cannot clip; the seventh is dropped, which
+ *   is the right failure — a dropped note, not a bang.
+ *
+ *   AND AUDIO COULD OUTLIVE THE GAME. findings §8.6 rules that every cue "hard-stops
+ *   itself via o.stop(t + dur) IN UNDER A SECOND — so nothing can outlive teardown, and
+ *   §8.1's release guarantee is satisfiable." api.tone raised that ceiling to three
+ *   seconds and recorded nothing, and endGameSession touched no audio at all, so a
+ *   game's note could sing over the console after the child had left. §8.1 lists "media
+ *   resource" among the things teardown must release. This registry is the handle that
+ *   makes that guarantee structural instead of incidental, and it is why the sustain a
+ *   lullaby needs can stay.
+ *
+ * THE CEILING IS 3000 Hz, NOT 4000. The old bound sat at the peak of the ear's
+ * sensitivity, which made it the loudest-PERCEIVED note the primitive could produce —
+ * the opposite of what a bound described as "a child's ears" is for. Gyre's own top
+ * note is 2217 Hz, so nothing shipped is affected.
+ *
+ * The console's own twelve cues do NOT go through this. They are the shell's, they are
+ * short, and they are not a game's to leak. */
+var TONE_MAX_VOICES = 6;
+var gameTones = [];
+function playTone(hz, ms, wave) {
+  var f = Number(hz), d = Number(ms);
+  if (!isFinite(f) || !isFinite(d)) return;
+  f = Math.min(3000, Math.max(40, f));
+  d = Math.min(3000, Math.max(20, d));
+  var w = TONE_WAVES.indexOf(wave) === -1 ? 'sine' : wave;
+  /* PRUNED BY TIME, NOT BY `onended`, AND THAT DISTINCTION IS LOAD-BEARING. The first
+   * version relied on the ended event alone. An AudioContext that has never had a user
+   * gesture is SUSPENDED, its clock does not advance, and `onended` never fires — so the
+   * registry filled to six and stayed full, and the toy went permanently silent instead
+   * of being merely capped. Measured: 24 notes fired at once produced 2 voices, because
+   * four dead entries were still holding slots. Every entry now carries the time it is
+   * due to finish and is dropped when the context's own clock passes it; `onended` is
+   * kept as well, because it is exact when it does fire. */
+  /* WALL CLOCK, NOT THE AUDIO CLOCK. `currentTime` does not advance while the context
+   * is SUSPENDED — which it is until the first user gesture — so pruning against it
+   * expires nothing and the registry stays full, which is the same permanent silence
+   * `onended` alone produced. Measured that way twice before the third version worked.
+   * The wall clock always advances; a 50 ms grace covers scheduling slack. */
+  var now = Date.now();
+  for (var i = gameTones.length - 1; i >= 0; i--) { if (gameTones[i].until <= now) gameTones.splice(i, 1); }
+  if (gameTones.length >= TONE_MAX_VOICES) return;
+  var o = mk(f, d / 1000, w, 0, 0.12);
+  if (!o) return;
+  var rec = { o: o, until: now + d + 50 };
+  gameTones.push(rec);
+  o.onended = function() { var j = gameTones.indexOf(rec); if (j !== -1) gameTones.splice(j, 1); };
+}
+
+/* Called by endGameSession, and by nothing else. */
+function stopGameTones() {
+  for (var i = 0; i < gameTones.length; i++) { try { gameTones[i].o.stop(); } catch (e) {} }
+  gameTones.length = 0;
+}
+
 function doSound(type) {
   try {
-    var c = getAudioCtx();
-    function mk(freq, dur, wave, delay, vol) {
-      var o = c.createOscillator(), g = c.createGain();
-      o.type = wave; o.frequency.value = freq;
-      var t = c.currentTime + (delay || 0), v = vol || 0.12;
-      g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
-    }
-    function sw(f1, f2, dur, wave, delay, vol) {
-      var o = c.createOscillator(), g = c.createGain();
-      o.type = wave; var t = c.currentTime + (delay || 0), v = vol || 0.12;
-      o.frequency.setValueAtTime(f1, t); o.frequency.linearRampToValueAtTime(f2, t + dur);
-      g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
-    }
     var S = {
       ping:function(){mk(880,.08,'sine',0,.15);mk(1320,.12,'sine',.08,.12);mk(1760,.2,'sine',.16,.08)},
       chime:function(){mk(392,.3,'sine',0,.1);mk(523,.3,'sine',.1,.1);mk(659,.3,'sine',.2,.1);mk(784,.4,'sine',.3,.12)},
@@ -120,7 +209,17 @@ var BTNS_RIGHT=[
  * not a game. It exists so gate 2 can be run and so games/ is non-empty, which check
  * 11 requires (it fails closed on an empty directory).
  */
+/* GYRE IS FIRST, AND THAT ORDERING IS THE WHOLE OF THIS WORK ORDER'S UI DECISION.
+ * The picker is PUP-WO-0201's and is not built here, so `openGames()` mounts
+ * GAMES[0] — which means the position in this array IS what the Games button opens.
+ * PUP-WO-0300 acceptance 8 requires "console -> games -> Gyre -> play -> back" on a
+ * cold offline device, and a Gyre sitting second would be unreachable until the
+ * picker ships: shipped, cached, and invisible to the child it was built for.
+ * Reordering data is not building a chooser, so this does not cross into 0201.
+ * `hello` stays as the contract demonstration checks 13 and 14 corrupt on purpose. */
 var GAMES=[
+  {id:'gyre',module:'./games/gyre.js',label:'Gyre',icon:'\uD83C\uDF00',
+   color:'#06B6D4',glow:'#67E8F9',sound:'twinkle',players:1,params:{}},
   {id:'hello',module:'./games/hello.js',label:'Hello',icon:'\uD83D\uDC4B',
    color:'#8B5CF6',glow:'#A78BFA',sound:'chime',players:1,params:{}}
 ];
@@ -1722,6 +1821,11 @@ function endGameSession() {
         if (leaked[j].parentNode) leaked[j].parentNode.removeChild(leaked[j]);
       }
     } catch (e) { /* the sweep must never be the reason the exit fails */ }
+    /* THE MEDIA RESOURCE HALF OF §8.1, which this function did not have. api.tone lets a
+     * game schedule up to three seconds of sound; without this, a note started as the
+     * child reaches for the way back plays over the console he lands on. Last, and
+     * wrapped, so it can never be the reason the exit fails. */
+    try { stopGameTones(); } catch (e) {}
   }
 }
 
@@ -1786,10 +1890,24 @@ function openGames(entry) {
   var back = document.createElement('button');
   back.id = 'gameBack';
   back.setAttribute('aria-label', 'Back to the console');
-  back.style.cssText = 'position:fixed;top:max(10px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left));'
+  /* PUSHED 52px CLEAR OF #settingsBtn, WHICH IT WAS SITTING ON TOP OF. The console's
+   * settings button occupies (10,6)-(48,34); this button was (10,10)-(74,74). Tap one
+   * closed the game and tap two — a double-tap, which is what a child does when the
+   * first tap appears not to work — landed on the console and opened "Pup Pad Sync
+   * Settings": two text inputs holding the Supabase URL and key, and two exits labelled
+   * with WORDS. A non-reader cannot leave it and a mis-tap on Save writes config.
+   * Reproduced, and closed by moving this rather than by hoping the child taps once. */
+  back.style.cssText = 'position:fixed;top:calc(max(10px,env(safe-area-inset-top)) + 52px);left:max(10px,env(safe-area-inset-left));'
     + 'z-index:' + (GAMES_Z + 1) + ';width:64px;height:64px;border-radius:50%;border:3px solid rgba(255,255,255,0.9);'
     + 'background:linear-gradient(145deg,#EF4444,#b91c1c);color:#fff;font-size:30px;line-height:1;cursor:pointer;'
-    + 'box-shadow:0 4px 14px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:0';
+    /* A DARK HALO OUTSIDE THE WHITE RING, so the exit's visibility is a property of the
+     * button rather than a promise about what a game draws behind it. Measured on the
+     * two light backgrounds Gyre ships: the white border fell to a 1.47:1 contrast ratio
+     * against `shell` and 1.53:1 against `fog` — gone — and the red fill to 2.84:1,
+     * under the 3:1 floor for a control. The shell cannot know what a game will paint,
+     * so the button carries its own contrast against both ends of the range. */
+    + 'box-shadow:0 0 0 4px rgba(0,0,0,0.45),0 4px 14px rgba(0,0,0,0.5);touch-action:manipulation;'
+    + 'display:flex;align-items:center;justify-content:center;padding:0';
   back.textContent = '←';
   /* EARLY-BOUND, AND THE EXIT RUNS FIRST. This was `doSound('tap'); endGameSession();`
    * with both resolved by name at click time, so a module assigning
@@ -1797,9 +1915,51 @@ function openGames(entry) {
    * side effect sat AHEAD of the exit on the exit path. Same-realm code can still defeat
    * this; the accidental version is gone. */
   var exit = endGameSession;
-  back.addEventListener('click', function() {
+
+  /* WIRED ON POINTER EVENTS, NOT ON `click`, AND THIS IS A LIVE TRAP BEING CLOSED.
+   * Found by PUP-WO-0300's adversarial pass and reproduced independently, in Chromium,
+   * with real touch points. `click` was the only wiring, and a browser does not
+   * synthesise a click from a tap in two very ordinary situations:
+   *
+   *   ANOTHER FINGER IS ALREADY ON THE GLASS. With a thumb resting anywhere — on the
+   *   field, on the bezel, forgotten — a tap on this button fires pointerdown,
+   *   touchstart, pointerup and touchend, and NO CLICK. The button is inert for as long
+   *   as that finger stays down, and `touch-action:none` on a game's canvas means the
+   *   resting touch is never converted to a scroll and cancelled, so it stays down.
+   *
+   *   THE TAP SLIDES MORE THAN ~15px. Chromium's touch slop turns it into a pan and
+   *   emits no click, even when the finger goes down and comes up well inside a 64px
+   *   circle. Measured: 8px closes the game, 20px does not.
+   *
+   * A THREE-YEAR-OLD'S TAP IS A SMUDGE, AND HE PLAYS WITH BOTH HANDS. Both are his
+   * normal gesture, not an edge case, and the failure teaches the wrong lesson: the
+   * button visibly does nothing, so he presses harder, with more fingers, and holds it
+   * down — every one of which keeps it dead. There is no keydown, popstate or Escape
+   * handler anywhere in this file, and manifest.json is display:fullscreen, so Android's
+   * system back leaves the app rather than the game. This was the only way out.
+   *
+   * AND THE PROJECT'S OWN REACHABILITY TEST PASSED THROUGHOUT. `elementFromPoint` at the
+   * button's centre returned #gameBack, 64x64, in every failing case — check 13 asks
+   * "is the button under the finger", which is the right question at the wrong layer.
+   * It has never once been pressed with a finger; both games checks use a synthetic
+   * MOUSE click, which is subject to neither rule.
+   *
+   * `pointerup` fires in every one of those cases. `armed` requires the press to have
+   * STARTED on the button, so a finger dragged off the field and released here does not
+   * exit mid-play; `used` makes the pair idempotent, so the trailing click — which is
+   * also what a keyboard Enter produces, and that is why the click handler stays — is a
+   * no-op rather than a second sound. */
+  var used = false;
+  function exitOnce() {
+    if (used) return;
+    used = true;
     try { exit(); } finally { try { doSound('tap'); } catch (e) {} }
-  });
+  }
+  var armed = false;
+  back.addEventListener('pointerdown', function() { armed = true; });
+  back.addEventListener('pointerup', function() { if (armed) { armed = false; exitOnce(); } });
+  back.addEventListener('pointercancel', function() { armed = false; });
+  back.addEventListener('click', exitOnce);
 
   /* Snapshot body level BEFORE the chrome goes in, so the sweep in endGameSession can
    * tell what the module added from what was already there. WITHOUT THIS THE SWEEP
@@ -1830,6 +1990,11 @@ function openGames(entry) {
     entry: frozen,
     close: function() { endGameSession(); },
     sound: function(name) { try { doSound(name); } catch (e) {} },
+    /* PUP-WO-0300 §2.1. Ratified architecture §5 2026-09-01, built 2026-09-02 — the
+     * fourth ruling this project made and had not turned into a commit. Same
+     * fire-and-forget discipline as `sound`: playTone clamps, this never throws, and
+     * a game that asks for a note on a device with no audio simply gets silence. */
+    tone: function(hz, ms, wave) { try { playTone(hz, ms, wave); } catch (e) {} },
     vibrate: function(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} },
     save: function(obj) {
       try { localStorage.setItem('pupgame:' + frozen.id, JSON.stringify(obj)); } catch (e) {}
