@@ -395,6 +395,24 @@ jobs:
         # check-syntax or check-assets red mean a fourth edit is still owed.
         run: node .github/ci/check-gate2.mjs .
 
+      - name: "Check 19 — Gyre's controls, pressed with a finger"
+        # PUP-WO-0301 §3. The control panel is the surface Buddy actually engages with —
+        # "his engagement is the controls; he likes moving a slider and SEEING what
+        # changed" — so every claim about it is a claim about a finger, and nothing here
+        # is pressed with page.click. It answers roadmap P3 gates 1 to 5: every parameter
+        # moved by its own control (per parameter, driven by the module's manifest rather
+        # than by a list in the check, so a control added later is covered or reported
+        # missing), five dice taps with five usable fields, attract/repel inverting in one
+        # tap PRESSED WITH A SECOND FINGER ALREADY ON THE GLASS, settings surviving a
+        # restart and api.load() returning null, and six ways of being mid-something with
+        # the exit still one tap away.
+        #
+        # It also asserts the premise gate 8 rests on and cannot itself run: that there is
+        # no painted word anywhere on the panel. Every text node must be a glyph the
+        # manifest supplied. The gate itself — a stranger operating the surface — stays
+        # open until a human runs it; simulating it is a flag-and-stop (§7).
+        run: node .github/ci/demo-controls.mjs .
+
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
   #

@@ -128,6 +128,16 @@ const DEFAULT_COUNT_WIDE = 1200;
 const DRAW_BUDGET = 3400;
 const drawCost = (count, size, tail) => count * (1 + size / 100 + tail / 100);
 
+/* `shape` (PUP-WO-0301 section 2.2b) scales the stroke, and therefore the cost. These
+ * three numbers are the ONLY home for the multipliers: draw() reads them and so does
+ * randomize's budget. Writing them twice is what this file already warns PUP-WO-0301
+ * not to do with the ranges, and the cost model is exactly the kind of thing where a
+ * second copy is invisible until a field stutters. `dot` draws no tail, so it is
+ * cheaper than its width alone suggests. */
+const SHAPE_WIDTH = { streak: 1, dot: 1.55, ribbon: 1.9 };
+const SHAPE_TAIL  = { streak: 1, dot: 0,    ribbon: 1.35 };
+const SHAPE_COST  = { streak: 1, dot: 1.25, ribbon: 1.6 };
+
 const clampNum = (n, lo, hi, fallback) => {
   const v = typeof n === 'number' && isFinite(n) ? n : fallback;
   return Math.min(hi, Math.max(lo, v));
@@ -145,14 +155,70 @@ const clampCount = (n, fallback) => {
 const clampForce = (n, fallback) => clampNum(n, FORCE_MIN, FORCE_MAX, fallback);
 const clampRange = (n, fallback) => Math.round(clampNum(n, RANGE_MIN, RANGE_MAX, fallback));
 const clampPolarity = (n) => (n === POLARITY_REPEL ? POLARITY_REPEL : POLARITY_ATTRACT);
-const clampPalette = (v) => (typeof v === 'string' && PALETTE_MAP[v] ? v : 'ice');
-const clampBackground = (v) => (typeof v === 'string' && BACKGROUND_MAP[v] ? v : 'void');
+/* THESE TWO TAKE THE FALLBACK FROM THE CALLER TOO, and until PUP-WO-0301 they did
+ * not. `set('palette', anythingElse)` snapped the field to `ice` — a RESET on a bad
+ * write, which is the exact behaviour the numeric clamps above were fixed to stop
+ * doing and which docs/feedback/PUP-WO-0300.md section 9 states as a rule this seam
+ * obeys: "a bad value is a no-op, not a reset". Two of nine setters did not obey it.
+ * A swatch strip cannot send a bad id, so nothing observable changed for the control
+ * this work order builds — the point is that the rule is now true of every setter
+ * rather than of seven of them, and a later control that passes a stale id through
+ * gets a no-op instead of a silent jump to ice. */
+const clampPalette = (v, fallback) => (typeof v === 'string' && PALETTE_MAP[v] ? v
+  : (typeof fallback === 'string' && PALETTE_MAP[fallback] ? fallback : 'ice'));
+const clampBackground = (v, fallback) => (typeof v === 'string' && BACKGROUND_MAP[v] ? v
+  : (typeof fallback === 'string' && BACKGROUND_MAP[fallback] ? fallback : 'void'));
+
+/* ---- THE EFFECT SWITCHES — PUP-WO-0301 section 2.2b ------------------------
+ * "Every effect you can reasonably expose as a toggle or a slider, expose. The ripple
+ * is the first example, not the exception." These five are the effects that were
+ * hard-coded constants in PUP-WO-0300 and are now settings, which means they are
+ * clamped, persisted, randomised and exposed on exactly the same footing as `count`.
+ *
+ * EVERY DEFAULT IS TODAY'S BEHAVIOUR. `ripple: 1, glow: 1, spin: 0, edge: 'wrap',
+ * shape: 'streak'` is the field PUP-WO-0300 shipped, so a child who never opens the
+ * panel sees no change at all and a saved blob from before this work order sanitises
+ * to the look it was saved from. The one exception is deliberate and is the work
+ * order's own finding: the ripple itself is redrawn (section 2.2a). */
+const SHAPES = ['streak', 'dot', 'ribbon'];
+/* `edge` — wrap versus walls under ATTRACT — WAS BUILT, MEASURED AND REMOVED, and the
+ * removal is the finding rather than the code. It read well on paper: the branch already
+ * existed for repel, so exposing it added no mechanism, and "the field piles into the
+ * corners instead of wrapping" is a difference a child could notice.
+ *
+ * Check 19 measured it at 0.60 against a floor of 1.0 that every other control clears by
+ * between 1.6x and 100x. It is not a threshold problem. Under attract the field is
+ * GATHERED AT THE FINGER, so almost nothing is at an edge for the boundary rule to act
+ * on; the difference is real but it takes tens of seconds to accumulate, and roadmap P3
+ * gate 1 says "visibly within one second of being dragged".
+ *
+ * §2.2b says do not trim for tidiness and §7 says a control that cannot be made operable
+ * by a non-reader does not ship, "better absent than present-and-uninterpretable". A
+ * control that does nothing a child can see in a second is uninterpretable in the way
+ * that matters — he presses it, nothing happens, and he learns the panel lies. So it
+ * goes, and it goes on a number rather than on taste. Walls remain bound to repel, where
+ * PUP-WO-0300 proved they are load-bearing. */
+/* A flag is 0 or 1 and NOT a boolean, because it goes through `api.save` into JSON,
+ * comes back through `sanitise`, and is compared with `===` in `set`. One type in,
+ * one type out, one comparison. `true`/`false` are accepted on the way in because a
+ * control surface written against this seam will reasonably send them. */
+const clampFlag = (n, fallback) => (n === 1 || n === true ? 1
+  : n === 0 || n === false ? 0
+  : (fallback === 1 || fallback === true ? 1 : 0));
+const clampOneOf = (list, v, fallback) => (list.indexOf(v) !== -1 ? v
+  : (list.indexOf(fallback) !== -1 ? fallback : list[0]));
 
 function defaultsFor(width) {
   return {
     count: width > 0 && width < 640 ? DEFAULT_COUNT_NARROW : DEFAULT_COUNT_WIDE,
     force: 0.68, burst: 50, tail: 32, size: 40, linger: 60,
     palette: 'ice', background: 'void', polarity: POLARITY_ATTRACT,
+    /* `glow` DEFAULTS OFF, and that is the faithful default rather than the tidy one.
+     * Until now the glow drew only for a FINE pointer, so on the tablet this app runs on
+     * there has never been one. Defaulting it to 1 would have been "today's behaviour"
+     * on a desktop and a new thing appearing under Buddy's finger — the opposite of what
+     * every other default here does. It is a control, and he can turn it on. */
+    ripple: 1, glow: 0, spin: 0, shape: 'streak',
   };
 }
 
@@ -168,9 +234,13 @@ function sanitise(raw, width) {
     tail: clampRange(o.tail, d.tail),
     size: clampRange(o.size, d.size),
     linger: clampRange(o.linger, d.linger),
-    palette: clampPalette(o.palette),
-    background: clampBackground(o.background),
+    palette: clampPalette(o.palette, d.palette),
+    background: clampBackground(o.background, d.background),
     polarity: clampPolarity(o.polarity),
+    ripple: clampFlag(o.ripple, d.ripple),
+    glow: clampFlag(o.glow, d.glow),
+    spin: clampFlag(o.spin, d.spin),
+    shape: clampOneOf(SHAPES, o.shape, d.shape),
   };
 }
 
@@ -227,6 +297,19 @@ const BACKGROUND_IDS = BACKGROUNDS.map((b) => b.id);
 function randomSettings(current) {
   const size = clampRange(randIn(RANDOM_BOUNDS.size), 40);
   const tail = clampRange(randIn(RANDOM_BOUNDS.tail), 32);
+  /* THE EFFECT SWITCHES ARE DRAWN TOO — but not all five, and the two that are held
+   * fixed are held fixed for the same reason `linger` has a floor here that the slider
+   * does not (see RANDOM_BOUNDS): randomize promises a surprise that SHOWS something.
+   *
+   *   `shape`, `spin`, `edge`  are drawn. Each changes the field on sight.
+   *   `ripple` and `glow`      are forced ON. They are the toy's two answers to a
+   *                            finger. A dice roll that silently removed the feedback
+   *                            for touching the screen would be a press that made the
+   *                            toy less responsive, with nothing on screen saying why —
+   *                            and the child cannot read the panel to find out which
+   *                            switch moved. The switches stay reachable in the panel;
+   *                            the dice will not turn them off behind him. */
+  const shape = SHAPES[(Math.random() * SHAPES.length) | 0];
   /* count is drawn LAST because its ceiling depends on how expensive the stroke it
    * has to draw already is — see DRAW_BUDGET. The floor is the bounds' own floor: a
    * budget that could starve the field down to nothing would be trading one unusable
@@ -235,7 +318,12 @@ function randomSettings(current) {
    * version wrote the expression twice and left `drawCost` unreferenced — two
    * specifications of one cost model, which is the exact thing this file warns
    * PUP-WO-0301 not to do with the ranges. */
-  const countHi = Math.max(RANDOM_BOUNDS.count[0], Math.min(RANDOM_BOUNDS.count[1], DRAW_BUDGET / (drawCost(1, size, tail))));
+  /* `shape` MULTIPLIES THE STROKE, so it multiplies the cost, and the budget has to
+   * see it or the ceiling it computes is a ceiling on a cost model that no longer
+   * describes the draw. `ribbon` is ~1.9x the line width of `streak` and `dot` is
+   * ~1.55x with no tail at all; these are the measured width multipliers from draw(),
+   * referenced rather than restated — SHAPE_COST is the single home for them. */
+  const countHi = Math.max(RANDOM_BOUNDS.count[0], Math.min(RANDOM_BOUNDS.count[1], DRAW_BUDGET / (drawCost(1, size, tail) * SHAPE_COST[shape])));
   /* FLOORED TO THE STEP, not rounded. `clampCount` rounds to the nearest 50, so a
    * ceiling of 1240.9 became 1250 and a cost of 3425 against a stated budget of 3400 —
    * a bound the code was described as respecting and did not. */
@@ -250,6 +338,15 @@ function randomSettings(current) {
     palette: pickOther(PALETTE_IDS, current.palette),
     background: pickOther(BACKGROUND_IDS, current.background),
     polarity: Math.random() < 0.5 ? POLARITY_ATTRACT : POLARITY_REPEL,
+    ripple: 1,
+    /* NOT DRAWN, AND NOT FORCED EITHER — carried through. The glow is the one effect
+     * that sits ON TOP of the finger, and the finger is where attract and repel differ:
+     * roadmap P3 gate 3 is "attract/repel visibly inverts in one tap", and a bright halo
+     * over the hole repel digs is a decoration that hides a control. A dice press must
+     * not switch that on behind the child; if he chooses it, that is his trade to make. */
+    glow: current.glow,
+    spin: Math.random() < 0.4 ? 1 : 0,
+    shape: shape,
   };
 }
 
@@ -306,8 +403,29 @@ function toneForHeight(fraction) {
 const TAU = Math.PI * 2;
 const HUE_BUCKETS = 16;
 const MAX_DPR = 2;
-const RING_LIFE = 0.55;
-const RING_MAX = 8;
+/* THE TAP RIPPLE — PUP-WO-0301 section 2.2a, and this is a LIVE FINDING from Scotty
+ * on the real device: it "reads as a HARSH FLASH rather than a ripple".
+ *
+ * What made it a flash, measured against the numbers it shipped with: a 2-to-8px hard
+ * stroke at alpha 0.55 under `lighter` compositing, appearing at full brightness on
+ * the frame of the tap and crossing 210px in 0.55s. Full brightness with no attack is
+ * a flash by definition; a hard stroke has no edge to soften; and 380px/s reads as a
+ * snap rather than a spread.
+ *
+ * All three are addressed, and the work order asked for exactly these three:
+ *   SOFTER EDGE    a radial-gradient annulus that fades to nothing on both sides,
+ *                  instead of a stroke with two hard boundaries.
+ *   LONGER FALLOFF life nearly doubles and the radius eases OUT, so it decelerates
+ *                  as it spreads rather than travelling at a constant rate.
+ *   LOWER PEAK     0.55 -> 0.26, and it is reached over the first ~10% of the life
+ *                  rather than on frame one.
+ * RING_MAX drops from 8 to 5 because each ring is now a gradient fill rather than a
+ * stroke, and the lives are twice as long, so twice as many would overlap. */
+const RING_LIFE = 1.05;
+const RING_MAX = 5;
+const RING_REACH = 180;
+const RING_PEAK = 0.26;
+const RING_BAND_MIN = 10, RING_BAND_GROW = 34;
 
 /* THE FLOOR UNDER A PARTICLE'S STROKE, AND IT IS THE FIX FOR AN ALL-BLACK SCREEN.
  *
@@ -440,7 +558,9 @@ class GyreSim {
     const settings = this.getSettings();
     const pal = PALETTE_MAP[settings.palette];
     const burstMul = settings.burst / 50;
-    if (this.rings.length < RING_MAX) {
+    /* Gated at the SOURCE as well as at the draw, so an off ripple is not an array
+     * quietly filling and expiring behind a switch that says nothing is happening. */
+    if (settings.ripple && this.rings.length < RING_MAX) {
       this.rings.push({ x: x, y: y, t: this.time, hue: this.hueBaseNow(pal) + (Math.random() - 0.5) * pal.hueSpan });
     }
     if (burstMul <= 0) return;
@@ -493,7 +613,18 @@ class GyreSim {
   /* The cycling palettes' whole implementation. Everything downstream reads hueBase
    * through here, so `cycle` needed no other change anywhere. */
   hueBaseNow(pal) {
-    return pal.cycle ? (pal.hueBase + this.time * pal.cycle) % 360 : pal.hueBase;
+    /* `spin` (PUP-WO-0301 section 2.2b) is `cycle` promoted from a per-palette constant
+     * to a control. Two of the eleven palettes cycle; the other nine could not, and a
+     * child who liked the drifting colour had to find `rainbow` to get it. With spin on,
+     * every palette drifts at a floor of 14 deg/s and the two that already cycle faster
+     * keep their own rate — `Math.max`, not an override, so switching spin on can only
+     * ever add motion. */
+    /* 26 DEG/S, RAISED FROM 14 ON A MEASUREMENT. At 14 the drift was inside the noise
+     * of a field that is already changing every frame — check 19 read it at 0.06 against
+     * a floor of 1. A control the instrument cannot see is a control a child cannot see.
+     * 26 deg/s is a full turn of the spectrum in fourteen seconds. */
+    const cycle = this.getSettings().spin ? Math.max(pal.cycle, 26) : pal.cycle;
+    return cycle ? (pal.hueBase + this.time * cycle) % 360 : pal.hueBase;
   }
 
   paintBackground(alpha) {
@@ -545,6 +676,7 @@ class GyreSim {
      * being used for the reason it was granted — the alternative was shipping a control
      * that satisfies its description and fails its gate. */
     const repelling = settings.polarity < 0;
+    const walls = repelling;
     const attract = 210 * force * heldMul * settings.polarity * (repelling ? REPEL_GAIN : 1);
     const swirl = 165 * force * (this.held ? 1.55 : 1) * (repelling ? REPEL_SWIRL : 1);
     const stir = this.held ? 0.55 : 0.32;
@@ -603,8 +735,14 @@ class GyreSim {
        * So repel does not wrap. It has WALLS: the field is pushed away from the finger
        * and piles up against the edges, where a child can see it, and a small bounce
        * keeps it alive rather than welded to the boundary. Attract keeps the torus
-       * exactly as the source had it — that path is unchanged and still bit-exact. */
-      if (repelling) {
+       * exactly as the source had it — that path is unchanged and still bit-exact.
+       *
+       *
+       * PUP-WO-0301 EXPOSED THIS AS A CONTROL AND THEN TOOK IT BACK OUT on a measurement;
+       * see the note at SHAPES. `walls` is a name rather than an expression because the
+       * condition was briefly two things, and one name for one rule is the shape this
+       * file wants even when the rule is one term long. */
+      if (walls) {
         if (x[i] < 0) { x[i] = 0; vx[i] = -vx[i] * 0.3; }
         else if (x[i] > this.w) { x[i] = this.w; vx[i] = -vx[i] * 0.3; }
         if (y[i] < 0) { y[i] = 0; vy[i] = -vy[i] * 0.3; }
@@ -639,24 +777,73 @@ class GyreSim {
     const sat = bg.light ? Math.min(42, pal.sat * 0.55) : pal.sat;
     const lit = bg.light ? Math.min(34, pal.lit * 0.5) : pal.lit;
 
-    if (!this.coarse) {
+    /* THE GLOW IS A CONTROL NOW, AND THE CONDITION HAD TO CHANGE FOR IT TO BE AN
+     * HONEST ONE. `!this.coarse` alone means the glow never draws on a touch device —
+     * which is every device this app runs on. A switch labelled "glow" that does
+     * nothing at all on the tablet is a control that lies, and "make a control lie" is
+     * one of section 5's own probes. So on a coarse pointer the glow draws WHILE HELD:
+     * hold a finger down and a halo appears under it, let go and it fades with the
+     * field. On a fine pointer nothing changes — it still tracks the cursor. */
+    if (settings.glow && (!this.coarse || this.held)) {
       const glowR = this.held ? 210 : 150;
       const glow = ctx.createRadialGradient(this.px, this.py, 0, this.px, this.py, glowR);
       const a0 = this.held ? 0.16 : bg.light ? 0.08 : 0.09;
-      glow.addColorStop(0, 'hsla(' + hueBase + ',' + sat + '%,' + (bg.light ? 30 : 78) + '%,' + a0 + ')');
-      glow.addColorStop(1, 'hsla(' + hueBase + ',' + sat + '%,50%,0)');
+      const lit0 = 'hsla(' + hueBase + ',' + sat + '%,' + (bg.light ? 30 : 78) + '%,';
+      const clear = 'hsla(' + hueBase + ',' + sat + '%,50%,0)';
+      if (this.coarse) {
+        /* A RING ON A TOUCH DEVICE, A DISC ON A MOUSE, and the difference is not
+         * cosmetic. On a coarse pointer the finger is ON the spot the glow would fill,
+         * and that spot is the only place attract and repel look different — repel digs
+         * a HOLE under the finger and a filled halo paints straight over it. Roadmap P3
+         * gate 3 wants that inversion visible in one tap, so the glow is drawn as a halo
+         * AROUND the contact point with a transparent core, which reads as light coming
+         * off the finger and leaves the hole a hole. On a fine pointer the cursor is a
+         * point rather than a pad and the original disc is kept unchanged. */
+        /* THE CORE STAYS CLEAR OUT TO 0.6 OF THE RADIUS, and that number is not
+         * aesthetic: check 19 measures the polarity inversion in a 100px disc under the
+         * finger, and repel's hole has to survive with the glow ON or the glow is a
+         * decoration that hides a control. At glowR 210 the clear core is 126px, so the
+         * halo begins outside the disc that carries gate 3's evidence.
+         *
+         * The peak is 2.1x the fine-pointer alpha because the first version, a thin band
+         * at the mouse alpha, measured 0.11 against a floor of 1 — visible to nobody. */
+        glow.addColorStop(0, clear);
+        glow.addColorStop(0.6, clear);
+        glow.addColorStop(0.85, lit0 + (a0 * 2.1) + ')');
+        glow.addColorStop(1, clear);
+      } else {
+        glow.addColorStop(0, lit0 + a0 + ')');
+        glow.addColorStop(1, clear);
+      }
       ctx.fillStyle = glow;
       ctx.fillRect(this.px - glowR, this.py - glowR, glowR * 2, glowR * 2);
     }
 
+    /* `shape` — PUP-WO-0301 section 2.2b. Three looks out of the stroke the field is
+     * already drawing, with no second draw path and no new per-particle state:
+     *   streak  what PUP-WO-0300 shipped, unchanged in every respect.
+     *   dot     no tail at all, a wider round cap — the field becomes a swarm of
+     *           beads instead of a set of trails. MIN_SEG below is what makes this
+     *           work: a zero-length segment is floored to a dot rather than dropped.
+     *   ribbon  a butt cap and a near-double width, which reads as flat woven bands.
+     * The multipliers live in SHAPE_WIDTH/SHAPE_TAIL beside DRAW_BUDGET, because
+     * randomize's cost ceiling has to read the same numbers this does. */
+    const shape = settings.shape;
     ctx.globalCompositeOperation = bg.light ? 'multiply' : 'lighter';
-    ctx.lineCap = 'round';
+    /* `square`, NOT `butt`, AND THAT IS A DEFECT THE MEASUREMENT FOUND. A butt cap on a
+     * segment shorter than a pixel paints almost nothing, and MIN_SEG floors every slow
+     * particle's stroke to 0.4px — so `ribbon` DISAPPEARED wherever the field was calm.
+     * Measured on a bare canvas: 1600 particles covered 1.76% of the screen as dots and
+     * 1.00% as ribbons, which is the wrong way round for a shape that is supposed to be
+     * the fattest of the three. A square cap paints the full width either way and keeps
+     * the flat, woven look that distinguishes it from `streak`'s round ends. */
+    ctx.lineCap = shape === 'ribbon' ? 'square' : 'round';
     ctx.lineJoin = 'round';
 
     const x = this.x, y = this.y, vx = this.vx, vy = this.vy, hue = this.hue;
     const tailScale = this.reduced ? 0.45 : 1;
-    const tail = (0.004 + (settings.tail / 100) * 0.09) * tailScale;
-    const lineWidth = (bg.light ? 0.55 : 0.7) + (settings.size / 100) * 2.8;
+    const tail = (0.004 + (settings.tail / 100) * 0.09) * tailScale * (SHAPE_TAIL[shape] !== undefined ? SHAPE_TAIL[shape] : 1);
+    const lineWidth = ((bg.light ? 0.55 : 0.7) + (settings.size / 100) * 2.8) * (SHAPE_WIDTH[shape] !== undefined ? SHAPE_WIDTH[shape] : 1);
     const span = pal.hueSpan || 1;
     const hueMin = hueBase - pal.hueSpan * 0.5;
 
@@ -681,21 +868,40 @@ class GyreSim {
 
     /* The tap rings. Drawn last so nothing hides them, and expired in the same pass
      * that draws them — an array that only ever grows is a leak with a slow fuse. */
-    if (this.rings.length) {
+    if (settings.ripple && this.rings.length) {
       const alive = [];
       for (let r = 0; r < this.rings.length; r++) {
         const ring = this.rings[r];
         const age = (this.time - ring.t) / RING_LIFE;
         if (age >= 1) continue;
         alive.push(ring);
-        const radius = 16 + age * 210;
-        ctx.beginPath();
-        ctx.arc(ring.x, ring.y, radius, 0, TAU);
-        ctx.lineWidth = 2 + (1 - age) * 6;
-        ctx.strokeStyle = 'hsla(' + ring.hue + ',' + Math.max(sat, 60) + '%,' + (bg.light ? 40 : 66) + '%,' + ((1 - age) * 0.55) + ')';
-        ctx.stroke();
+        /* Decelerating spread. `1 - (1-age)^2.2` covers most of the distance early and
+         * then slows, which is what a ripple on water does and what a flash does not. */
+        const radius = 14 + (1 - Math.pow(1 - age, 2.2)) * RING_REACH;
+        /* The band WIDENS as it travels, so the edge gets softer the further out it
+         * gets rather than staying a fixed-width line that simply moves. */
+        const band = RING_BAND_MIN + age * RING_BAND_GROW;
+        const alpha = RING_PEAK * Math.min(1, age / 0.10) * Math.pow(1 - age, 2);
+        if (alpha <= 0.004) continue;
+        const outer = radius + band;
+        const g = ctx.createRadialGradient(ring.x, ring.y, Math.max(0, radius - band), ring.x, ring.y, outer);
+        const col = 'hsla(' + ring.hue + ',' + Math.max(sat, 60) + '%,' + (bg.light ? 40 : 66) + '%,';
+        g.addColorStop(0, col + '0)');
+        g.addColorStop(0.5, col + alpha + ')');
+        g.addColorStop(1, col + '0)');
+        ctx.fillStyle = g;
+        /* CLIPPED TO THE CANVAS. A gradient fill is paid per pixel, unlike the stroke
+         * it replaces, and a ring near a corner would otherwise pay for three quadrants
+         * that are not on screen. Five of these a frame is the worst case. */
+        const x0 = Math.max(0, ring.x - outer), y0 = Math.max(0, ring.y - outer);
+        const x1 = Math.min(w, ring.x + outer), y1 = Math.min(h, ring.y + outer);
+        if (x1 > x0 && y1 > y0) ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
       }
       this.rings = alive;
+    } else if (this.rings.length) {
+      /* Switched off mid-flight: the rings already in the air go now, rather than
+       * expiring invisibly over the next second while the switch says off. */
+      this.rings.length = 0;
     }
 
     if (!this.coarse && this.pointerSeen) {
@@ -760,6 +966,8 @@ export default function mount(host, api) {
       tail: settings.tail, size: settings.size, linger: settings.linger,
       palette: settings.palette, background: settings.background,
       polarity: settings.polarity,
+      ripple: settings.ripple, glow: settings.glow, spin: settings.spin,
+      shape: settings.shape,
     }); } catch (e) {}
   };
   const scheduleSave = () => {
@@ -777,9 +985,13 @@ export default function mount(host, api) {
     tail: (v) => clampRange(v, settings.tail),
     size: (v) => clampRange(v, settings.size),
     linger: (v) => clampRange(v, settings.linger),
-    palette: (v) => clampPalette(v),
-    background: (v) => clampBackground(v),
+    palette: (v) => clampPalette(v, settings.palette),
+    background: (v) => clampBackground(v, settings.background),
     polarity: (v) => clampPolarity(v),
+    ripple: (v) => clampFlag(v, settings.ripple),
+    glow: (v) => clampFlag(v, settings.glow),
+    spin: (v) => clampFlag(v, settings.spin),
+    shape: (v) => clampOneOf(SHAPES, v, settings.shape),
   };
 
   function set(key, value) {
@@ -946,6 +1158,8 @@ export default function mount(host, api) {
     tail: settings.tail, size: settings.size, linger: settings.linger,
     palette: settings.palette, background: settings.background,
     polarity: settings.polarity,
+    ripple: settings.ripple, glow: settings.glow, spin: settings.spin,
+    shape: settings.shape,
   });
 
   host.gyre = Object.freeze({
@@ -973,6 +1187,66 @@ export default function mount(host, api) {
       watchers.push(fn);
       return () => { const i = watchers.indexOf(fn); if (i !== -1) watchers.splice(i, 1); };
     },
+    /* ==================== THE CONTROL MANIFEST — PUP-WO-0301 ==================
+     * WHAT THIS IS AND WHY IT IS DATA. The shell renders the control panel and the
+     * shell KNOWS NOTHING ABOUT GYRE — architecture section 4's contract, the same one
+     * the picker holds. It reads this array, which says what controls exist, in what
+     * order, of what kind, and with what icon, and builds them. Adding a control here
+     * puts it on screen with no edit to index.html, which is the test of the contract
+     * and is exactly how the picker proves its own.
+     *
+     * THE VOCABULARY IS THREE KINDS AND NOTHING ELSE, deliberately small:
+     *   slider   `key` names a setting; its bounds come from `.ranges[key]` so the
+     *            range is specified ONCE (section 2.1's first warning, applied to the
+     *            manifest rather than to a setter).
+     *   choice   `key` names a setting and `options` are its values. Each option
+     *            carries an `icon` (a glyph, drawn as text) or a `hex` (drawn as the
+     *            colour it selects — section 2.3, "colour is the label"). `from`
+     *            names a list already on this seam instead of copying it. `single`
+     *            asks for ONE cycling affordance rather than a row, which is what
+     *            section 2.2 requires of attract/repel specifically.
+     *   action   `method` names a method on this object. The shell calls it and knows
+     *            nothing else about it. `prominent` asks for it to be placed outside
+     *            the drawer, always reachable.
+     *
+     * NO PAINTED TEXT ANYWHERE. Every icon is a pictograph or a geometric glyph, never
+     * a word. That is invariant 1 taken literally, and it is what makes acceptance 8 —
+     * "with all text covered, a person who has not seen the app operates it" — a test
+     * of the design rather than of the screenshot. `label` is carried for the SCREEN
+     * READER only; nothing draws it.
+     *
+     * WHY EVERY EFFECT IS HERE AND NOTHING WAS TRIMMED. Section 2.2b: "a control that
+     * turns out to be uninteresting costs one row; an effect a child never discovers
+     * costs the whole point of the toy." */
+    controls: Object.freeze([
+      { kind: 'action', method: 'randomize', icon: '\uD83C\uDFB2', label: 'Surprise me', prominent: true },
+      { kind: 'choice', key: 'polarity', single: true, label: 'Pull or push',
+        options: [{ id: POLARITY_ATTRACT, icon: '\u25B6\u25C0' }, { id: POLARITY_REPEL, icon: '\u25C0\u25B6' }] },
+      { kind: 'choice', key: 'palette', from: 'palettes', label: 'Colours' },
+      { kind: 'choice', key: 'background', from: 'backgrounds', label: 'Background' },
+      { kind: 'slider', key: 'count',  icon: '\u2728',            label: 'How many' },
+      { kind: 'slider', key: 'force',  icon: '\uD83E\uDDF2',      label: 'How strong' },
+      { kind: 'slider', key: 'burst',  icon: '\uD83D\uDCA5',      label: 'Tap splash' },
+      { kind: 'slider', key: 'tail',   icon: '\u2604\uFE0F',      label: 'Tail length' },
+      { kind: 'slider', key: 'size',   icon: '\uD83D\uDD35',      label: 'How thick' },
+      { kind: 'slider', key: 'linger', icon: '\uD83C\uDF2B\uFE0F', label: 'How long trails stay' },
+      { kind: 'choice', key: 'shape', label: 'Particle shape',
+        options: [{ id: 'streak', icon: '\u2501' }, { id: 'dot', icon: '\u2B24' }, { id: 'ribbon', icon: '\u25AC' }] },
+      { kind: 'choice', key: 'ripple', label: 'Tap ripple',
+        options: [{ id: 1, icon: '\uD83C\uDF0A' }, { id: 0, icon: '\uD83C\uDF0A', off: true }] },
+      { kind: 'choice', key: 'glow', label: 'Finger glow',
+        options: [{ id: 1, icon: '\uD83D\uDCA1' }, { id: 0, icon: '\uD83D\uDCA1', off: true }] },
+      /* `temporal` tells a check — not the shell — that this control's property is CHANGE
+       * OVER TIME rather than a difference between two stills. Two snapshots of a
+       * drifting hue differ by an arbitrary amount depending on when they were taken,
+       * which is a coin flip dressed as a measurement. It is architecture §6.1 member 6
+       * again, one level up: the instrument would be measuring presence where the
+       * property is motion. The shell ignores this field. */
+      { kind: 'choice', key: 'spin', label: 'Drifting colour', temporal: true,
+        options: [{ id: 1, icon: '\uD83C\uDF08' }, { id: 0, icon: '\uD83C\uDF08', off: true }] },
+      { kind: 'action', method: 'clear', icon: '\uD83E\uDDF9', label: 'Wipe the trails' },
+      { kind: 'action', method: 'reset', icon: '\u21BA', label: 'Start over' },
+    ]),
     palettes: PALETTES.map((p) => ({ id: p.id, hex: p.hex })),
     backgrounds: BACKGROUNDS.map((b) => ({ id: b.id, hex: b.hex, light: b.light })),
     ranges: Object.freeze({

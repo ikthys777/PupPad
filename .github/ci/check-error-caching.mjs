@@ -50,8 +50,12 @@
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { FakeCacheStorage, loadWorker, swRequest } from './lib/sw-harness.mjs';
+import { requireBlob } from './lib/subject.mjs';
 
 const DIR = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
+/* The tree the CHECK came from, never the tree it was pointed at: a check run against
+ * dist/stable is still evidence about the commit that produced it. */
+const REPO_ROOT = resolve(join(import.meta.dirname, '..', '..'));
 const SW = join(DIR, 'sw.js');
 const ORIGIN = 'https://ikthys777.github.io';
 const SCOPE = `${ORIGIN}/PupPad/`;
@@ -135,11 +139,15 @@ async function run(kind, { seedGood }) {
            stored: hit ? { status: hit.status, body: await hit.clone().text() } : null };
 }
 
-/* Architecture §5: assert the COMMIT that ran, never the conclusion alone. */
-let SUBJECT = '(git unavailable)';
-try { SUBJECT = execFileSync('git', ['hash-object', SW], { encoding: 'utf8' }).trim(); } catch {}
+/* Architecture §5: assert the COMMIT that ran, never the conclusion alone — AND FAIL
+ * CLOSED, which this did not until PUP-WO-0301 §2.4. It initialised the subject to
+ * '(git unavailable)' and printed that on a green: a provenance line naming no tree,
+ * which is §6.1 member 1 in the one place a reader would look to rule member 1 out.
+ * The rule now lives in lib/subject.mjs and this is one of its four adopters. */
+const SUBJECT = requireBlob(REPO_ROOT, 'check-error-caching', SW);
 console.log(`check-error-caching: ${SW}`);
-console.log(`  SUBJECT sw.js blob : ${SUBJECT}\n`);
+console.log(`  subject commit     : ${SUBJECT.commit.slice(0, 12)}`);
+console.log(`  SUBJECT sw.js blob : ${SUBJECT.blob}\n`);
 
 /* ---- 1. the fixture must actually fire, or every verdict below is vacuous ---- */
 const base = await run(200, { seedGood: false });
