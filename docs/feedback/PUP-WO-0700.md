@@ -38,11 +38,18 @@ Measured on `main`: `cameraGallery` is a plain in-memory array, persisted nowher
 achieves.** Today an incoming snap is **gone in four seconds**: `showRemotePhoto` fades its
 own popup and there is no way at all to keep it. *"Until you close the camera"* against
 *"four seconds"* is an enormous difference to a child looking at a picture someone just
-sent, and it is exactly the retention `PUP-WO-0701` §1.0a already ruled for this app —
-in-memory, never `localStorage`. *(Precisely: the "cache-only… because kids" quote is
-`PUP-WO-0701` §1, not §1.0a, and §1.0a rules **session**-scoped retention — "everything is
-reaped on PWA close or reset". A store `closeCamera()` empties is **stricter than** what
-§1.0a ruled, not "exactly" it. The earlier draft cited the wrong section.)*
+sent, and it is **stricter than** the retention `PUP-WO-0701` §1.0a ruled for this app:
+§1.0a rules **session**-scoped — *"everything is reaped on PWA close or reset"* — and a
+store `closeCamera()` empties dies sooner than that. Never `localStorage`, either way.
+
+> *(Two drafts of this paragraph were wrong and the correction is worth more than the
+> sentence. The first said this was **"exactly"** what §1.0a ruled and cited §1.0a for the
+> *"cache-only… because kids"* quote, which is §1. The second retracted that **only in a
+> parenthetical while the sentence above it still asserted it** — a reader who stops at
+> the sentence gets the false claim, which CC-A caught. And the same uncorrected wording
+> was still live in `index.html` because I struck it in the document I was editing and
+> did not grep the claim's TEXT across the tree. **When a disposition strikes a claim,
+> grep the claim, not the file.**)*
 
 **AND THE SHIPPED BEHAVIOUR IS NEITHER, which the pass found and I had not.**
 `closeCamera()` never unsubscribes the broadcast channel, so once the camera has been opened
