@@ -443,6 +443,58 @@ ratified mechanism as existing, resolve it before dispatch.* A parked item recor
 only in a message is the same defect one level up: **everyone believes it is queued
 and nothing holds the queue.**
 
+## P7 — Camera and comms
+
+**Goal.** The camera and comms surfaces gain the things Buddy actually reaches for,
+and the one shipped defect in them is fixed.
+
+**Depends on:** P2. **Not P6** — these are new capability on a surface no phase owns,
+plus one live defect. *(New scope from Scotty 2026-09-02.)*
+
+**Why a new phase rather than P2's band.** P2's exit gate is about the games shell,
+and none of this affects it. **Folding these into P2 would mean P2 cannot close until
+they are done, which is wrong for the same reason architecture §6.4 gave when P1
+closed on its own gate rather than on `PUP-WO-0104`.** A phase closes on the gate it
+was scoped against.
+
+**Work orders:**
+
+- **`PUP-WO-0700` — The sticker anchor, and two share buttons.** Three small things in
+  one file. **(a)** Sticker placement is proportional and sticker SIZE is not:
+  `index.html`'s preview writes `font-size:36px` while the burn computes
+  `Math.round(w * 0.06)`. They agree only near `w ≈ 600` and diverge everywhere else.
+  **The fix is one expression, not two that must agree** — a single scale constant
+  applied to whichever width is in play. **(b)** A **CAPTURE** button so a device
+  receiving a shared image can pull it into its own gallery. **(c)** A **RESHARE**
+  button on an expanded cached image. Both one-tap and non-reader operable.
+- **`PUP-WO-0701` — Voice messages with voice changing.** Record a short clip, apply a
+  filter, hear it back, send it to connected devices. **Composition, not new
+  infrastructure:** `getUserMedia` is already live at the camera, `AudioContext` is
+  already live for the sound bank, Supabase is already wired. Filters are pure Web
+  Audio and need no library — `playbackRate`, `detune`/ring-mod, `BiquadFilter`,
+  a short delay, a `WaveShaper`. **Presets with big icons AND sliders under them**,
+  because the adjusting is the play.
+
+**Exit gate.**
+1. **[`PUP-WO-0700`]** A sticker placed in preview lands in the same place, **at the
+   same proportion of the image**, in the burned result — verified at **three
+   different rendered widths**, not one. *(One expression, so the test is that the
+   two paths cannot disagree.)*
+2. **[`PUP-WO-0700`]** A shared image can be captured to the receiving device's
+   gallery, and an expanded cached image can be reshared — both in one tap.
+3. **[`PUP-WO-0701`]** A clip records, at least four filters are audibly distinct on
+   playback, and a sent clip arrives on a second device.
+4. **[`PUP-WO-0701`]** Every preset and every slider is operable with all text
+   covered. *(Falsifies northstar invariant 1.)*
+5. **All three surfaces:** one tap back from every state, including mid-record and
+   mid-playback. *(Falsifies northstar invariant 5.)*
+6. **With Supabase unconfigured, every one of these degrades exactly as the existing
+   panels do** — `isSupabaseConfigured()` gates them, the console stays usable, and
+   nothing traps. *(Falsifies northstar invariant 3's boundary: comms may use the
+   network; the console may not depend on it.)*
+
+---
+
 ## 5. Standing cadence
 
 - **Every phase boundary: audit the numbering and the documents.** Has anything
@@ -507,6 +559,7 @@ planned and what was built; history is left as written and never renumbered.
 | 2026-09-01 | P1 gate item 3's prove-it-red requirement is extended by `PUP-WO-0100` §3.3 from two checks to all four. | `PUP-WO-0000`'s lesson, generalised: its module contract passed a demonstration against both games in hand while still holding two defects, because neither game exercised them. A check demonstrated red on the two cases its gate names is the same shape of insufficient proof. |
 | 2026-09-02 | P2's exit gate items each name **which work order satisfies them**; gate 2 becomes a CI mutation and gate 3 may not be simulated. **§4a added — the parked-work table.** | The gates were phase gates read as per-work-order acceptance, so `PUP-WO-0200` could not satisfy three of them and correctly did not claim to — flagged by CC-B, which had silently recast one and reported doing so. **§4a exists because every parked item was living in chat messages and nowhere else**, which is architecture §6.6's defect one level up: everyone believes the queue is recorded and nothing holds it. |
 | 2026-09-02 | §4a's CSP/iframe row records `supabaseFetch`, and check 3's COMMIT-provenance gap is required of the next work order touching `.github/ci/`. | Both from `PUP-WO-0300`'s pass. Every sibling check initialises `COMMIT` to `'unknown'` and passes — **a green with no identifiable subject is §6.1 member 1 wearing a provenance line**, and it falsifies §5's own rule that a demonstration asserts its commit. The builder made its own check fail closed and correctly did **not** touch the others: a cross-cutting edit to checks it had no other reason to open, on a work order about a game port, is scope creep. |
+| 2026-09-02 | **P7 added — camera and comms**, with `PUP-WO-0700` and `PUP-WO-0701`. | New scope from Scotty. Given a **new phase rather than P2's band** because P2's exit gate is about the games shell and none of this affects it — folding them in would prevent P2 closing on its own gate, which is the mistake architecture §6.4 named when P1 closed without `PUP-WO-0104`. |
 
 ## 8. Provenance
 
