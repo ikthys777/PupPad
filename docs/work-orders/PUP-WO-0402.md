@@ -63,6 +63,73 @@ which is the shape that missed this.
 
 ---
 
+## 1a. THE TRAY PIECE IS SMALLER THAN THE CELL IT AIMS AT
+
+**Scotty, with a screenshot:** *"the tray size for pieces needs a little adjustment."*
+**Measured off that screenshot** (S25 Ultra, 2340x1080 physical, DPR 2.625, so an
+**891 x 411 CSS** viewport):
+
+| | measured |
+|---|---|
+| tray slot | **357 x 123 CSS px** |
+| piece cell drawn inside it | **~36 CSS px** |
+| board cell it will land on | **64 CSS px** |
+
+**THE THING HE GRABS IS SMALLER THAN THE THING HE AIMS AT**, inside a slot with room for
+three times the drawing. The biggest, emptiest panel on the screen holds the smallest
+graphic.
+
+**This was predicted and it did not reach the work order.** The layout pass flagged it
+verbatim: *"`PieceTray.tsx:53-54` is `Math.floor(88 / span)` — a hardcoded 88px that
+assumes the source's 128px slot. In a wider slot the piece paints at a fraction of it and
+the biggest target in the app looks empty. It must become a function of the measured
+slot, read from a `ResizeObserver`, never per-render."* **It went into the reconnaissance
+and never into `PUP-WO-0400`** — the same failure as the retention ruling: a finding that
+reached a document and not the directive.
+
+**RULED: the tray cell is derived from the MEASURED SLOT, never from a constant.**
+`cell = floor(min((slotW - 2*inset) / piece.w, (slotH - 2*inset) / piece.h))`, measured
+by the same `ResizeObserver` the board already uses, **capped so a 1x1 does not become
+absurd** — and **never smaller than the board cell**, because a target you drag *from*
+must not be smaller than the target you drag *to*.
+
+**ACCEPTANCE, AMENDED — MY SECOND CLAUSE WAS GEOMETRICALLY IMPOSSIBLE AND IS STRUCK.**
+*(CC-B measured the whole pool before building and showed it cannot be met; I verified
+the impossibility independently before accepting.)*
+
+> ~~no piece cell is smaller than the board cell~~ — **a 4-long piece at a 64px board
+> cell needs 256px on its long axis, and a slot that holds both a 4-wide and a 4-tall
+> piece is square at 256px. Three of those is 768px against a 357 x 396 tray column.**
+> No arrangement works: stacked gives 357x132 (fails 4-tall), side-by-side gives 119x396
+> (fails 4-wide), a 2x2 grid with one cell empty gives 178x198 and **fails both** — it
+> only halves the shortfall. **I wrote the clause as a principle and never checked
+> whether the geometry admits it.** That is the same error as the terminal-state ruling,
+> two work orders running.
+
+**What holds instead, all four asserted:**
+1. **Every shape fills at least half the slot's shorter axis** — true for all twelve,
+   including the two the formula cannot improve.
+2. **The cell is maximal for the slot on both axes** — per-axis, not `max(w,h,3)`. The
+   source divides by the LARGER axis and floors the divisor at 3, which is why a **1x1
+   dot is drawn at a third of the room it has**: 35px today, 107 available.
+3. **No shape is ever smaller than it is today.**
+4. **ONE SHARED CAP, at 1.35x the board cell (~86px).** *(CC-B's, and it is the right
+   instinct.)* Without it a dot reaches 107 while a `quad-v` sits at 26 and the tray
+   stops reading as one set of objects.
+
+**THE TRADEOFF, NAMED RATHER THAN HIDDEN: the drawn size no longer encodes the piece's
+cell count.** A dot at 86px is larger than the 64px hole it fills. That is accepted
+because a three-year-old matches **shape**, not scale, and a bigger grab target is worth
+more than a size cue he is probably not reading.
+
+**AND ONE ASSERTION THAT MAKES THE TRADEOFF SAFE, which §1 is the reason for: the drag
+ghost must render at the BOARD cell size, never the tray cell size.** It already does —
+`moveDragEl` uses the board's `cellPx` — so this is a check to hold it, not a change. The
+piece therefore *resizes on pickup*, which is the standard idiom and is honest: what
+follows the finger is the size it will be when it lands.
+
+---
+
 ## 2. SOUND — the first thing a human noticed was its absence
 
 **Scotty:** *"there is no pop or animation sounds when the line fill and 'pop'."*
@@ -125,7 +192,13 @@ cell from an empty one.**
 - **The 8×8 `blocks-big` entry and the four assists** — `PUP-WO-0401`, and that WO is
   **blocked on `PUP-WO-0111`** because a panel that mounts before the `controlsOpen` flip
   covers 321px of a 412px screen.
-- **The score's presentation.** Still Scotty's call, still open.
+- **The score.** **RULED 2026-09-02: NO SCORE IS SHOWN ANYWHERE.** *(Scotty, asked
+  directly: "no, there is no score shown at all. anywhere.")* The engine accrues one and
+  nothing renders it — which is what the build already does, so this ruling **closes an
+  open question rather than changing code.** It is also the northstar §5 non-goal
+  honoured rather than argued with: *"Scores, leaderboards, streaks, or progression.
+  Every one of them imports a fail state."* **Adding a visible score later is a change to
+  a non-goal and goes to the northstar first, never into a feature work order.**
 - **`sw.js`, `manifest.json`, the icons, `games/gyre.js`, `games/hello.js`,
   `index.html`'s registry** — diff to empty. **No new asset file of any kind:** if flair
   needs an image, that is a flag-and-stop, not a quiet `urlsToCache` line.
