@@ -287,6 +287,24 @@ jobs:
         # under test would never reach the page.
         run: node .github/ci/demo-games-back.mjs .
 
+      - name: "Check 14 — the games surface opens cold with no network"
+        # PUP-WO-0200 acceptance §3.5 and roadmap P2 gate 4, which falsify northstar
+        # invariant 3: every core surface works with no network.
+        #
+        # THIS IS THE CHECK THAT JUSTIFIES THE ONE LINE ADDED TO sw.js. CC-A authorised
+        # exactly one urlsToCache entry for the placeholder and REFUSED the
+        # CACHE_VERSION bump. Without that entry the module is absent from a cold
+        # install and this goes red — so the line is not taken on trust, it is the
+        # thing under test, and a future edit that drops it fails here rather than on
+        # the tablet.
+        #
+        # Offline is real: the listener is closed and its keep-alive sockets destroyed,
+        # and a direct fetch is confirmed to fail BEFORE the cold page is opened.
+        # `context.setOffline(true)` is deliberately not used — PUP-WO-0105 measured
+        # that it does not stop a service worker's fetch to loopback, so a check built
+        # on it would pass while the worker quietly served from the network.
+        run: node .github/ci/demo-games-offline.mjs .
+
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
   #
