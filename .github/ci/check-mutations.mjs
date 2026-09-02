@@ -273,15 +273,20 @@ run('A13 the PROMOTED copy reads origin-wide (invariant 7 in its own direction, 
  * a third way for a worker to touch what it does not own — was unobservable. */
 run('A14 the precache reaches into the other deploy path (pass F7)', {
   expect: 'RED', expectFail: "precached OUTSIDE",
-  /* Re-anchored by PUP-WO-0200: the last urlsToCache entry moved when the placeholder
-   * module's line was added. The MUTATION'S MEANING IS UNCHANGED — inject a precache
-   * entry pointing into the other deploy path — only its insertion point moved, which
-   * is exactly what the anchor diagnostic asks for. It fired correctly and named
-   * sw.js, so this is maintenance, not flakiness. */
-  sw: [[`  './games/hello.js'
-];`, `  './games/hello.js',
-  './stable/index.html'
-];`]],
+  /* ANCHORED TO THE HEAD OF THE LIST, NOT ITS TAIL, AND THAT IS THE WHOLE POINT.
+   * PUP-WO-0200 first re-anchored this to the LAST urlsToCache entry, which made the
+   * anchor move every time a game was added — so adding a game required editing THIS
+   * FILE, a FOURTH thing, and roadmap P2 gate 2 says adding a game touches exactly
+   * three. The adversarial pass caught it by adding a second game and watching check 7
+   * go red while `git diff --stat` still reported three files, because the fourth edit
+   * would land in a file already counted.
+   * `var urlsToCache = [` and the `'./',` that follows it are the one part of the list
+   * that does not move when games are appended. The mutation's MEANING is unchanged:
+   * inject a precache entry pointing into the other deploy path. */
+  sw: [[`var urlsToCache = [
+  './',`, `var urlsToCache = [
+  './',
+  './stable/index.html',`]],
 });
 
 console.log('\n=== PART B — neuter the STUB, keep a real defect. SILENT = the stub was the only defence ===');

@@ -257,7 +257,9 @@ jobs:
         # "against a module carrying each forbidden token, each removed one at a time so
         # the check is shown to detect EACH rather than ANY". A demonstration run once
         # into a feedback file is evidence about a tree that no longer exists —
-        # architecture §6.1 member 5. So it runs here, every commit, instead.
+        # the architecture's freeze finding at architecture.md:317 — a record trusted
+        # because it stayed unchanged. Cited by its words, NOT as "member 5": §6.1 says the
+        # family has FOUR members and CC-A is landing the number on main after this merges. So it runs here, every commit, instead.
         #
         # 25 controls: three fail-closed conditions, 13 constructs each ALONE and each
         # NAMED (a RED for the wrong reason is not evidence — PUP-WO-0103's finding B),

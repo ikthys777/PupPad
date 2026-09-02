@@ -85,8 +85,8 @@ green about.
 
 Written and demonstrated red **before** the first module existed. The demonstration is
 **check 12**, which runs on every commit, because a demonstration written into a
-feedback file is evidence about a tree that no longer exists — architecture §6.1
-member 5 applied to itself.
+feedback file is evidence about a tree that no longer exists — the architecture's freeze finding
+(`architecture.md:317`) applied to itself.
 
 **Subject `0d353b5`. Failing step name: `Check 11 — a game module cannot reach the
 network`.** Check 12's own failing step name is `Check 12 — check 11 can actually go

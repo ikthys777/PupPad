@@ -1642,12 +1642,31 @@ var GAMES_Z = 500;
 /* The live session, or null. Also the "one at a time" latch of obligation 6. */
 var gameSession = null;
 
+/* Genuinely recursive: the first version froze two levels and was named for a depth it
+ * did not have, so a `params:{grid:{w:3}}` entry would hand the game a mutable `grid`. */
 function deepFreezeEntry(entry) {
   var copy = JSON.parse(JSON.stringify(entry));
-  Object.keys(copy).forEach(function(k) {
-    if (copy[k] && typeof copy[k] === 'object') Object.freeze(copy[k]);
-  });
-  return Object.freeze(copy);
+  (function freeze(o) {
+    Object.keys(o).forEach(function(k) { if (o[k] && typeof o[k] === 'object') freeze(o[k]); });
+    Object.freeze(o);
+  })(copy);
+  return copy;
+}
+
+/* PUP-WO-0000 §9.1 constrains `module` to /^\.\/games\/[a-z0-9-]+\.js$/ — AND NOTHING
+ * ENFORCED IT. The adversarial pass loaded, through this shell: a module with an mjs
+ * extension, one inside a subdirectory, one with an upper-case name, one reached by a
+ * parent-directory traversal out of the games folder, and one named by a full remote
+ * URL — the last executing remote code — with every CI check green.
+ * (Those examples are described rather than written out, because check 2 reads any
+ * quoted path-like string in this file as an asset reference and went red on the
+ * comment. A check that cannot tell prose from code is a fact worth knowing.) A spec that
+ * only a document knows is a convention — the same shape as §8.3's `fetch`, one section
+ * later. This is the enforcement. */
+var GAMES_MODULE_RE = /^\.\/games\/[a-z0-9-]+\.js$/;
+var GAMES_ID_RE = /^[a-z][a-z0-9-]*$/;
+function registryEntryIsValid(e) {
+  return !!e && GAMES_ID_RE.test(e.id) && GAMES_MODULE_RE.test(e.module);
 }
 
 /* OBLIGATION 4 — exactly one close path. This function, and nothing else, calls
@@ -1671,14 +1690,59 @@ function endGameSession() {
     if (window.console && console.error) console.error('[games] teardown threw; removing host anyway', e);
   } finally {
     if (s.chrome && s.chrome.parentNode) s.chrome.parentNode.removeChild(s.chrome);
+    /* ================= THE SWEEP, AND IT IS THE POINT OF THIS FUNCTION =================
+     * The adversarial pass produced §1.6's trap THROUGH this host, with a one-word bug:
+     * a module that appends a full-screen node to `document.body` instead of to `host`
+     * and forgets it in teardown. `endGameSession` removed the chrome, reported success,
+     * and left the child looking at a solid rectangle with the console unreachable and
+     * no back button anywhere — AFTER a teardown the shell recorded as clean. Both games
+     * checks passed it.
+     *
+     * The shell cannot make a module tidy up. It CAN refuse to leave the screen in a
+     * state a three-year-old cannot escape, which is the actual obligation. So: anything
+     * that appeared at body level while the game was open, and is still there after
+     * teardown, is removed and reported. Loudly, because the module has a bug — this is
+     * a backstop, not a licence.
+     *
+     * It also covers the teardown-leaks-during-teardown case (a "goodbye flourish"
+     * appended by teardown itself, after the chrome is already gone), and the async
+     * drift case, where handles acquired AFTER mount returned are outside the returned
+     * closure's reach by construction. */
+    try {
+      var before = s.bodyBefore || [];
+      var leaked = [];
+      for (var i = 0; i < document.body.children.length; i++) {
+        var node = document.body.children[i];
+        if (before.indexOf(node) === -1 && node !== s.chrome) leaked.push(node);
+      }
+      for (var j = 0; j < leaked.length; j++) {
+        if (window.console && console.warn) {
+          console.warn('[games] ' + (s.entry && s.entry.id) + ' left a node on document.body that its teardown did not remove; the shell removed it. A game must touch nothing outside its host (PUP-WO-0000 §8.1).', leaked[j]);
+        }
+        if (leaked[j].parentNode) leaked[j].parentNode.removeChild(leaked[j]);
+      }
+    } catch (e) { /* the sweep must never be the reason the exit fails */ }
   }
 }
 
 function openGames(entry) {
-  /* OBLIGATION 6 — teardown completes before any other game mounts. */
-  if (gameSession) return;
+  /* OBLIGATION 6 — teardown completes before any other game mounts.
+   * BUT a session whose chrome is gone is not a live game, it is wreckage: a module
+   * that removes its own host leaves gameSession non-null with no DOM, and the Games
+   * button then refuses FOREVER — the console works and games are simply dead until a
+   * reload. Recover instead of latching on a corpse. */
+  if (gameSession) {
+    if (gameSession.chrome && gameSession.chrome.parentNode) return;
+    if (window.console && console.warn) console.warn('[games] previous session lost its DOM; recovering');
+    endGameSession();
+  }
   entry = entry || GAMES[0];
   if (!entry) return;
+  /* §9.1's shape, ENFORCED rather than documented — see registryEntryIsValid. */
+  if (!registryEntryIsValid(entry)) {
+    if (window.console && console.error) console.error('[games] registry entry does not match PUP-WO-0000 section 9.1; refusing to load', entry);
+    return;
+  }
 
   /* OBLIGATION 1 — appended to document.body, NEVER inside #app. render() replaces
    * #app's innerHTML wholesale and is called from the settings save path and the
@@ -1695,10 +1759,30 @@ function openGames(entry) {
     + 'z-index:' + GAMES_Z + ';background:linear-gradient(180deg,#1E3A5F,#172554 50%,#0F1D3A);overflow:hidden';
 
   /* OBLIGATION 2 — the way back is the SHELL's DOM, outside `host`, above it, and
-   * wired BEFORE mount is called, so a game cannot cover it, remove it, or fail to
-   * draw it. This is what keeps a child from being stranded (northstar §6's "needs an
-   * adult to get into or out of a game"). Big, high-contrast and in the corner a
-   * thumb reaches, because the person using it cannot read the label. */
+   * WIRED BEFORE mount is called. Big, high-contrast and in the corner a thumb reaches,
+   * because the person using it cannot read the label. This is what keeps a child from
+   * being stranded (northstar §6's "needs an adult to get into or out of a game").
+   *
+   * WHAT THAT BUYS AND WHAT IT DOES NOT — corrected after the adversarial pass, which
+   * disproved the second half of what this comment used to claim.
+   *
+   *   TRUE, and it held in every one of the pass's thirty probes: the button EXISTS and
+   *   is WIRED before anything that can throw — the import, mount, teardown. No failure
+   *   of the module-loading pipeline can produce a surface with no exit. That is §1.6's
+   *   defect and it is closed.
+   *
+   *   FALSE, as this comment used to say: that a game "cannot cover it, remove it, or
+   *   fail to draw it". A module runs in THIS REALM. Demonstrated, each in a browser: a
+   *   body-level overlay above 501; an unscoped stylesheet setting pointer-events:none;
+   *   dialog.showModal() and requestFullscreen(), which render in the TOP LAYER above
+   *   every z-index including #portraitBlock; a transform on document.body, which makes
+   *   body the containing block so this fixed element leaves the screen; an infinite
+   *   loop; and simply reassigning window.endGameSession. NONE is preventable from
+   *   inside the same realm. The honest structural answers are an iframe or a worker,
+   *   and those are architecture calls — flagged to CC-A, not half-built here.
+   *
+   * So the shell guarantees the exit is THERE. It does not guarantee that a hostile
+   * module cannot bury it, and this comment must not be read as though it does. */
   var back = document.createElement('button');
   back.id = 'gameBack';
   back.setAttribute('aria-label', 'Back to the console');
@@ -1707,7 +1791,22 @@ function openGames(entry) {
     + 'background:linear-gradient(145deg,#EF4444,#b91c1c);color:#fff;font-size:30px;line-height:1;cursor:pointer;'
     + 'box-shadow:0 4px 14px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:0';
   back.textContent = '←';
-  back.addEventListener('click', function() { doSound('tap'); endGameSession(); });
+  /* EARLY-BOUND, AND THE EXIT RUNS FIRST. This was `doSound('tap'); endGameSession();`
+   * with both resolved by name at click time, so a module assigning
+   * window.endGameSession = function(){} disabled the only way out, and a non-essential
+   * side effect sat AHEAD of the exit on the exit path. Same-realm code can still defeat
+   * this; the accidental version is gone. */
+  var exit = endGameSession;
+  back.addEventListener('click', function() {
+    try { exit(); } finally { try { doSound('tap'); } catch (e) {} }
+  });
+
+  /* Snapshot body level BEFORE the chrome goes in, so the sweep in endGameSession can
+   * tell what the module added from what was already there. WITHOUT THIS THE SWEEP
+   * REMOVES THE WHOLE APP: an earlier edit landed the sweep and lost this line, and the
+   * console, the rotate prompt and the script tag were all swept as "leaked". */
+  var bodyBefore = [];
+  for (var bi = 0; bi < document.body.children.length; bi++) bodyBefore.push(document.body.children[bi]);
 
   chrome.appendChild(host);
   chrome.appendChild(back);
@@ -1715,7 +1814,7 @@ function openGames(entry) {
 
   /* The session exists — and therefore the way back works — before anything that can
    * throw runs. */
-  gameSession = { chrome: chrome, host: host, teardown: null, entry: entry };
+  gameSession = { chrome: chrome, host: host, teardown: null, entry: entry, bodyBefore: bodyBefore };
 
   var frozen = deepFreezeEntry(entry);
   var reduced = false;
@@ -1763,7 +1862,15 @@ function openGames(entry) {
       endGameSession();
       return;
     }
-    if (gameSession) gameSession.teardown = td;
+    /* If the module called api.close() from INSIDE mount, the session is already gone
+     * and this teardown would be dropped on the floor — an interval kept ticking forever
+     * with the host long removed, in the one case the contract's own close() exists to
+     * handle. Run it now rather than discarding it. */
+    if (!gameSession || gameSession.chrome !== chrome) {
+      try { td(); } catch (e) { if (window.console && console.error) console.error('[games] late teardown threw', e); }
+      return;
+    }
+    gameSession.teardown = td;
   }).catch(function(e) {
     /* The module could not be fetched or parsed. Offline with no cached copy lands
      * here, and the way back already works. */
