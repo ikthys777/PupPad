@@ -9,7 +9,7 @@
 
 | | fact |
 |---|---|
-| **Fence** | 9 files, all inside `index.html`, `games/`, `sw.js`, `.github/`, `docs/`. **Outside that set: 0.** |
+| **Fence** | **Files outside `index.html`, `games/`, `sw.js`, `.github/`, `docs/`: 0.** That is the property and it is stable. *(A raw file COUNT is not: the first version of this row said "9 files", which was true one commit earlier and 12 at the SHA that shipped it — the count excluded the feedback file making the claim. Stated as a property, plus a count that names its own subject: **14 files at `e3d1763`**.)* |
 | **`manifest.json`** | diffs to empty |
 | **`icon-192.png`, `icon-512.png`** | diff to empty |
 | **`sw.js`** | `2` insertions, `1` deletion — one added `urlsToCache` entry and the comma before it. **`CACHE_VERSION` occurrences in that diff: 0.** |
@@ -40,11 +40,20 @@ ships one, and gate 2 is a measurement rather than a deliverable.
 
 **Gate 4 / acceptance §3.5** — cold start, no network, proven in a browser as check 14.
 
-**Gate 5 baseline — and it is NOT the gate's number.** Five fresh contexts, cold, on
-this machine: `141, 144, 152, 164, 227 ms`, **median 152**. Gate 5 asks for the number
-*"on the test device"* — a tablet, not a CI-runner-class box — so this is a reference
-point and **the device measurement is Scotty's**. The threshold stays architecture
-§10's open question either way; the gate requires the measurement, not a verdict.
+**Gate 5 baseline — and it is NOT the gate's number.** Run
+`node .github/ci/measure-coldstart.mjs .`; at `171083b` it reported
+`116, 135, 142, 204, 224 ms`, **median 142**, five fresh contexts.
+
+*The instrument is committed, and it was not before.* The claims audit found the first
+version of this line quoted five timings and a median produced by **nothing in the
+tree** — grepping the diff for those figures returned exactly one hit, the sentence
+claiming them. **A measurement a reviewer cannot re-run is asserted, not measured**,
+which is the whole property the word is supposed to buy.
+
+Gate 5 asks for the number *"on the test device"* — a tablet, not this box — so this is
+a reference point and a regression tripwire, and **the device measurement is Scotty's**.
+The threshold stays architecture §10's open question; the gate requires the measurement,
+not a verdict.
 
 **Gate 3 — the icon — is NOT run.** See below; it needs a person.
 
@@ -88,8 +97,12 @@ Written and demonstrated red **before** the first module existed. The demonstrat
 feedback file is evidence about a tree that no longer exists — the architecture's freeze finding
 (`architecture.md:317`) applied to itself.
 
-**Subject `0d353b5`. Failing step name: `Check 11 — a game module cannot reach the
-network`.** Check 12's own failing step name is `Check 12 — check 11 can actually go
+**Failing step names: `Check 11 — a game module cannot reach the network` and
+`Check 12 — check 11 can actually go red, on each construct separately`. Every one of
+checks 11-14 now PRINTS ITS SUBJECT COMMIT — the claims audit found acceptance §3.7
+("every demonstration asserts the commit") was obeyed by ONE of the four, with the
+others' commits living only in this file's prose, which architecture §5 says is not
+evidence.** Check 12's own failing step name is `Check 12 — check 11 can actually go
 red, on each construct separately`.
 
 **PART A — fail closed. Scanning nothing is a FAILURE, never a pass:**
@@ -97,35 +110,35 @@ red, on each construct separately`.
 | condition | verdict |
 |---|---|
 | no `games/` directory at all | RED — `games/ cannot be read` |
-| `games/` exists, holds no modules | RED — `games/ contains no .js modules` |
+| `games/` exists, holds no modules | RED — `games/ contains no modules` |
 | a module that does not parse | RED — `does not parse as an ES module` |
 
-**PART B — 13 constructs, each ALONE, each RED and each NAMED.** Alone, so the check is
-shown to detect **each** rather than **any**; named, because *a RED for the wrong
-reason is not evidence* — a fixture with a typo would be red too and would score as
-proof (`PUP-WO-0103` finding B, one work order on).
+**PART B — 21 constructs, each ALONE, each RED and each NAMED.** Alone, so the check is
+shown to detect **each** rather than **any**; named, because *a RED for the wrong reason
+is not evidence* — a fixture with a typo would be red too and would score as proof
+(`PUP-WO-0103` finding B, one work order on).
 
-`fetch(` · `XMLHttpRequest` · `import(` · `EventSource` · `new WebSocket` · `eval(` ·
-`new Function(` · `importScripts(` · `navigator.sendBeacon` · `window[` ·
-`globalThis[` · `self[` · a static import of a remote specifier.
+**PART B2 — seven cases the adversarial pass got through the first version**, now
+pinned: an unscanned subdirectory, a `.mjs` sibling, an import escaping `games/`, a
+second template substitution, two static-import evasions, and a non-literal dynamic
+specifier.
 
 **PART C — the removal ladder.** Removing one construct retires **exactly** its finding
-and leaves the other four standing:
+and leaves the other three standing. *(Four rungs, not five: `import(` left tier 1 when
+a local relative dynamic import became legal.)*
 
-```
-  removed fetch(           its finding: GONE   remaining findings: 4   exit=1
-  removed XMLHttpRequest   its finding: GONE   remaining findings: 4   exit=1
-  removed import(          its finding: GONE   remaining findings: 4   exit=1
-  removed EventSource      its finding: GONE   remaining findings: 4   exit=1
-  removed new WebSocket    its finding: GONE   remaining findings: 4   exit=1
-```
+**PART D — six cases that must stay GREEN**, because a check that cannot pass is not a
+check either, **and because a check that refuses legitimate game code has a real cost**:
+a clean module; a token inside a comment or string only; a relative static import; local
+code-splitting via `import('./levels/l2.js')`; a local image `img.src = './ball.png'`;
+and `retrieval(` / `itself[` — a dog game, not `eval(` and `self[`.
 
-**PART D — four cases that must stay GREEN**, because a check that cannot pass is not a
-check either: a clean module; a forbidden token inside a comment or string only; a
-relative static import; and — RED, deliberately — a token inside a template
-`${substitution}`, which is code, not string.
+*(An earlier version of this section said "four cases that must stay GREEN" and then
+listed four of which one was deliberately RED — a table contradicting its own header.)*
 
-### Two tokens beyond §8.3's five, labelled as mine
+**41 controls in total**, up from 25.
+
+### Beyond §8.3's five, labelled as mine — two HOLES, more than two tokens
 
 §8.3's enumeration is **defective, not merely short**, and both holes were reachable in
 the time it took to write the check:
@@ -136,10 +149,12 @@ the time it took to write the check:
 2. **A STATIC import of a remote specifier reaches the network containing none of the
    five tokens.** §8.3 names `import(` — the *dynamic* form — only.
 
-**What neither tier catches is stated in the check's own verdict rather than implied:**
-a bypass through computed property access that never spells a forbidden token. No
-textual check can. This raises the cost of reaching the network; it does not make it
-impossible, and invariant 3 also rests on review of what `games/` contains.
+**AND THE ADVERSARIAL PASS PROVED THAT UNDERSTATED IT BADLY.** The first version said it
+did not catch "a determined bypass through computed property access". What it did not
+catch was **an `<img>` tag** — 18 working vectors, half needing no computed access at
+all. The check's verdict now says the true thing: **this raises the cost, IT IS NOT A
+SANDBOX**, a module runs in the shell's own realm, and the structural answers are a CSP
+or an iframe/worker. Both are §7 flags below.
 
 ### A standing note that reaches past this work order
 
@@ -250,3 +265,69 @@ run from `/tmp` died with `ERR_MODULE_NOT_FOUND` that reads like a missing depen
 twice — once at the top of the amended block and once as the original trailing line.
 Harmless and the meaning is unambiguous; noted only because the amendment that fixed a
 duplicated constraint left a duplicated sentence.
+
+---
+
+## THE ADVERSARIAL PASS — three lenses, and it found a DISQUALIFYING defect
+
+Full record: `docs/findings/PUP-WO-0200-adversarial.md`. The headline:
+
+**§1.6's trap reproduced THROUGH this host, shipping green.** A module that appends a
+full-bleed node to `document.body` and forgets it in `teardown` left the child facing a
+solid rectangle with the console unreachable and no back button anywhere — *after a
+teardown the shell recorded as clean*. Check 13 exited 0, because it asserted
+`#gamesChrome` was gone and never looked at what else was on screen. **A one-word bug,
+`document.body` instead of `host`, and it is the pattern the shell's own three openers
+use.** Fixed by a sweep; the check now asserts *the child can reach the console* rather
+than *the overlay is gone*, and the fix is proven non-vacuous — with only the sweep
+disabled, both cases go RED.
+
+**Check 11 was defeated comprehensively** and has been rewritten: the module graph was
+never followed (a subdirectory or a `.mjs` sibling was invisible), 18 network vectors
+contained none of the twelve tokens, the template stripper swallowed the second `${}`
+substitution, and tier 3 matched the *stripped* source where a URL — being a string
+literal — could never appear, so it was **dead on arrival**.
+
+**`PUP-WO-0000` §9.1's registry regex was never enforced.** The pass loaded a remote URL
+as a module through this shell and executed remote code, with every CI check green. That
+is *a spec only a document knows* — the same shape as §8.3's `fetch`, one section later.
+Now validated before import.
+
+**Two reported findings did NOT reproduce and are recorded as such**, not dropped: that
+the frozen tree was already check-3 red, and that gate 2 needs a `CACHE_VERSION` bump.
+Both measured green against a real clone. **But the same experiment found a fourth thing
+that WAS real and was mine** — my A14 re-anchor pinned the *last* `urlsToCache` entry, so
+adding a game required editing `check-mutations.mjs`: a fourth edit, in a file
+`git diff --stat` already counted, so **the gate's own instrument could not see the gate
+failing**. Re-anchored to the head of the list. Gate 2 is three things again.
+
+**The pass broke the freeze, and the mechanism matters more than the incident.** A lens
+committed to the frozen branch and reset it (net nil; all 27 hashes verify). All three
+were told READ-ONLY and told to copy to `/tmp` with `cp -r` — **but in a worktree `.git`
+is a POINTER FILE, so `cp -r` copies the pointer and the copy still writes to the real
+repository.** The instruction was a convention and nothing enforced it: the same shape
+as §8.3, committed by me in the method rather than the code. Next pass runs against a
+`git clone`.
+
+---
+
+## §7 — FLAG AND STOP, FOR CC-A
+
+1. **A token scanner cannot enforce invariant 3 against a module that wants the
+   network.** The structural answers are a **CSP** (`default-src 'self'` — which **would
+   break the Map panel**, since the shell loads Leaflet and Supabase from CDNs) or
+   **running modules in an iframe/worker**. Architecture calls, not smuggled in here.
+2. **`api.tone(hz, ms, wave)` was RATIFIED and never built.** `architecture.md:129`,
+   with the cost corrected by CC-A on 2026-09-01. `grep -c tone index.html` → **0**. The
+   shell implements §8.3's table exactly and §8.3 does not list it, so no comment is
+   false — but **this is a ratified ruling that did not become a commit, the exact
+   failure mode §1.1 of this work order exists to catch**, one document over.
+3. **Three of P2's five gates are worded against a picker that does not exist.** Gate 4
+   *"open picker"*, gate 2 *"to the picker"*, gate 3 *"a screenshot of the picker … each
+   tile"*. Acceptance §3.5 is met; **gate 4 as worded is not**, and I silently recast
+   gate 3 from "each tile" to "the Games button". Same family as gate 1.
+4. **`check-assets` cannot see an asset referenced only from a game module** —
+   `img.src = './assets/ball.png'` absent from `urlsToCache` gives CHECK 2 PASSED and a
+   broken image on a cold offline device.
+5. **`PUP-WO-0106` and `PUP-WO-0600` both claim the un-closable-overlay trap**, and
+   neither document knows about the other. Pre-existing, not introduced here.
