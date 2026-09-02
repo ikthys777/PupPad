@@ -2,8 +2,8 @@
 
 **Subject:** `build/wo-0402`, merged with live `main`.
 **Built:** `games/blockpop.js` · `.github/ci/demo-blockpop.mjs` (sections **11, 12, 13, 14**
-new; sections **1, 2, 8** corrected) · `.github/ci/demo-blockpop-controls.mjs` (**26** new
-red proofs, 50 total).
+new; sections **1, 2, 8** corrected) · `.github/ci/demo-blockpop-controls.mjs` (**28** new
+red proofs, 52 total).
 **Fence:** `sw.js`, `manifest.json`, both icons, `games/gyre.js`, `games/hello.js` and
 `index.html` all diff to empty against `origin/main`. No new asset file, no `urlsToCache`
 change, no edit to `pawSVG`.
@@ -64,14 +64,45 @@ reading the row the ghost previews:**
 cells**, and the last 3px of that band is the physical screen edge. Every row is reachable
 and every band was confirmed by real drops at three points each.
 
-**This is the one open decision in this work order and it is Scotty's.** The trade is
-exact: with a 64px cell on a 412px screen, **band = 78 − lift**. A lift that clears a
-toddler's fingertip (~58px) leaves 20px; the 44px floor needs a lift of 34px or less, which
-is about 5.6mm and probably does not clear the finger. **Both cannot hold.** It is one
-constant — `DRAG_LIFT_CELLS`, currently `0.9`, applied at 46px after the cap — so it is a
-one-line answer either way.
+**This was put to Scotty rather than settled here**, because it is a question about his
+child's hand. With a *constant* lift the trade is exact — `band = 78 − lift` — so clearing
+a fingertip (~58px) leaves 20px while the 44px floor needs ≤34px, and **both cannot hold.**
+He chose the even board. §1b then dissolved the trade; see §1.4.
 
-### 1.4 The acceptance measures in a third frame
+### 1.4 §1b — the taper, and a sign error in the ruling that the assertion settled
+
+Scotty ruled the lift down to 34px, accepting a hand over the piece to get an even board.
+**CC-A's taper dissolved that trade**, and the constant is back to a full `0.9` — full
+clearance where he plays, easing to nothing over the last 2.6 cells of glass. **He decided
+under a constraint that then moved, and it is recorded here because of that.** Measured:
+
+| | rows 0–5 touch bands | lift |
+|---|---|---|
+| 0.9, no taper | 62/62/62/62/62/**32** | 46px (capped) |
+| 0.53, no taper | 64/64/64/64/52/46 | 34px |
+| **0.9 + 2.6-cell taper (shipped)** | **64/64/60/48/48/46** | **57.6px** |
+
+**Two things had to be undone to make the taper load-bearing.** The reach cap and the
+floor cap were both derived for a *constant* lift; left in place they clamped the base to
+34px, so the taper did no work — **and its own red proof passed against a build with no
+taper at all.** They now guard only the degenerate case where the taper is switched off.
+
+**The work order's inversion analysis has its sign the wrong way round, and the assertion
+it asked for is what settled it.** A taper that *sheds* lift as the finger descends gives
+the mapping slope `1 + base/span`, which **cannot invert however steep it is**. The mapping
+only runs backwards when the lift *grows* toward the bottom faster than the finger travels
+— `1 − base/span`, negative once `span < base`. The 1.5-cell floor was therefore
+unnecessary; **2.6 cells is set by a different constraint entirely** — inside the taper the
+mapping compresses by that same slope, so the bottom row's band is `cell/slope`, and
+holding it over 44px needs `span ≥ base/(cell/44 − 1)` ≈ 2 cells. At 2.25 it measured
+*exactly* 44, so 2.6.
+
+The planted inversion is built with the sign that actually inverts, and it exposed a second
+gap: **row granularity is too coarse.** An inversion confined inside one row shows no row
+change at all and was green. The walk now also records **the picture's own y**, which is
+continuous.
+
+### 1.5 The acceptance measures in a third frame
 
 §11 reads the **painted rect of `.bp-drag` while the finger is down**, then the rect of the
 cell that filled, and asserts the picture sits inside it. **The lift is derived from the
@@ -184,7 +215,7 @@ that catches it and simply never sampled at that moment**; it does now.
 | 3 — `players: 2` | not attempted, out of scope |
 | **4 — with all text covered, board and tray operable** | premise asserted (no painted word inside `host`); the flair adds none. **Gate is human.** |
 | 5 — airplane mode, cold start | not proven here; no network construct |
-| §5 — every new check red **with a real defect** | **met: 50 of 50**, and every mutant parses |
+| §5 — every new check red **with a real defect** | **met: 52 of 52**, and every mutant parses |
 
 ## 7. Not built
 

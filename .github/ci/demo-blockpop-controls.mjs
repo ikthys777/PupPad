@@ -308,19 +308,39 @@ plan(10, 'the terminal state paints a word', {
  * ---------------------------------------------------------------------- */
 
 plan(11, 'the drop resolves at the finger while the piece is painted above it', {
-  mutate: (s) => sub(s, '    var ly = y - dragLiftPx();', '    var ly = y;'),
-  expectText: 'OUTSIDE the cell it lands in',
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx(y);', '    var ly = y;'),
+  expectText: 'lands in',
 });
 
 plan(11, 'the picture is lifted and the hit point is lifted by a DIFFERENT amount', {
-  mutate: (s) => sub(s, '    var ly = y - dragLiftPx();', '    var ly = y - dragLiftPx() * 0.5;'),
-  expectText: 'OUTSIDE the cell it lands in',
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx(y);', '    var ly = y - dragLiftPx(y) * 0.5;'),
+  expectText: 'lands in',
 });
 
-plan(11, 'the geometric cap on the lift is removed, costing the bottom row its touch band', {
-  mutate: (s) => sub(s, `    var room = vh - (rect.bottom - cellPx * 0.5);
-    if (room > 0 && want > room) want = room;`, '    void vh; void rect;'),
-  expectText: 'of room below the last row',
+plan(11, 'the lift does not taper, so the bottom row loses its touch band', {
+  mutate: (s) => sub(s, '    var f = (vh - y) / span;', '    var f = 1;'),
+  expectText: 'answer within only',
+});
+
+/* THE INVERSION THE MONOTONICITY WALK EXISTS FOR — and note the SIGN, because the work
+ * order had it the other way. A taper that SHEDS lift as the finger descends gives the
+ * mapping slope 1 + base/span, which can never invert however steep it is. It only runs
+ * backwards when the lift GROWS toward the bottom faster than the finger travels: slope
+ * 1 - base/span, negative once span < base. That is what is planted — growth over the
+ * last half-cell, base 57.6 against span 32. Confined inside one row, so the row-level
+ * clause cannot see it; the picture's own y can. */
+plan(11, 'the lift grows toward the bottom faster than the finger travels', {
+  mutate: (s) => {
+    let out = sub(s, '  var TAPER_CELLS = 2.6;', '  var TAPER_CELLS = 0.5;');
+    out = sub(out, '    var f = (vh - y) / span;', '    var f = (y - (vh - span)) / span;');
+    return out;
+  },
+  expectText: 'moves UP the board as the finger moves DOWN',
+});
+
+plan(11, 'moveDragEl and hitCell pass different y to the one derivation', {
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx(y);', '    var ly = y - dragLiftPx(y - 40);'),
+  expectText: 'lands in',
 });
 
 /* ------------------------------------------------------------------------
@@ -448,7 +468,7 @@ plan(13, 'a paw is left stranded over a cell that came back to life', {
   mutate: (s) => sub(s, `          st.stamp.classList.remove('bp-stamped');
           st.stamp.hidden = true;
         }`, '        }'),
-  expectText: 'NOT clearing',
+  expectText: 'stranded over it',
 });
 
 plan(14, 'the tray divides both axes by one span, as the source did', {

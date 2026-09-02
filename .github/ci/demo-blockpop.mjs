@@ -63,6 +63,11 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 
+/* The project's minimum touch target, applied to a board cell in §1 and to a row's drag
+ * band in §11. One name, because the game was contradicting its own floor across two
+ * clauses when they were two numbers. */
+const MIN_TOUCH = 44;
+
 const PIN_DOT = 0;
 const PIN_TRI = 0.390625;
 
@@ -358,7 +363,6 @@ try {
       }
       return out;
     });
-    const MIN_TOUCH = 44;
     const offscreen = geo.out.filter((e) => e.x < 0 || e.y < 0 || e.x + e.w > geo.vw + 0.5 || e.y + e.h > geo.vh + 0.5);
     const inBack = geo.back
       ? geo.out.filter((e) => e.x < geo.back.x + geo.back.w && e.x + e.w > geo.back.x
@@ -1116,6 +1120,24 @@ try {
           'the rect this section measures is not the picture the child sees');
       const LIFT = (geom.top + geom.cell * 3.5) - probe.painted.cy;
 
+      /* AIM BY OBSERVATION, NOT BY PREDICTION. §1b makes the lift a function of y, so
+       * "finger = target + LIFT" — a prediction from one constant — aims at the wrong
+       * place wherever the taper is active, and it failed a CORRECT build by 11px. The
+       * check must not carry a model of the lift at all: drag, read where the picture
+       * actually is, correct by the residual, repeat. Three passes converge to under a
+       * pixel and none of them places anything. */
+      const aimPicture = async (tx, ty) => {
+        let fy = Math.min(geom.vh - 3, Math.max(3, ty + LIFT));
+        for (let k = 0; k < 3; k++) {
+          const pr = await dragTo(tx, fy, true);
+          if (!pr.painted) break;
+          const err = ty - pr.painted.cy;
+          if (Math.abs(err) < 1) break;
+          fy = Math.min(geom.vh - 3, Math.max(3, fy + err));
+        }
+        return fy;
+      };
+
       /* 2. Coherence, at three arbitrary points that are NOT cell centres. */
       let worst = { d: -1, label: '', dx: 0, dy: 0 };
       let broke = null;
@@ -1129,7 +1151,7 @@ try {
         const wx = geom.top; void wx;
         const w = await s.rect(`.bp-well[data-row="${t.r}"][data-col="${t.c}"]`);
         const tx = w.x + w.w * (0.5 + t.dx);
-        const ty = Math.min(geom.vh - 3, Math.max(3, w.y + w.h * (0.5 + t.dy) + LIFT));
+        const ty = await aimPicture(tx, w.y + w.h * (0.5 + t.dy));
         const r = await dragTo(tx, ty);
         if (!r.painted) { broke = `${t.label}: .bp-drag was hidden mid-drag`; break; }
         if (!r.landed.length) { broke = `${t.label}: the drop placed nothing, so there is no landed rect to compare`; break; }
@@ -1157,16 +1179,28 @@ try {
        * green. Aim the picture at an exact cell centre and the expected offset is 0, so
        * any desync shows up at its true size. */
       {
-        const w3 = await s.rect('.bp-well[data-row="3"][data-col="2"]');
-        const r3 = await dragTo(w3.cx, Math.min(geom.vh - 3, w3.cy + LIFT), true);
+        const w3 = await s.rect('.bp-well[data-row="5"][data-col="2"]');
+        const fy3 = await aimPicture(w3.cx, w3.cy);
+        const r3 = await dragTo(w3.cx, fy3, true);
         if (!r3.painted) bad(`${vp.name}: nothing painted on the centred aim`);
         else {
           const ex = Math.abs(r3.painted.cx - w3.cx);
           const ey = Math.abs(r3.painted.cy - w3.cy);
-          if (ex > 4 || ey > 4) bad(`${vp.name}: aimed at a cell centre, the picture lands ${ex.toFixed(1)},${ey.toFixed(1)}px off it`,
+          if (ex > 4 || ey > 4) bad(`${vp.name}: aimed at the BOTTOM row's centre, the picture lands ${ex.toFixed(1)},${ey.toFixed(1)}px off it`,
             'on a coherent build this is zero — the picture and the drop are computed from different points');
-          else ok(`${vp.name}: aimed at a cell centre the picture sits ${ex.toFixed(1)},${ey.toFixed(1)}px off it`);
+          else ok(`${vp.name}: aimed at the bottom row's centre — deep inside the taper — the picture sits ${ex.toFixed(1)},${ey.toFixed(1)}px off it`);
         }
+        /* AND A BOUNDARY AIM, because a centre aim forgives a small desync: resolving the
+         * drop a few pixels from where the picture is drawn still lands in the same cell
+         * when the picture is mid-cell. Put the picture just inside a cell's top edge and
+         * any disagreement between the two crosses into the row above. */
+        const wb = await s.rect('.bp-well[data-row="3"][data-col="4"]');
+        const fyb = await aimPicture(wb.cx, wb.y + 4);
+        const rb = await dragTo(wb.cx, fyb);
+        if (!rb.landed.length) bad(`${vp.name}: a drop aimed just inside a cell's top edge placed nothing`);
+        else if (!rb.landed.some((x) => x.r === 3 && x.c === 4)) bad(`${vp.name}: the picture was drawn just inside cell 3,4 and the piece landed in ${JSON.stringify(rb.landed.map((x) => x.r + ',' + x.c))}`,
+          'the drop is resolved from a different point than the picture is drawn at');
+        else ok(`${vp.name}: a picture drawn 4px inside cell 3,4's top edge lands in 3,4`);
       }
 
       /* AND THE PROXY MUST BE THE PIECE'S SIZE, WHICH A 1x1 CANNOT SHOW. A build whose
@@ -1245,22 +1279,90 @@ try {
         else ok(`${vp.name}: every ghost is painted centred in the cell it marks (worst offset ${Math.max(...gp.map((q) => Math.hypot(q.dx, q.dy))).toFixed(1)}px)`);
       }
 
+      /* 2c. THE MAPPING MUST NEVER RUN BACKWARDS. §1b tapers the lift toward zero over
+       * the last 1.5 cells of glass, and a taper is a function of y inside a mapping that
+       * is also a function of y: the drop resolves at y - lift(y). If the lift shed faster
+       * than the finger travels, THE PIECE WOULD CLIMB THE BOARD AS THE FINGER MOVED DOWN
+       * — an inversion no bounding-rect check can see, because every rect involved would
+       * still be self-consistent. So walk the whole glass in 2px steps with one live drag
+       * and require the previewed row to be non-decreasing throughout. */
+      const walkBands = [0, 0, 0, 0, 0, 0];
+      {
+        const gm = await grabPoint();
+        await s.touch('touchStart', [{ x: gm.x, y: gm.y, id: 1 }]);
+        const colX = (await s.rect('.bp-well[data-row="0"][data-col="2"]')).cx;
+        const seen = [];
+        for (let y = 4; y <= geom.vh - 2; y += 2) {
+          await s.touch('touchMove', [{ x: colX, y, id: 1 }]);
+          const sample = await s.page.evaluate(() => {
+            const g = [...document.querySelectorAll('.bp-ghost')].filter((e) => !e.hidden);
+            const d = document.querySelector('.bp-drag');
+            const dr = d && !d.hidden ? d.getBoundingClientRect() : null;
+            return {
+              row: g.length ? Math.min(...g.map((e) => +e.closest('.bp-well').getAttribute('data-row'))) : null,
+              cy: dr ? dr.y + dr.height / 2 : null,
+            };
+          });
+          seen.push({ y, row: sample.row, cy: sample.cy });
+        }
+        /* Leave the grid before lifting so this measurement places nothing. */
+        const awayM = await s.page.evaluate(() => {
+          const t = document.querySelector('.bp-tray').getBoundingClientRect();
+          return { x: t.x + t.width - 10, y: t.y + t.height - 10 };
+        });
+        await s.touch('touchMove', [{ x: awayM.x, y: awayM.y, id: 1 }]);
+        await s.wait(20);
+        await s.touch('touchEnd', []);
+        await s.wait(120);
+        const live = seen.filter((p) => p.row !== null);
+        let backwards = null;
+        for (let i = 1; i < live.length; i++) {
+          if (live[i].row < live[i - 1].row) { backwards = [live[i - 1], live[i]]; break; }
+        }
+        /* ROW GRANULARITY IS TOO COARSE ON ITS OWN. An inversion confined inside a single
+         * row shows no row change at all — a planted taper that ran the mapping backwards
+         * across the last 32px of glass was green here for exactly that reason. The
+         * PICTURE's y is continuous, so it sees what the row cannot. */
+        const withCy = seen.filter((p) => p.cy !== null);
+        let pxBack = null;
+        for (let i = 1; i < withCy.length; i++) {
+          if (withCy[i].cy < withCy[i - 1].cy - 0.5) { pxBack = [withCy[i - 1], withCy[i]]; break; }
+        }
+        const rowsSeen = [...new Set(live.map((p) => p.row))];
+        if (live.length < 40) bad(`${vp.name}: the monotonicity walk previewed a row at only ${live.length} of ${seen.length} steps`,
+          'too few samples to conclude anything about the mapping');
+        else if (rowsSeen.length < 6) bad(`${vp.name}: walking the whole glass previewed only rows ${rowsSeen.join(',')}`,
+          'the walk must cross every row for the monotonicity claim to mean anything');
+        else if (pxBack) bad(`${vp.name}: the piece moves UP the board as the finger moves DOWN`,
+          `finger y ${pxBack[0].y} painted the picture at ${pxBack[0].cy.toFixed(1)}, y ${pxBack[1].y} painted it at ${pxBack[1].cy.toFixed(1)} — the lift grows faster than the finger travels`);
+        else if (backwards) bad(`${vp.name}: the piece moves UP the board as the finger moves DOWN`,
+          `finger y ${backwards[0].y} previewed row ${backwards[0].row}, y ${backwards[1].y} previewed row ${backwards[1].row} — the taper sheds lift faster than the finger travels`);
+        else ok(`${vp.name}: walking the glass in 2px steps, neither the previewed row nor the picture's own y ever runs backwards (${live.length} rows / ${withCy.length} pixel samples, all ${rowsSeen.length} rows crossed)`);
+        /* THE BANDS COME FROM THIS WALK, NOT FROM ARITHMETIC. With the taper the lift is
+         * a function of y, so a band derived from one constant lift is a band for a
+         * mapping the game no longer has — it read 39px for a row that answers across a
+         * different width. Count the samples that actually previewed each row. */
+        for (const r of [0, 1, 2, 3, 4, 5]) {
+          const n = live.filter((p) => p.row === r).length;
+          walkBands[r] = n * 2;
+        }
+      }
+
       /* 3. REACHABILITY, which is what a lift can quietly take away. A lifted hit point
        * leaves the grid at the extremes: to put the picture on the bottom row the finger
        * must go a lift BELOW it, and the finger cannot leave the glass. */
       const unreachable = [];
-      const bands = [];
+      const bands = walkBands.slice();
       for (let r = 0; r < 6; r++) {
-        const w = await s.rect(`.bp-well[data-row="${r}"][data-col="0"]`);
-        const lo = Math.max(3, w.y + LIFT);
-        const hi = Math.min(geom.vh - 3, w.y + w.h + LIFT);
-        bands.push(Math.max(0, hi - lo));
         /* THE COLUMN TOO, AND A DIFFERENT ONE EACH ROW. This loop asserted only the row
          * and used column 0 for all six, so a build clamping the last column out of
          * reach by drag was green. */
         const col = r % 6;
         const wc = await s.rect(`.bp-well[data-row="${r}"][data-col="${col}"]`);
-        const res = await dragTo(wc.cx, Math.min(geom.vh - 3, Math.max(3, wc.cy + LIFT)));
+        /* Aimed by observation, like everything else here — a constant-lift prediction
+         * misses by the taper and reports a reachable cell as unreachable. */
+        const fy = await aimPicture(wc.cx, wc.cy);
+        const res = await dragTo(wc.cx, fy);
         if (!res.landed.some((x) => x.r === r && x.c === col)) unreachable.push(`${r},${col}`);
       }
       /* AND THE CAP IS ASSERTED, NOT JUST ITS EFFECT. Every row stays "reachable" even
@@ -1268,12 +1370,17 @@ try {
        * reachability alone cannot see the cap disappear. The cap's own rule can:
        * the applied lift may never exceed the room between the last row's centre and the
        * bottom of the glass. Derived from geometry, not from a number I chose. */
-      const ROOM = geom.vh - (geom.bottom - geom.cell * 0.5);
-      if (LIFT > ROOM + 1) bad(`${vp.name}: the drag lift is ${LIFT.toFixed(1)}px against ${ROOM.toFixed(1)}px of room below the last row`,
-        `the finger cannot leave the glass, so every pixel over that is a pixel off the bottom row's touch band`);
+      /* THE FLOOR IS ASSERTED ON MEASURED BANDS. The clause that stood here compared the
+       * lift against the room below the last row, which is the right question ONLY for a
+       * constant lift — under §1b's taper it condemns a build that reaches every row
+       * comfortably. What matters was never the lift, it is the band, and the band is now
+       * counted off the walk. */
+      const thin = bands.map((b, i) => ({ b, i })).filter((x) => x.b < MIN_TOUCH);
+      if (thin.length) bad(`${vp.name}: row(s) ${thin.map((x) => x.i).join(', ')} answer within only ${thin.map((x) => x.b.toFixed(0)).join('/')}px`,
+        `under the ${MIN_TOUCH}px minimum touch target this check enforces on the cells themselves; the lift is ${LIFT.toFixed(1)}px and every pixel of it comes off the bottom row's band`);
       else if (unreachable.length) bad(`${vp.name}: cell(s) ${unreachable.join(' ')} cannot be reached with the piece visible`,
         `the lift is ${LIFT.toFixed(1)}px on a ${geom.cell.toFixed(1)}px cell and the finger cannot leave the glass`);
-      else ok(`${vp.name}: every one of the 6 rows is reachable; touch bands ${bands.map((b) => b.toFixed(0)).join('/')}px (narrowest ${Math.min(...bands).toFixed(0)}px)`);
+      else ok(`${vp.name}: every one of the 6 rows is reachable and answers within at least ${MIN_TOUCH}px; bands ${bands.map((b) => b.toFixed(0)).join('/')}px, lift ${LIFT.toFixed(1)}px`);
       await s.ctx.close();
     }
   }
@@ -1457,7 +1564,7 @@ try {
         }
         return out;
       });
-      if (stranded.length) bad(`${stranded.length} paw(s) left over a cell that is NOT clearing: ${JSON.stringify(stranded)}`,
+      if (stranded.length) bad(`${stranded.length} paw(s) stranded over it — a cell that is NOT clearing: ${JSON.stringify(stranded)}`,
         'a piece landed there inside the clear window and the stamp was never released — it is transparent only because the keyframe ends at opacity 0');
       else ok('a piece landing inside the clear window leaves no paw stranded over it');
       await s2.ctx.close();

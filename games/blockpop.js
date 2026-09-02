@@ -1063,9 +1063,44 @@ export default function mount(host, api) {
    * moveDragEl and hitCell. Neither of those two can drift from the other without
    * changing the derivation both read.
    *
-   * Whether 0.9 of a cell clears Buddy's palm is HIS question, not ours. It is one
-   * constant so the answer is a one-line change. */
+   * THE AMOUNT IS SCOTTY'S AND HE RULED IT ON 2026-09-02, given the measured trade.
+   * A lift silently costs REACH: the picture sits a lift above the finger, so to put it
+   * on the BOTTOM row the finger must go a lift below it, and the finger cannot leave the
+   * glass. band = viewportHeight - gridBottom + cell - lift, which at 412px of height and
+   * a 64px cell is 78 - lift. At 0.9 (57.6px, capped to 46) the bottom row answered inside
+   * 32px against 62-64px everywhere else — under the 44px minimum touch target check 21
+   * enforces on the board cells themselves, i.e. the game contradicting its own floor.
+   *
+   * He chose the even board: 0.53 of a cell, ~34px, accepting that it may not clear a
+   * three-year-old's fingertip. THE TAPER BELOW DISSOLVES THAT TRADE and the constant is
+   * back to a full 0.9 — he gets both halves. It is recorded because he decided under the
+   * old constraint and should know the constraint moved. */
   var DRAG_LIFT_CELLS = 0.9;
+
+  /* The same 44px minimum touch target check 21 §1 applies to a board cell. */
+  var MIN_TOUCH_BAND = 44;
+
+  /* §1b. THE LIFT TAPERS TO NOTHING OVER THE LAST 1.5 CELLS OF GLASS. Full clearance
+   * where the child spends the game, easing away at the bottom edge where the finger runs
+   * out of screen — so the palm is kept off the piece in the middle of the board AND the
+   * bottom row still answers across a full band.
+   *
+   * 1.5 CELLS, NOT 1. The taper's steepness is base/span, and the drop resolves at
+   * y - lift(y), so the mapping's slope is 1 + base/span. A span equal to one cell is the
+   * obvious reading of "ease across the last row" and leaves no margin at all against a
+   * change in cell size — and cellPx is DERIVED FROM A MEASURED RECT, so it will change.
+   * §11 walks the glass in 2px steps and requires the resolved row to be non-decreasing,
+   * which is the assertion a bounding-rect check cannot fake — and it measures every
+   * row's band from that same walk rather than deriving it, because a band derived from
+   * one constant lift is a band for a mapping this game no longer has.
+   *
+   * THE SPAN IS 2.25 CELLS BECAUSE OF ARITHMETIC, NOT TASTE. Inside the taper the mapping
+   * compresses: slope = 1 + base/span, so a row answers across cell/slope of glass. For
+   * the bottom row to keep the 44px floor at a 64px cell and a 0.9-cell base,
+   * span >= base / (cell/MIN - 1) = 57.6 / 0.4545 = 127px, i.e. just under 2 cells. At 2.25
+   * the bottom row measured EXACTLY 44 — the floor with no margin — so 2.6. The measured bands are the guard; this is only how the number was
+   * chosen. */
+  var TAPER_CELLS = 2.6;
 
   /* AND IT IS CAPPED BY GEOMETRY, BECAUSE A LIFT SILENTLY COSTS REACH.
    * The picture sits a lift above the finger, so to put it on the BOTTOM row the finger
@@ -1077,13 +1112,38 @@ export default function mount(host, api) {
    *
    * The residual trade is real and is NOT ours to settle: every pixel of lift is a pixel
    * off the bottom row's band. See FEEDBACK.md — the amount is Scotty's, on the glass. */
-  function dragLiftPx() {
+  /* ONE DERIVATION, TWO CONSUMERS, CALLED WITH THE SAME y. moveDragEl and hitCell are the
+   * only callers and both hand it the raw client y of the same event. If they ever pass
+   * different arguments this is the original defect again wearing a taper. */
+  function dragLiftPx(y) {
     var want = cellPx * DRAG_LIFT_CELLS;
     var rect = gridRect();
     var vh = window.innerHeight || 0;
-    var room = vh - (rect.bottom - cellPx * 0.5);
-    if (room > 0 && want > room) want = room;
-    return want > 0 ? want : 0;
+    /* Two ceilings, both geometric, both derived from the glass rather than chosen.
+     * First: the last row's centre must be reachable at all. Second, and stricter: no
+     * row's touch band may fall under the project's minimum touch target. Kept alongside
+     * the taper rather than replaced by it — they guard different devices. */
+    var span = cellPx * TAPER_CELLS;
+    /* THE CAPS ASSUME A CONSTANT LIFT AND THE TAPER IS NOT ONE. Both were derived for a
+     * lift that is the same everywhere: the reach cap holds the last row's centre
+     * touchable, the floor cap holds its band at the minimum. A taper that reaches zero
+     * at the bottom edge guarantees BOTH by construction — and leaving them in place
+     * clamped the base to 34px, so the taper did no work and its own red proofs passed
+     * against a build with no taper at all. They stay as the guard for the degenerate
+     * case where the taper is switched off. */
+    if (!(span > 0)) {
+      var reach = vh - (rect.bottom - cellPx * 0.5);
+      var floor = vh - rect.bottom + cellPx - MIN_TOUCH_BAND;
+      var cap = Math.min(reach, floor);
+      if (cap > 0 && want > cap) want = cap;
+      return want > 0 ? want : 0;
+    }
+    if (want < 0) want = 0;
+    if (typeof y !== 'number' || !isFinite(y)) return want;
+    var f = (vh - y) / span;
+    if (f > 1) f = 1;
+    if (f < 0) f = 0;
+    return want * f;
   }
 
   function hitCell(x, y, d) {
@@ -1091,7 +1151,7 @@ export default function mount(host, api) {
     var pad = 10;
     /* Resolved at the point the PICTURE occupies, not at the finger — and the off-grid
      * tolerance is measured against that same lifted point, or it drifts by the lift. */
-    var ly = y - dragLiftPx();
+    var ly = y - dragLiftPx(y);
     if (x < rect.left - pad || x > rect.right + pad || ly < rect.top - pad || ly > rect.bottom + pad) return null;
     var col = Math.floor(((x - rect.left) / rect.width) * N) - d.grabC;
     var row = Math.floor(((ly - rect.top) / rect.height) * N) - d.grabR;
@@ -1103,7 +1163,7 @@ export default function mount(host, api) {
     var w = drag.piece.w * cellPx;
     var h = drag.piece.h * cellPx;
     var ox = x - rr.left - (drag.grabC + 0.5) * cellPx;
-    var oy = y - rr.top - (drag.grabR + 0.5) * cellPx - dragLiftPx();
+    var oy = y - rr.top - (drag.grabR + 0.5) * cellPx - dragLiftPx(y);
     dragEl.style.width = w + 'px';
     dragEl.style.height = h + 'px';
     dragEl.style.transform = 'translate(' + ox + 'px,' + oy + 'px)';
