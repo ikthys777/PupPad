@@ -92,11 +92,17 @@ binding constraint on all three devices and will be on any phone.
 | board | **396 × 396** | 396 × 396 | 396 × 396 |
 | tray column | 369px | 415px | 383px |
 | slot | 369 × 124 | 415 × 124 | 383 × 124 |
-| **easy 6×6 cell** | **66.0px** | 66.0px | 66.0px |
-| classic 8×8 cell *(0401)* | 49.5px | 49.5px | 49.5px |
+| **easy 6×6 cell** | **64.0px** | 64.0px | 64.0px |
+| classic 8×8 cell *(0401)* | 48.0px | 48.0px | 48.0px |
+
+*(**Corrected 2026-09-02 from 66.0 / 49.5.** I divided the board's outer side by N.
+The frame carries **6px of padding a side**, so it is `(side − 12) / N` — 384/6 and
+384/8. Found by CC-B's pass, which also found the wrong pair pasted into both the
+feedback doc and a module comment. **Both still clear the 44px minimum**, and classic's
+margin is now 4px rather than 5.5.)*
 
 **Read the cell sizes as an argument for easy being Buddy's entry.** The source ships
-82.7px (easy) and 60.9px (classic); this ships **66.0** and **49.5**. Easy is
+82.7px (easy) and 60.9px (classic); this ships **64.0** and **48.0**. Easy is
 comfortable. **Classic at 49.5 clears the 44px minimum touch target and not by much**,
 which is a fact for `PUP-WO-0401` to design against, not to discover.
 
@@ -264,10 +270,21 @@ Drive real touch via CDP `Input.dispatchTouchEvent` with `hasTouch:true`, as
    filters to shapes that fit, so it can never deal an unfittable piece. **The terminal
    state is exactly the state where that filter returns EMPTY.**
 
-   **So drive the filter, do not bypass it: exclude the 1×1 from the test pool.** With
-   the smallest shape a domino, a board holding only isolated single gaps has nothing
-   that fits, the filter comes back empty, and the real code path fires — in a handful
-   of placements rather than 36. **Assert: one affordance inside `host`, no text on it,
+   ~~**So drive the filter, do not bypass it: exclude the 1×1 from the test pool.**~~
+
+   > **THAT RULING WAS WRONG AND CC-B REFUTED IT AT SOURCE.** `engine.ts:155` is
+   > `fitting.length > 0 ? pickWeighted(fitting, mode, rng) : DOT` — **the fallback IS
+   > the dot**, so removing it from the pool removes nothing. Worse, it establishes
+   > something the roadmap does not know: **easy mode cannot reach game over at all.**
+   > `rescueUnplaceable` swaps any unplaceable piece for one that fits, a dot fits
+   > wherever a single cell is free, so the board must be entirely full — **and the
+   > placement that fills a row's last cell clears that row.** CC-B drove 108 finger
+   > placements and `over` never went true. **Little Hands is unlosable, and that is
+   > almost certainly right for Buddy.**
+   >
+   > **The built answer is better than my ruling: hand `api.load()` a FULL BOARD.**
+   > Everything downstream is then real — `dealTray` runs the real filter, it returns
+   > empty, the fallback is a dot, `anyTrayFits` says no. **Nothing calls the seam.** **Assert: one affordance inside `host`, no text on it,
    one tap resumes play, and `api.close()` is never called.** *(Northstar invariant 5,
    §8.5.)* **A terminal state reached by calling the seam proves the affordance renders
    and proves nothing about whether the game can arrive there.**
@@ -332,6 +349,14 @@ a gates line, and **what was deliberately not built**.
 - Any touched file outside `games/blockpop.js`, **`index.html`'s registry entry**,
   **`sw.js`'s single `urlsToCache` line**, and `.github/ci/demo-blockpop.mjs`.
   *(Corrected: the first draft located `urlsToCache` in `index.html`. It is `sw.js:317`.)*
+- **AND `.github/ci/demo-blockpop-controls.mjs` AND `.github/workflows/ci.yml`, which
+  this list should always have named.** *(Amended 2026-09-02, flagged by CC-B rather
+  than left to be found.)* **§3 item 10 requires every new check to be shown going red,
+  and item 9 requires it to run at all — so the red-proof harness and the CI
+  registration are machinery my own acceptance list demands, forbidden by my own fence.
+  That is the THIRD self-contradiction in this one work order**, after the `urlsToCache`
+  location and check 7. The fence was pedantic about `sw.js` and silent about the two
+  files that make its own §3 executable.
 - **A check you cannot show going red.**
 - Anything that makes the terminal state reachable without a one-tap way back.
 

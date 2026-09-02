@@ -326,6 +326,21 @@ and P1 themselves to merge. From P2 onward the rule applies without exception.
 1. Both board sizes playable start to finish.
 2. Reaching a no-moves state presents exactly one control, and tapping it starts a
    new game. *(Falsifies northstar invariant 5.)*
+
+   > **CORRECTION 2026-09-02: EASY MODE CANNOT REACH A NO-MOVES STATE AT ALL, so this
+   > gate as written is unmeetable through play in the mode Buddy uses.** `engine.ts:155`
+   > falls back to `DOT` when nothing fits, `rescueUnplaceable` swaps any unplaceable
+   > piece for one that does, and a 1×1 fits wherever a single cell is free — **so the
+   > board must be entirely full, and the placement that fills a row's last cell clears
+   > that row.** CC-B drove **108 finger placements** and `over` never went true.
+   > **Little Hands is unlosable, and that is almost certainly right for a
+   > three-year-old** — invariant 5 exists to stop play ending, and a mode that cannot
+   > end play satisfies its *purpose* while failing its *test*.
+   > **`PUP-WO-0400` proves the terminal state by handing `api.load()` a full board**,
+   > which exercises the real filter and the real fallback and calls no seam.
+   > **Making it reachable through play is `PUP-WO-0401`'s**, in classic, where
+   > `rescueUnplaceable` returns the tray untouched. **This gate reads as though every
+   > mode reaches a no-moves state; it must name which mode.**
 3. `players: 2` can be set on a tray array in a scratch branch and the engine
    accepts a second player's action without engine changes. *(Proves architecture
    §7 seams, without building co-op.)*
