@@ -119,6 +119,31 @@ export default function mount(host, api) {
   var CLEAR_MS = reduced ? 40 : 280;
   var POP_MS = reduced ? 60 : 320;
 
+  /* THE VOICE. §8.3: the shell holds exactly one AudioContext, lazily made and never
+   * handed out, so every cue goes through api.sound and THIS MODULE CONSTRUCTS NONE.
+   * The source's audio.ts builds its own and never closes it; it does not come across.
+   *
+   * Every name here is one of doSound's twelve banks (index.html:174-186). An unknown
+   * name is a silent no-op that nothing reports, so inventing one ships a feature that
+   * does nothing — PUP-WO-0400 shipped `api.sound('pop')` for exactly one commit.
+   *
+   * THE ILLEGAL CUE IS `lock`, WHICH IS TWO SOFT DESCENDING SINE NOTES, AND THAT IS THE
+   * point: `error` and `alert` are square waves and they BITE. A buzz for "I changed my
+   * mind" teaches a three-year-old that the controls punish him for exploring. The
+   * loudest thing in the game should be the reward, not the refusal. */
+  var CUE = Object.freeze({
+    lift: 'keyTap',    /* a piece leaves the tray — 1800Hz for 30ms, barely there */
+    drop: 'tap',       /* it lands */
+    refuse: 'lock',    /* it cannot go there. Quiet, on purpose. */
+    clear: 'twinkle',  /* a line goes. The reward, and the loudest cue. */
+    deal: 'blip'       /* the tray refills */
+  });
+
+  function cue(name) {
+    if (dead) return;
+    try { api.sound(name); } catch (e) {}
+  }
+
   /* TAP SLOP — WIDENED FROM THE SOURCE'S 14, DELIBERATELY, AND THE NUMBER IS ASSERTED.
    * BlockPopGame.tsx:142/:153 gates tap-to-select on `dist < 14` and drops anything
    * longer into playInvalid() plus a shake. A three-year-old's tap slides further than
@@ -415,8 +440,19 @@ export default function mount(host, api) {
    * document.body.children (index.html:2743-2744), so a head <style> would survive
    * teardown UNREPORTED — a silent §8.1 violation that no check would see. */
   style.textContent = [
+    /* THE RADAR AS GROUND, NOT AS FOREGROUND. PupPad's console draws four concentric
+     * rings and a crosshair at rgba(0,255,136,0.12) (index.html:3120-3132). These are the
+     * same rings as repeating gradients — no elements, no image file, painted once — so
+     * the game sits on the console's own surface rather than on a blank rectangle. They
+     * are BEHIND the board, whose wells are opaque, so they cost invariant 1 nothing:
+     * the filled-vs-empty contrast is candy against well, and neither changes. */
     '.bp-root{position:absolute;inset:0;display:flex;flex-direction:row;align-items:center;',
     'gap:10px;padding:8px;box-sizing:border-box;',
+    'background-image:repeating-radial-gradient(circle at 78% 50%,',
+    'rgba(0,255,136,.055) 0 1px,rgba(0,0,0,0) 1px 52px),',
+    'linear-gradient(rgba(0,255,136,.035),rgba(0,255,136,.035));',
+    'background-size:auto,100% 1px;background-position:0 0,0 50%;',
+    'background-repeat:no-repeat,no-repeat;',
     /* THE LEFT INSET IS THE EXIT'S COLUMN, NOT PADDING. #gameBack is position:fixed at
      * x 10-74, 64px square, forever. Copied from the control panel's own gutter rather
      * than written as a bare 84: landscape phones put punch-holes and curved edges into
@@ -444,6 +480,30 @@ export default function mount(host, api) {
     '.bp-candy::after{content:"";position:absolute;left:16%;top:12%;width:38%;height:22%;',
     'border-radius:999px;background:rgb(255 255 255 / .32);pointer-events:none}',
     '.bp-candy[hidden]{display:none}',
+
+    /* THE PAW, STAMPED INTO A CLEARED CELL AS IT GOES. pawSVG(size, colour) is the
+     * console's own five-ellipse mark (index.html:41) and it takes its colour as an
+     * argument, so the stamp is the candy's own colour rather than new art. Called, never
+     * edited — §7. It rides ON TOP of the dying candy and dies with it, so it is only
+     * ever over a cell that is on its way out: it cannot mask a filled cell. */
+    '.bp-stamp{position:absolute;inset:12%;display:block;background-repeat:no-repeat;',
+    'background-position:center;background-size:contain;pointer-events:none;opacity:0}',
+    '.bp-stamp[hidden]{display:none}',
+    '.bp-stamped{animation:bp-stamp ' + CLEAR_MS + 'ms ease-out forwards}',
+    '@keyframes bp-stamp{0%{opacity:0;transform:scale(.35)}',
+    '35%{opacity:.95;transform:scale(1.05)}100%{opacity:0;transform:scale(1.6)}}',
+
+    /* THE SWEEP ARM, ONCE, ON A LINE CLEAR — the console's @keyframes sweep is 5s linear
+     * INFINITE (index.html:18) and an infinite rotation under a drag is exactly the sort
+     * of thing that stutters an S10+. This is one turn, one element, only on the reward,
+     * and it is not created at all under prefersReducedMotion. */
+    '.bp-sweeparm{position:absolute;inset:0;pointer-events:none;z-index:3;',
+    'animation:bp-sweep 620ms linear 1 forwards}',
+    '.bp-sweeparm i{position:absolute;top:50%;left:50%;width:52%;height:2px;margin-top:-1px;',
+    'transform-origin:left center;background:rgba(0,255,136,.55);',
+    'box-shadow:0 0 12px rgba(0,255,136,.85);display:block}',
+    '@keyframes bp-sweep{from{transform:rotate(0deg);opacity:.9}',
+    '80%{opacity:.5}to{transform:rotate(360deg);opacity:0}}',
 
     '.bp-pop{animation:bp-pop ' + POP_MS + 'ms cubic-bezier(.34,1.36,.64,1) both}',
     '.bp-clear{animation:bp-clear ' + CLEAR_MS + 'ms ease-in forwards}',
@@ -533,8 +593,12 @@ export default function mount(host, api) {
     ghost.className = 'bp-ghost';
     ghost.hidden = true;
     well.appendChild(ghost);
+    var stamp = document.createElement('span');
+    stamp.className = 'bp-stamp';
+    stamp.hidden = true;
+    well.appendChild(stamp);
     grid.appendChild(well);
-    cells.push({ well: well, candy: candy, ghost: ghost, shown: 0, dying: false, ghostState: '' });
+    cells.push({ well: well, candy: candy, ghost: ghost, stamp: stamp, shown: 0, dying: false, ghostState: '' });
   }
 
   var slots = [];
@@ -552,6 +616,43 @@ export default function mount(host, api) {
   }
 
   var overlay = null;
+
+  /* The console's paw as a data URI, one per colour, built on demand and kept. No
+   * innerHTML, no image file, no urlsToCache line — invariant 3 is untouched. pawSVG is
+   * the shell's and is CALLED, not copied; if it is ever absent the stamp simply does
+   * not appear and the game is unchanged. */
+  var pawURL = Object.create(null);
+  function pawFor(color) {
+    var key = String(color);
+    if (pawURL[key]) return pawURL[key];
+    if (typeof pawSVG !== 'function') return '';
+    var ramp = CANDY[(color - 1) % CANDY.length];
+    var url = '';
+    try { url = 'url("data:image/svg+xml,' + encodeURIComponent(pawSVG(100, ramp.light)) + '")'; }
+    catch (e) { url = ''; }
+    pawURL[key] = url;
+    return url;
+  }
+
+  var sweepEl = null;
+  var sweepTimer = 0;
+  /* ONE TURN, ON THE REWARD ONLY, AND NOT AT ALL UNDER REDUCED MOTION. Re-entrant: a
+   * second clear inside the first sweep replaces it rather than stacking arms. */
+  function sweep() {
+    if (dead || reduced) return;
+    clearSweep();
+    sweepEl = document.createElement('div');
+    sweepEl.className = 'bp-sweeparm';
+    var arm = document.createElement('i');
+    sweepEl.appendChild(arm);
+    boardWrap.appendChild(sweepEl);
+    sweepTimer = setTimeout(function () { sweepTimer = 0; clearSweep(); }, 700);
+  }
+  function clearSweep() {
+    if (sweepTimer) { clearTimeout(sweepTimer); sweepTimer = 0; }
+    if (sweepEl && sweepEl.parentNode) sweepEl.parentNode.removeChild(sweepEl);
+    sweepEl = null;
+  }
 
   function paintCandyVars(el, color) {
     var ramp = CANDY[(color - 1) % CANDY.length];
@@ -610,6 +711,7 @@ export default function mount(host, api) {
     }
     var toPop = [];
     var toClear = [];
+    var toStamp = [];
     for (var i = 0; i < cells.length; i++) {
       var r = Math.floor(i / N);
       var c = i % N;
@@ -623,6 +725,8 @@ export default function mount(host, api) {
         if (st.shown !== 0) {
           st.candy.hidden = true;
           st.candy.classList.remove('bp-pop', 'bp-clear');
+          st.stamp.classList.remove('bp-stamped');
+          st.stamp.hidden = true;
           st.shown = 0;
           st.dying = false;
         }
@@ -631,20 +735,30 @@ export default function mount(host, api) {
       if (st.shown !== show || st.dying !== isDying) {
         if (st.shown !== show) paintCandyVars(st.candy, show);
         st.candy.hidden = false;
-        if (isDying) toClear.push(st.candy);
+        if (isDying) {
+          toClear.push(st.candy);
+          var url = pawFor(show);
+          if (url) {
+            st.stamp.style.backgroundImage = url;
+            st.stamp.hidden = false;
+            toStamp.push(st.stamp);
+          }
+        }
         else if (st.shown === 0) toPop.push(st.candy);
         else st.candy.classList.remove('bp-clear');
         st.shown = show;
         st.dying = isDying;
       }
     }
-    if (toPop.length || toClear.length) {
+    if (toPop.length || toClear.length || toStamp.length) {
       var m;
       for (m = 0; m < toPop.length; m++) toPop[m].classList.remove('bp-pop', 'bp-clear');
       for (m = 0; m < toClear.length; m++) toClear[m].classList.remove('bp-pop', 'bp-clear');
+      for (m = 0; m < toStamp.length; m++) toStamp[m].classList.remove('bp-stamped');
       void grid.offsetWidth;
       for (m = 0; m < toPop.length; m++) toPop[m].classList.add('bp-pop');
       for (m = 0; m < toClear.length; m++) toClear[m].classList.add('bp-clear');
+      for (m = 0; m < toStamp.length; m++) toStamp[m].classList.add('bp-stamped');
     }
     renderGhost();
   }
@@ -773,13 +887,25 @@ export default function mount(host, api) {
 
     var t = [];
     for (var i = 0; i < tray.length; i++) t.push(i === index ? null : tray[i]);
-    if (trayEmpty(t)) t = dealTray(board, mode);
+    var refilled = false;
+    if (trayEmpty(t)) { t = dealTray(board, mode); refilled = true; }
     else t = rescueUnplaceable(board, t, mode);
     tray = t;
 
     selected = null;
     beginClear(cleared.cells);
     over = !anyTrayFits(board, tray);
+
+    /* THE CLEAR IS THE ONE EVENT WORTH A BUZZ, and it speaks over the drop rather than
+     * after it — a child who cleared a line should hear that, not the placement. */
+    if (lines > 0) {
+      cue(CUE.clear);
+      try { api.vibrate(18); } catch (e) {}
+      sweep();
+    } else {
+      cue(CUE.drop);
+    }
+    if (refilled) cue(CUE.deal);
 
     render();
     renderTray(true);
@@ -963,6 +1089,7 @@ export default function mount(host, api) {
       index: index, piece: piece, grabR: g.r, grabC: g.c,
       startX: ev.clientX, startY: ev.clientY, hover: null, pointerId: pid
     };
+    cue(CUE.lift);
     fillPieceBox(dragEl, piece, Math.max(8, Math.floor(cellPx) - 3), 3);
     dragEl.hidden = false;
     moveDragEl(ev.clientX, ev.clientY);
@@ -991,12 +1118,16 @@ export default function mount(host, api) {
     var dist = Math.hypot(x - d.startX, y - d.startY);
     var hover = hitCell(x, y, d);
     if (hover && hover.valid && place(d.index, hover.row, hover.col)) {
+      /* place() has already spoken — the clear, or the drop. */
       /* No sound here. Audio is PUP-WO-0402's (§4), and the shell owns the only
        * AudioContext (§8.3) — a call to api.sound with a name outside doSound's twelve
        * banks is a silent no-op that reads like a feature. */
     } else if (dist < TAP_SLOP) {
       /* A TAP, NOT A FAILED DRAG. See TAP_SLOP. */
       selected = selected === d.index ? null : d.index;
+      cue(CUE.lift);
+    } else {
+      cue(CUE.refuse);
     }
     renderGhost();
     renderTray(false);
@@ -1009,6 +1140,7 @@ export default function mount(host, api) {
     if (!piece) return;
     if (ev.cancelable) ev.preventDefault();
     if (canPlace(board, piece.cells, row, col)) place(selected, row, col);
+    else cue(CUE.refuse);
   }
 
   for (var wi = 0; wi < cells.length; wi++) {
@@ -1072,6 +1204,7 @@ export default function mount(host, api) {
     dead = true;
     if (clearTimer) { clearTimeout(clearTimer); clearTimer = 0; }
     clearingCells = null;
+    clearSweep();
     if (ro) { try { ro.disconnect(); } catch (e) {} ro = null; }
     for (var i = 0; i < listeners.length; i++) {
       try { listeners[i][0].removeEventListener(listeners[i][1], listeners[i][2], listeners[i][3]); } catch (e) {}

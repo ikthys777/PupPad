@@ -133,6 +133,25 @@ const HARNESS = (pin) => {
       disconnect() { T.roDisconnects++; return super.disconnect(); }
     };
   }
+  /* §8.3 says the shell owns the ONE AudioContext and does not hand it out, so the
+   * question is not "was one made" — the shell makes one — but "did the MODULE make one".
+   * Attributed by construction stack, the same way the timers are. */
+  T.audio = { shell: 0, game: 0 };
+  T.vibrations = [];
+  for (const k of ['AudioContext', 'webkitAudioContext']) {
+    const C = window[k];
+    if (!C) continue;
+    window[k] = new Proxy(C, {
+      construct(target, args) {
+        (mine(new Error()) ? T.audio.game++ : T.audio.shell++);
+        return Reflect.construct(target, args);
+      },
+    });
+  }
+  if (navigator.vibrate) {
+    const v = navigator.vibrate.bind(navigator);
+    navigator.vibrate = function (p) { T.vibrations.push(p); return v(p); };
+  }
   document.addEventListener('animationstart', (e) => {
     if (e.animationName === 'bp-pop') T.anim.pop++;
     else if (e.animationName === 'bp-clear') T.anim.clear++;
@@ -201,6 +220,23 @@ async function shape(vp, pin = 0) {
     return true;
   }
 
+  /* THE CUE NAMES, OBSERVED. api.sound is frozen inside the shell, but it resolves the
+   * global `doSound` at call time, so replacing that records exactly what the module
+   * asked for — including a name outside the twelve banks, which doSound silently
+   * ignores and which is therefore invisible any other way. */
+  const recordCues = () => page.evaluate(() => {
+    window.__cues = [];
+    window.__cueUnknown = [];
+    const banks = ['ping','chime','scan','alert','tap','twinkle','blip','powerUp','lock','unlock','keyTap','error'];
+    const real = window.doSound;
+    window.doSound = function (name) {
+      window.__cues.push(name);
+      if (banks.indexOf(name) < 0) window.__cueUnknown.push(name);
+      try { return real.apply(this, arguments); } catch (e) {}
+    };
+  });
+  const cues = () => page.evaluate(() => ({ all: window.__cues.slice(), unknown: window.__cueUnknown.slice() }));
+
   const openBlocks = async ({ clearStorage = false } = {}) => {
     await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
     if (clearStorage) { await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} }); await page.reload({ waitUntil: 'domcontentloaded' }); }
@@ -249,7 +285,7 @@ async function shape(vp, pin = 0) {
     return h && h.blocks ? h.blocks.get() : null;
   });
 
-  return { ctx, page, cdp, touch, wait, rect, tapTarget, fingerTap, fingerDragTo, firstFullSlot, placeAt, openBlocks, boardState, seam, errs };
+  return { ctx, page, cdp, touch, wait, rect, tapTarget, fingerTap, fingerDragTo, firstFullSlot, placeAt, openBlocks, boardState, seam, recordCues, cues, errs };
 }
 
 try {
@@ -1118,6 +1154,206 @@ try {
       else ok(`${vp.name}: every one of the 6 rows is reachable; touch bands ${bands.map((b) => b.toFixed(0)).join('/')}px (narrowest ${Math.min(...bands).toFixed(0)}px)`);
       await s.ctx.close();
     }
+  }
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(12, async () => {
+  console.log('\n--- 12. it has a voice, every cue is a real one, and none of it outlives the game ---');
+  {
+    const s = await shape(FLEET[0], PIN_DOT);
+    await s.page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+    await s.page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await s.page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+    await s.recordCues();
+    await s.fingerTap('.pad-btn[data-id="7"]');
+    await s.page.waitForSelector('.pickerTile[data-game="blocks"]', { timeout: 10000 });
+    await s.fingerTap('.pickerTile[data-game="blocks"]');
+    await s.page.waitForFunction(() => {
+      const h = document.getElementById('gameHost');
+      return !!(h && h.blocks && h.querySelector('.bp-grid'));
+    }, { timeout: 10000 });
+    await s.wait(150);
+    await s.page.evaluate(() => { window.__cues.length = 0; window.__cueUnknown.length = 0; window.__bp.vibrations.length = 0; });
+
+    /* Five dots into row 0 — placements only — then the sixth, which clears. */
+    for (let c = 0; c < 5; c++) await s.placeAt(0, c);
+    const beforeClear = await s.cues();
+    const vibBefore = await s.page.evaluate(() => window.__bp.vibrations.length);
+    await s.placeAt(0, 5);
+    await s.page.waitForTimeout(400);
+    const afterClear = await s.cues();
+    const vibAfter = await s.page.evaluate(() => window.__bp.vibrations.length);
+    const clearCues = afterClear.all.slice(beforeClear.all.length);
+
+    if (afterClear.unknown.length) bad(`${afterClear.unknown.length} cue(s) name a bank that does not exist`,
+      `${JSON.stringify([...new Set(afterClear.unknown)])} — doSound ignores an unknown name silently, so this ships a sound that never plays`);
+    else if (!beforeClear.all.length) bad('placing a piece made no sound at all');
+    else if (!clearCues.length) bad('clearing a line made no sound at all');
+    else if (clearCues.indexOf('twinkle') < 0) bad('the line clear does not play the reward cue', `it played ${JSON.stringify(clearCues)}`);
+    else if (vibAfter <= vibBefore) bad('the line clear did not buzz', 'api.vibrate on the clear and nothing else');
+    else if (vibBefore !== 0) bad(`${vibBefore} buzz(es) fired before any line cleared — the clear is meant to be the only one`);
+    else ok(`placing speaks (${JSON.stringify([...new Set(beforeClear.all)])}), clearing speaks and buzzes (${JSON.stringify(clearCues)}), every name is one of the twelve banks`);
+
+    /* The refusal must be gentler than the reward: never a square wave.
+     *
+     * AND IT MUST ACTUALLY REFUSE. The first version tapped an empty cell just after the
+     * line cleared, so the piece PLACED and the recording came back ["keyTap","tap"] —
+     * `tap` being the drop cue. It asserted "no harsh cue" against a move that succeeded:
+     * a vacuous pass, the exact shape this file has now been bitten by three times. So a
+     * cell is occupied first, and the refusal cue is required to have fired at all. */
+    await s.placeAt(3, 3);
+    await s.wait(120);
+    const idx = Math.max(0, await s.firstFullSlot());
+    const wasFilled = (await s.boardState()).filter((c) => c.filled).length;
+    await s.fingerTap(`.bp-slot[data-slot="${idx}"]`);
+    /* Recorded AFTER the select, so what is measured is what the REFUSAL said and not
+     * the cue for picking the piece up. */
+    await s.page.evaluate(() => { window.__cues.length = 0; });
+    await s.fingerTap('.bp-well[data-row="3"][data-col="3"]');
+    await s.wait(160);
+    const refusal = (await s.cues()).all;
+    const nowFilled = (await s.boardState()).filter((c) => c.filled).length;
+    const HARSH = ['error', 'alert'];
+    if (nowFilled !== wasFilled) bad('the setup for the refusal placed a piece instead of being refused',
+      `${wasFilled} -> ${nowFilled} filled; nothing can be concluded about the refusal cue`);
+    else if (refusal.some((c) => HARSH.indexOf(c) >= 0)) bad(`the illegal drop plays a harsh cue: ${JSON.stringify(refusal)}`,
+      'error and alert are square waves — a buzz for "I changed my mind" teaches a three-year-old that the controls bite');
+    else if (!refusal.length) bad('the refused drop made no refusal cue at all',
+      'silence on a refusal leaves a child with no feedback that anything happened');
+    else ok(`a genuinely refused drop plays ${JSON.stringify([...new Set(refusal)])} — soft descending sines, never error or alert`);
+
+    /* And the module builds no AudioContext of its own. */
+    const audio = await s.page.evaluate(() => ({ ...window.__bp.audio }));
+    if (audio.game > 0) bad(`the module constructed ${audio.game} AudioContext(s) of its own`, '§8.3 — the shell holds the only one and does not hand it out');
+    else ok(`the module constructed no AudioContext (the shell made ${audio.shell})`);
+
+    await s.fingerTap('#gameBack');
+    await s.page.waitForTimeout(300);
+    await s.page.evaluate(() => { window.__cues.length = 0; });
+    await s.page.waitForTimeout(700);
+    const afterTeardown = (await s.cues()).all;
+    if (afterTeardown.length) bad(`${afterTeardown.length} cue(s) fired after teardown`, JSON.stringify(afterTeardown));
+    else ok('nothing spoke after the child left');
+    await s.ctx.close();
+  }
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(13, async () => {
+  console.log('\n--- 13. the flair is PupPad\'s own, it is transient, and it spends no contrast ---');
+  {
+    const s = await shape(FLEET[0], PIN_DOT);
+    await s.openBlocks({ clearStorage: true });
+    /* Baseline BEFORE any clear: the flair must not be sitting on the board. */
+    const idle = await s.page.evaluate(() => ({
+      sweeps: document.querySelectorAll('.bp-sweeparm').length,
+      visibleStamps: [...document.querySelectorAll('.bp-stamp')].filter((e) => !e.hidden).length,
+      wellBg: getComputedStyle(document.querySelector('.bp-well')).backgroundColor,
+      rootBg: getComputedStyle(document.querySelector('.bp-root')).backgroundImage,
+    }));
+    for (let c = 0; c < 5; c++) await s.placeAt(0, c);
+    await s.page.evaluate(() => { window.__bp.anim.pop = 0; });
+    await s.placeAt(0, 5);
+    await s.wait(90);
+    /* Mid-clear: the paw is stamped and the arm is turning. */
+    const during = await s.page.evaluate(() => {
+      const st = [...document.querySelectorAll('.bp-stamp')].filter((e) => !e.hidden);
+      return {
+        stamps: st.length,
+        withPaw: st.filter((e) => (getComputedStyle(e).backgroundImage || '').indexOf('svg') >= 0).length,
+        sweeps: document.querySelectorAll('.bp-sweeparm').length,
+        stampOverFilled: st.filter((e) => {
+          const c = e.parentNode.querySelector('.bp-candy');
+          return c && !c.hidden && !c.classList.contains('bp-clear');
+        }).length,
+      };
+    });
+    await s.page.waitForTimeout(900);
+    const after = await s.page.evaluate(() => ({
+      sweeps: document.querySelectorAll('.bp-sweeparm').length,
+      visibleStamps: [...document.querySelectorAll('.bp-stamp')].filter((e) => !e.hidden).length,
+      wellBg: getComputedStyle(document.querySelector('.bp-well')).backgroundColor,
+    }));
+    if (idle.rootBg === 'none') bad('the radar ground texture is not painted at all');
+    else if (idle.sweeps || idle.visibleStamps) bad('flair is on the board before anything happened',
+      `${idle.sweeps} sweep(s), ${idle.visibleStamps} stamp(s)`);
+    else if (!during.stamps) bad('a cleared line stamped no paw');
+    else if (during.withPaw !== during.stamps) bad(`${during.stamps - during.withPaw} stamp(s) carry no paw image`,
+      'pawSVG was not reached, so the stamp is an empty box');
+    else if (during.stampOverFilled) bad(`${during.stampOverFilled} paw(s) are over a cell that is NOT clearing`,
+      'a stamp over a live candy masks it — invariant 1');
+    else if (!during.sweeps) bad('the line clear ran no sweep');
+    else if (after.sweeps || after.visibleStamps) bad('the flair outlived the clear',
+      `${after.sweeps} sweep(s) and ${after.visibleStamps} stamp(s) still present ~1s later`);
+    else if (after.wellBg !== idle.wellBg) bad('an empty cell changed colour during the flair', `${idle.wellBg} -> ${after.wellBg}`);
+    else ok(`radar ground painted; a clear stamped ${during.stamps} paws and turned 1 sweep, both gone ~1s later, and the empty cell is still ${after.wellBg}`);
+
+    /* CONTRAST, MEASURED WITH THE FLAIR PRESENT — a filled cell must stay plainly
+     * different from an empty one, and a legal ghost from an illegal one. */
+    const contrast = await s.page.evaluate(() => {
+      const lum = (c) => {
+        const m = (c || '').match(/[\d.]+/g);
+        if (!m) return null;
+        const [r, g, b, a] = [ +m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3] ];
+        return { L: 0.2126 * r + 0.7152 * g + 0.0722 * b, a };
+      };
+      const well = document.querySelector('.bp-well');
+      const filled = [...document.querySelectorAll('.bp-candy')].find((c) => !c.hidden);
+      return {
+        well: lum(getComputedStyle(well).backgroundColor),
+        candyBase: getComputedStyle(filled || well).getPropertyValue('--bp-b').trim(),
+        ghostOk: getComputedStyle(document.querySelector('.bp-ghost')).backgroundColor,
+      };
+    });
+    if (!contrast.well) bad('could not read the empty cell colour');
+    else if (contrast.well.a < 1) bad(`the empty cell is now translucent (alpha ${contrast.well.a}) — the ground texture is bleeding through it`,
+      'invariant 1 is not decoration\'s to spend');
+    else ok(`the empty cell is opaque (alpha 1, luminance ${contrast.well.L.toFixed(0)}) with the flair painted — the ground sits behind it`);
+
+    await s.ctx.close();
+
+    /* REDUCED MOTION: the sweep is not created at all. */
+    const rm = await browser.newContext({ viewport: { width: FLEET[0].width, height: FLEET[0].height },
+      hasTouch: true, reducedMotion: 'reduce' });
+    await rm.addInitScript(HARNESS, PIN_DOT);
+    const rp = await rm.newPage();
+    const rcdp = await rm.newCDPSession(rp);
+    const rtouch = (t, pts) => rcdp.send('Input.dispatchTouchEvent', { type: t, touchPoints: pts });
+    await rp.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+    await rp.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await rp.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+    const tapAt = async (sel) => {
+      const r = await rp.evaluate((q) => { const e = document.querySelector(q); const b = e.getBoundingClientRect();
+        return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }, sel);
+      await rtouch('touchStart', [{ x: r.x, y: r.y, id: 1 }]);
+      await rp.waitForTimeout(40);
+      await rtouch('touchEnd', []);
+      await rp.waitForTimeout(140);
+    };
+    await tapAt('.pad-btn[data-id="7"]');
+    await rp.waitForSelector('.pickerTile[data-game="blocks"]', { timeout: 10000 });
+    await tapAt('.pickerTile[data-game="blocks"]');
+    await rp.waitForFunction(() => {
+      const h = document.getElementById('gameHost');
+      return !!(h && h.blocks && h.querySelector('.bp-grid'));
+    }, { timeout: 10000 });
+    await rp.waitForTimeout(150);
+    for (let c = 0; c < 6; c++) {
+      const i = await rp.evaluate(() => [...document.querySelectorAll('.bp-slot')].findIndex((x) => x.getAttribute('data-empty') === '0'));
+      await tapAt(`.bp-slot[data-slot="${Math.max(0, i)}"]`);
+      await tapAt(`.bp-well[data-row="0"][data-col="${c}"]`);
+    }
+    await rp.waitForTimeout(120);
+    const rmState = await rp.evaluate(() => ({
+      sweeps: document.querySelectorAll('.bp-sweeparm').length,
+      reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      cleared: [...document.querySelectorAll('.bp-well[data-row="0"] .bp-candy')].filter((c) => !c.hidden).length,
+    }));
+    if (!rmState.reduced) bad('the reduced-motion context did not take — this assertion would pass vacuously');
+    else if (rmState.sweeps) bad(`${rmState.sweeps} sweep(s) ran with prefers-reduced-motion set`);
+    else ok('with prefers-reduced-motion set the sweep is never created, and the line still clears');
+    await rm.close();
   }
   });
 

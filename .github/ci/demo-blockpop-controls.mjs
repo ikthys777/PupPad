@@ -79,8 +79,11 @@ async function scenario(section, label, { mutate, expectText }) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-  const pass = observed === 'RED';
-  results.push({ section, label, observed, pass, detail });
+  /* RETURNED, NOT PUSHED. The lanes run concurrently and the first version read
+   * `results.length` to find where its own record landed — a shared counter two lanes
+   * can read the same value of, which duplicated one scenario's row five times and lost
+   * four others. A race in the harness that reports on races. */
+  return { section, label, observed, pass: observed === 'RED', detail };
 }
 
 /* Collected first, run in lanes, reported in declaration order so the output is stable
@@ -123,10 +126,8 @@ plan(5, 'every pointermove repaints the board and re-pops every candy', {
      * the trailing `else`, and the module then fails to parse — which the control
      * harness correctly refused to score as "the check caught the defect". */
     let out = sub(s, '      if (st.shown !== show || st.dying !== isDying) {', '      if (show !== 0) {');
-    out = sub(out, `        if (isDying) toClear.push(st.candy);
-        else if (st.shown === 0) toPop.push(st.candy);
-        else st.candy.classList.remove('bp-clear');`, `        if (isDying) toClear.push(st.candy);
-        else toPop.push(st.candy);`);
+    out = sub(out, `        else if (st.shown === 0) toPop.push(st.candy);
+        else st.candy.classList.remove('bp-clear');`, `        else toPop.push(st.candy);`);
     out = sub(out, `    moveDragEl(ev.clientX, ev.clientY);
     drag.hover = hitCell(ev.clientX, ev.clientY, drag);
     renderGhost();`, `    moveDragEl(ev.clientX, ev.clientY);
@@ -320,6 +321,67 @@ plan(11, 'the geometric cap on the lift is removed, costing the bottom row its t
   expectText: 'of room below the last row',
 });
 
+/* ------------------------------------------------------------------------
+ * PUP-WO-0402 §2 (the voice) and §3 (the flair).
+ * ---------------------------------------------------------------------- */
+
+plan(12, 'a cue names a bank that does not exist, so it never plays', {
+  mutate: (s) => sub(s, "    clear: 'twinkle',", "    clear: 'sparkle',"),
+  expectText: 'name a bank that does not exist',
+});
+
+plan(12, 'the line clear is silent', {
+  mutate: (s) => sub(s, '      cue(CUE.clear);', '      void CUE;'),
+  expectText: 'does not play the reward cue',
+});
+
+plan(12, 'the line clear does not buzz', {
+  mutate: (s) => sub(s, '      try { api.vibrate(18); } catch (e) {}', '      /* no buzz */'),
+  expectText: 'did not buzz',
+});
+
+plan(12, 'the refusal bites — a square-wave error cue', {
+  mutate: (s) => sub(s, "    refuse: 'lock',", "    refuse: 'error',"),
+  expectText: 'harsh cue',
+});
+
+plan(12, 'the refused drop is silent, so nothing tells him it was refused', {
+  mutate: (s) => sub(s, '    else cue(CUE.refuse);', '    else void CUE;'),
+  expectText: 'no refusal cue at all',
+});
+
+plan(12, 'the module builds its own AudioContext', {
+  mutate: (s) => sub(s, '  function cue(name) {\n    if (dead) return;',
+    '  var ownCtx = null;\n  function cue(name) {\n    if (dead) return;\n    try { if (!ownCtx) ownCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}'),
+  expectText: 'constructed 1 AudioContext',
+});
+
+plan(13, 'the paw stamp is never drawn', {
+  mutate: (s) => sub(s, '    if (typeof pawSVG !== \'function\') return \'\';', '    return \'\';'),
+  expectText: 'stamped no paw',
+});
+
+plan(13, 'the sweep never runs on a clear', {
+  mutate: (s) => sub(s, '      sweep();', '      void 0;'),
+  expectText: 'ran no sweep',
+});
+
+plan(13, 'the sweep is left on the board instead of being cleaned up', {
+  mutate: (s) => sub(s, '    sweepTimer = setTimeout(function () { sweepTimer = 0; clearSweep(); }, 700);', '    sweepTimer = 0;'),
+  expectText: 'outlived the clear',
+});
+
+plan(13, 'reduced motion is ignored and the sweep runs anyway', {
+  mutate: (s) => sub(s, '    if (dead || reduced) return;', '    if (dead) return;'),
+  expectText: 'ran with prefers-reduced-motion set',
+});
+
+plan(13, 'the ground texture bleeds through the empty cells', {
+  mutate: (s) => sub(s, "    '-webkit-appearance:none;background:#e3cfa8;border-radius:22%;',",
+    "    '-webkit-appearance:none;background:rgba(227,207,168,.55);border-radius:22%;',"),
+  expectText: 'translucent',
+});
+
 console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time.\n`);
 {
   let next = 0;
@@ -328,13 +390,10 @@ console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time.\n`);
     for (;;) {
       const i = next++;
       if (i >= QUEUE.length) return;
-      const before = results.length;
-      await scenario(QUEUE[i].section, QUEUE[i].label, QUEUE[i].spec);
-      ordered[i] = results[before];
+      ordered[i] = await scenario(QUEUE[i].section, QUEUE[i].label, QUEUE[i].spec);
     }
   };
   await Promise.all(Array.from({ length: LANES }, lane));
-  results.length = 0;
   for (const r of ordered) if (r) results.push(r);
 }
 
