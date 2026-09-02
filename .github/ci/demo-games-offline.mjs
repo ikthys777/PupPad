@@ -32,23 +32,40 @@ const REPO = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
 
 /* Architecture §5: a demonstration asserts the COMMIT that ran, never the conclusion
  * alone. A green with no subject is a claim about a tree nobody can identify. */
-let COMMIT = 'unknown';
-try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch {}
+/* FAILS CLOSED. This used to initialise to 'unknown' and pass — architecture §5 says
+ * every demonstration asserts the commit it ran against, and a green with no
+ * identifiable subject is a claim about a tree nobody can name. PUP-WO-0300 fixed it in
+ * one check and recorded the rest; PUP-WO-0201 is the next work order to open this
+ * directory, which is where CC-A ruled the sweep belongs. PUPPAD_SUBJECT lets a tree
+ * with no .git — a `git archive` export, which the freeze protocol hands a read-only
+ * adversarial pass — state its own subject instead. */
+let COMMIT = process.env.PUPPAD_SUBJECT || '';
+if (!COMMIT) {
+  try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+}
+if (!/^[0-9a-f]{7,40}$/.test(COMMIT)) {
+  console.error('::error::CHECK 14 cannot identify the commit it is testing.');
+  console.error('  Run it inside the repository, or set PUPPAD_SUBJECT=<sha>.');
+  process.exit(1);
+}
 console.log(`CHECK 14 — games offline, cold. subject ${COMMIT.slice(0, 12)}\n`);
 
 /* The module the Games button loads is READ FROM THE REGISTRY, never assumed — see
  * the same note in demo-games-back.mjs. Hard-coding the placeholder was true only
  * while the placeholder was first in GAMES, and PUP-WO-0300 made it second. Fails
  * closed: an unreadable registry throws rather than falling back to a guess. */
-function firstRegistryModule(repo) {
+function firstRegistryEntry(repo) {
   const html = readFileSync(join(repo, 'index.html'), 'utf8');
   const reg = html.match(/var GAMES\s*=\s*\[([\s\S]*?)\n\];/);
   if (!reg) throw new Error('demo-games-offline: cannot find `var GAMES = [ ... ];` in index.html');
   const m = reg[1].match(/module\s*:\s*'([^']+)'/);
   if (!m) throw new Error('demo-games-offline: the first registry entry has no `module` field');
-  return m[1].replace(/^\./, '');
+  const idm = reg[1].match(/id\s*:\s*'([^']+)'/);
+  if (!idm) throw new Error('demo-games-offline: the first registry entry has no `id` field');
+  return { module: m[1].replace(/^\./, ''), id: idm[1] };
 }
-const MODULE = firstRegistryModule(REPO);
+const FIRST = firstRegistryEntry(REPO);
+const MODULE = FIRST.module;
 console.log(`  the Games button loads ${MODULE}\n`);
 
 const MIME = {
@@ -129,8 +146,15 @@ try {
     .then(() => ok('console rendered offline, and the Games button is there'))
     .catch(() => bad('the console did not render offline', 'the shell itself is not available cold'));
 
-  /* ---- 4. console -> games -> placeholder ---- */
+  /* ---- 4. console -> PICKER -> game, which is roadmap P2 gate 4's actual path ----
+   * PUP-WO-0201 inserted the chooser, so the offline walk is console, picker, tile, game
+   * — every step of it served from the precache with the origin gone. */
   await cold.click('.pad-btn[data-id="7"]');
+  const picked = await cold.waitForSelector(`.pickerTile[data-game="${FIRST.id}"]`, { timeout: 10000 })
+    .then(() => true).catch(() => false);
+  if (picked) ok('the picker opened offline and rendered its tiles');
+  else bad('the picker did not open offline', 'the chooser is part of the cold path now');
+  await cold.click(`.pickerTile[data-game="${FIRST.id}"]`);
   /* "THE HOST HAS TEXT IN IT" WAS NEVER THE PROPERTY, IT WAS THE PLACEHOLDER'S HABIT.
    * The first game to ship — Gyre — draws a canvas and puts no text on screen at all,
    * by design: northstar invariant 1 is that a non-reader can operate every surface,
@@ -186,7 +210,7 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`CHECK 14 PASSED at ${COMMIT.slice(0, 12)} — cold start, no network:`);
-console.log(`  console rendered → Games opened → ${MODULE} mounted from the precache`);
+console.log(`  console rendered → picker opened → ${MODULE} mounted from the precache`);
 console.log('  → the way back was a thumb-sized target → back returned to the console.');
 console.log('  Offline is real here: the listener was closed and its keep-alive sockets');
 console.log('  destroyed, and a direct fetch to the origin was confirmed to fail first —');

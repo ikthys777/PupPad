@@ -358,6 +358,43 @@ jobs:
         # measurement is Scotty's, like the cold-start number P2 gate 5 asks for.
         run: node .github/ci/demo-gyre.mjs .
 
+      - name: "Check 17 — the picker, pressed with a finger"
+        # PUP-WO-0201 §3. The picker is a full-screen surface a three-year-old operates by
+        # touch, so it is pressed with CDP touch points and not with page.click — this
+        # project has already shipped one control that every check called reachable while
+        # it was inert to a finger, because a synthetic mouse click is subject to neither
+        # the multi-touch rule nor touch slop.
+        #
+        # That paid immediately: a tile with `touch-action: manipulation` inside a
+        # scrollable grid emitted pointercancel instead of pointerup on a sliding tap and
+        # did nothing at all — the third instance of the same defect, found only because
+        # the tap slid. The event list came off the element; it was not reasoned about.
+        #
+        # It also covers §2.3, which is §1.6 applied to the surface being added: the
+        # renderer is REPLACED with one that throws, and the way back must still work.
+        # Draw, Camera and Map all wire CLOSE last and Map is a live trap; the picker
+        # must not join that list.
+        #
+        # WHAT IT CANNOT DO IS ROADMAP P2 GATE 3 — a stranger naming the tiles with every
+        # word covered. Simulating that is a flag-and-stop (§7): a model predicting what a
+        # stranger would say is not evidence about a stranger.
+        run: node .github/ci/demo-picker.mjs .
+
+      - name: "Check 18 — adding a game still touches exactly three things"
+        # Roadmap P2 gate 2 and northstar invariant 6, as a MUTATION rather than a memory.
+        # PUP-WO-0200 demonstrated this with a throwaway module and correctly did not ship
+        # it, which left the gate's only evidence in a commit message about a tree that no
+        # longer exists — architecture §6.1 member 5. This performs the addition on every
+        # run in a throwaway git repository and reverts by deleting the directory.
+        #
+        # COUNTING FILES IS NOT ENOUGH, and PUP-WO-0200 found the exact reason: an anchor
+        # in this file once pinned the last urlsToCache entry, so adding a game required
+        # editing a file the diff was ALREADY counting — three by the count, four in fact,
+        # and the gate's own instrument could not see the gate failing. So it also runs
+        # the repo's own checks against the mutated tree: three paths that leave
+        # check-syntax or check-assets red mean a fourth edit is still owed.
+        run: node .github/ci/check-gate2.mjs .
+
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
   #

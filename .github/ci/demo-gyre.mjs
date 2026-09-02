@@ -268,6 +268,12 @@ page.on('pageerror', (e) => pageErrors.push(String(e)));
 const openField = async () => {
   await page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
   await page.click('.pad-btn[data-id="7"]');
+  /* PUP-WO-0201 put a picker between the button and the game. Gyre's tile is named
+   * explicitly rather than taken by position — this check is about Gyre by definition, so
+   * naming it is stating the subject, while `the first tile` would be assuming an
+   * ordering that the picker exists precisely to stop mattering. */
+  await page.waitForSelector('.pickerTile[data-game="gyre"]', { timeout: 10000 });
+  await page.click('.pickerTile[data-game="gyre"]');
   await page.waitForFunction(() => {
     const h = document.getElementById('gameHost');
     return !!(h && h.gyre && h.querySelector('canvas'));
