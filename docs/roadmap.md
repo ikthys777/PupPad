@@ -230,8 +230,20 @@ and P1 themselves to merge. From P2 onward the rule applies without exception.
   any specific game. Ships with one trivial placeholder game proving the contract.
 
 **Exit gate.**
-1. No reference to a Power button remains: `grep -ri power index.html` returns only
-   the sound-bank definition.
+1. No reference to a Power **button** remains: no button label, icon, handler or
+   registry entry names Power. The only surviving matches for `grep -ri power
+   index.html` are **the sound-bank definition and the deliberate `sound:'powerUp'`
+   reassignment** named in `PUP-WO-0200` directly above.
+   *(Reworded 2026-09-02. The gate previously required that grep to return **only**
+   the sound-bank line — **which cannot be satisfied while obeying the instruction
+   directly above it**, since reassigning the `powerUp` sound to games-open
+   necessarily puts a second `power` match on the button. The **property** always
+   held; the **literal test** could not, so a builder following the roadmap would
+   have had to contort the code to make a grep return one line — a test that has
+   stopped measuring the property and started measuring itself. Found by CC-B while
+   building `PUP-WO-0200`, which refused to contort it and flagged instead. Same
+   shape as `PUP-WO-0105` §3.1 and `PUP-WO-0200` §2: **a document forbidding what it
+   demands** — fourth instance in two days, and the third of them CC-A's.)*
 2. Adding a second placeholder game to the picker requires changes to exactly three
    things — its own module, one registry entry, one `urlsToCache` line — verified by
    `git diff --stat`. *(Falsifies northstar invariant 6.)*

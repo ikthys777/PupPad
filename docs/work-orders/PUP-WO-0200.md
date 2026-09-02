@@ -108,16 +108,51 @@ wording. It is a contract demonstration, not a game; it exists so gate 2 can be 
 - **6** — adding a game is a data change. Gate 2 is its falsification and it is
   measured with `git diff --stat`, not asserted.
 
-**Protected surfaces — must diff to empty:** `sw.js`. *(One `urlsToCache` line per
-game is expected later, per gate 2 — but this work order adds no real game, so the
-worker does not change. If you believe it must, that is a flag-and-stop.)*
+**Protected surfaces — must diff to empty:** `manifest.json` and both icons.
+
+**`sw.js` may change by EXACTLY ONE ADDED `urlsToCache` LINE for the placeholder
+module, and nothing else. `CACHE_VERSION` stays `v17`.**
+*(Amended 2026-09-02 on `PUP-WO-0200`'s §7 flag-and-stop. This section previously
+protected `sw.js` outright on the premise that "this work order adds no real game" —
+**that premise was false and it was CC-A's**: §1.4 requires a placeholder and §1.1's
+fail-closed check makes a non-empty `games/` mandatory, so the placeholder is a game
+as far as the asset manifest is concerned. Without the line, `check-assets` fails
+closed and acceptance §3.5 — cold start in airplane mode — would be knowingly false.*
+
+*The line is **not** an incursion into the worker: **northstar invariant 6 names "its
+own module, one registry entry, and the asset manifest — nothing else," and
+`urlsToCache` IS the asset manifest.** It is the third of gate 2's three things.*
+
+***The `CACHE_VERSION` bump is REFUSED, and three independent reasons agree.***
+*(1) `PUP-WO-0000` §6.1 refuses it itself: "Edit 2 is **not** required for the new
+asset to land … the bump is required to evict stale copies of **changed** assets."
+This adds a **new** asset; there is no stale copy. (2) **Gate 2 counts exactly three
+things and a bump is a fourth** — it would falsify invariant 6 by gate 2's own test,
+inside the work order whose job is to make gate 2 pass. (3) Measured cost: post-`0102`
+the reap is prefix-bounded and deletes the old cache whole, and `PUP-WO-0105` measured
+a bump at **24 of 24 map tiles offline before, 0 of 24 after**.*
+
+***On the convention*** *— 13 of `sw.js`'s 17 commits being version bumps is real
+evidence, and it is overridden deliberately rather than ignored: **that convention
+formed before the reap was prefix-bounded and before the runtime cache held opaque
+assets.** At `v16` a bump cost nothing because the reap was origin-wide and everything
+was going anyway. A convention is evidence about the conditions that produced it, and
+those conditions are gone.)*
 `manifest.json` and both icons are also protected.
 
 ## 3. Acceptance — proven, not asserted
 
 1. `git fetch origin && git diff origin/main --stat` shows `index.html`, `games/`,
-   `.github/` and `docs/` only. **`sw.js`, `manifest.json` and both icons diff to
-   empty.**
+   `sw.js`, `.github/` and `docs/` only. **`manifest.json` and both icons diff to
+   empty**, and **`sw.js`'s diff is exactly one added `urlsToCache` line with
+   `CACHE_VERSION` unchanged** (§2).
+   *(Corrected 2026-09-02 with §2. This line stated the fence **positively, as an
+   allowlist**, and separately asserted `sw.js` diffs to empty — so amending §2 alone
+   would have left the work order contradicting itself again, in the copy that names
+   the constraint without naming the token. **That is exactly how the same belief
+   survived two corrections in `PUP-WO-0102`**: a constraint written as an allowlist
+   and the same constraint written as a denylist share no vocabulary. Caught this time
+   by asking where else the belief lived rather than grepping for its wording.)*
 2. **§1.1's check demonstrated RED first**, against a module carrying each forbidden
    token, each removed one at a time so the check is shown to detect **each** rather
    than **any**. *(Architecture §6.1: a detector proven by removing a sole detector.)*
@@ -181,7 +216,8 @@ diff status as a checkable fact.
 ## 7. Flag-and-stop
 
 - **P1's gate not closed** when you start. §0.
-- **Any need to change `sw.js`**, `manifest.json` or an icon.
+- **Any need to change `sw.js` beyond §2's single `urlsToCache` line**, or to touch
+  `manifest.json` or an icon. **A `CACHE_VERSION` bump is refused — see §2.**
 - **§1.1's check proving unbuildable or unable to fail** — a ruling, not a limit to
   declare.
 - **Gate 2 needing a fourth thing changed.** That falsifies invariant 6 and is an
