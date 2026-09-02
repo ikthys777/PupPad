@@ -153,6 +153,11 @@ export default function mount(host, api) {
    * narrow enough that a deliberate drag across a cell boundary is still a drag. */
   var TAP_SLOP = 32;
 
+  /* §1a. The padding inside a tray slot, and the shared ceiling on a tray cell as a
+   * multiple of the BOARD cell. One name each, measured at no viewport. */
+  var TRAY_INSET = 8;
+  var TRAY_CELL_CAP = 1.35;
+
   /* --- engine (engine.ts), pure, no DOM --------------------------------- */
 
   function emptyBoard(n) {
@@ -484,8 +489,13 @@ export default function mount(host, api) {
     /* THE PAW, STAMPED INTO A CLEARED CELL AS IT GOES. pawSVG(size, colour) is the
      * console's own five-ellipse mark (index.html:41) and it takes its colour as an
      * argument, so the stamp is the candy's own colour rather than new art. Called, never
-     * edited — §7. It rides ON TOP of the dying candy and dies with it, so it is only
-     * ever over a cell that is on its way out: it cannot mask a filled cell. */
+     * edited — §7.
+     *
+     * IT MUST BE RELEASED ON EVERY PATH OUT OF THE DYING STATE, and there are two: the
+     * cell empties, or a piece lands on it inside the clear window and it goes straight
+     * back to live. The second was missed, so a stamp stayed over a live candy — harmless
+     * only because this keyframe ends at opacity 0 with `forwards`. Do not rely on that:
+     * end it visible and the paw masks the cell. */
     '.bp-stamp{position:absolute;inset:12%;display:block;background-repeat:no-repeat;',
     'background-position:center;background-size:contain;pointer-events:none;opacity:0}',
     '.bp-stamp[hidden]{display:none}',
@@ -532,7 +542,19 @@ export default function mount(host, api) {
     'background:linear-gradient(165deg,var(--bp-l) 0%,var(--bp-b) 46%,var(--bp-d) 100%);',
     'box-shadow:inset 0 2px 0 rgb(255 255 255 / .42),0 2px 0 var(--bp-d)}',
 
-    '.bp-drag{position:absolute;left:0;top:0;pointer-events:none;z-index:5;',
+    /* `display:grid` IS LOAD-BEARING AND ITS ABSENCE MADE THE DRAGGED PIECE INVISIBLE.
+     * fillPieceBox sets grid-template-columns/rows on whatever box it is handed, and the
+     * tray's `.bp-piece` carries `display:grid`. This one did not, so the template was
+     * inert, the piece cell had no intrinsic size, and it laid out at 0x0 inside a 64x64
+     * box. THE BOX WAS THE RIGHT SIZE AND IN THE RIGHT PLACE AND CONTAINED NOTHING.
+     *
+     * Scotty's words were "the piece should be visible under your finger when you drag so
+     * it's visually coherent" — TWO requirements, and the first one was literal. This work
+     * order read it as the coherence defect alone and fixed that; the piece was never
+     * drawn at all. Every check measured `.bp-drag`'s bounding rect, and a rect comes from
+     * style, not from ink, so nothing saw it. Check 21 §11 now asserts the proxy actually
+     * contains drawn cells and that their union is the box it measures. */
+    '.bp-drag{position:absolute;left:0;top:0;display:grid;pointer-events:none;z-index:5;',
     'will-change:transform;filter:drop-shadow(0 6px 10px rgb(0 0 0 / .35))}',
 
     /* THE TERMINAL STATE'S ONE WAY BACK. §8.5 and invariant 5: a single affordance
@@ -745,7 +767,19 @@ export default function mount(host, api) {
           }
         }
         else if (st.shown === 0) toPop.push(st.candy);
-        else st.candy.classList.remove('bp-clear');
+        else {
+          st.candy.classList.remove('bp-clear');
+          /* AND RELEASE THE STAMP. This is the one branch that reaches a cell which was
+           * dying and is now live again — a piece landed on it inside the 280ms window,
+           * which is exactly the move check 21 §6 exercises. It stripped the candy's
+           * clear class and left the paw's, so the stamp stayed parented over a LIVE
+           * candy. Invisible today only because @keyframes bp-stamp ends at opacity 0
+           * with `forwards`; anyone who ends it visible ships a paw masking a filled
+           * cell. It also made the comment above ("it cannot mask a filled cell") false
+           * as written, which is a comment claiming coverage that does not exist. */
+          st.stamp.classList.remove('bp-stamped');
+          st.stamp.hidden = true;
+        }
         st.shown = show;
         st.dying = isDying;
       }
@@ -833,10 +867,34 @@ export default function mount(host, api) {
         s.box.style.height = '0px';
         continue;
       }
+      /* THE THING HE GRABS MUST NOT BE SMALLER THAN THE THING HE AIMS AT — and it was,
+       * by a factor of nearly two. The source's PieceTray divides by `max(w, h, 3)`: one
+       * divisor for both axes, floored at 3, against a hardcoded 88px that assumed its
+       * own 128px slot. In this port's 357x123 landscape slot a 1x1 dot was drawn at 35px
+       * beside a 64px board cell — the biggest, emptiest panel on the screen holding the
+       * smallest graphic. Scotty saw it on the device.
+       *
+       * PER AXIS, AGAINST THE MEASURED SLOT. The ResizeObserver already drives relayout,
+       * which calls renderTray(true), so this is measured on resize and not per render.
+       *
+       * THE CAP IS SHARED ON PURPOSE. Uncapped, a dot reaches 107px while a 4-tall piece
+       * sits at 26px and the tray stops reading as one set of objects; 1.35x the board
+       * cell keeps a dot a big friendly target without that.
+       *
+       * WHAT THIS CANNOT DO, measured and ruled rather than assumed: a piece cell can NOT
+       * always reach the board cell. A 4-long piece at 64px needs 256px on its long axis;
+       * a slot holding both a 4-wide and a 4-tall piece is square at 256px; three of those
+       * is 768px against a 357x396 tray column. CC-A verified the arrangement space
+       * independently and struck that clause. What holds instead is that every shape fills
+       * at least half the slot's shorter axis, and the GHOST resizes to the board cell on
+       * pickup — so drawn size in the tray never has to encode cell count. */
       var rect = s.slot.getBoundingClientRect();
-      var span = Math.max(p.w, p.h, 3);
-      var room = Math.min(rect.width || 120, rect.height || 120) - 16;
-      var cell = Math.max(8, Math.floor((room > 0 ? room : 88) / span));
+      var innerW = (rect.width || 120) - TRAY_INSET * 2;
+      var innerH = (rect.height || 120) - TRAY_INSET * 2;
+      var cap = cellPx > 0 ? cellPx * TRAY_CELL_CAP : 96;
+      var cell = Math.floor(Math.min(innerW / p.w, innerH / p.h));
+      if (cell > cap) cell = Math.floor(cap);
+      if (cell < 8) cell = 8;
       fillPieceBox(s.box, p, cell, 3);
     }
   }
@@ -1000,8 +1058,10 @@ export default function mount(host, api) {
    * the same amount, BOTH OR NEITHER. Not "neither" — that puts the piece back under his
    * palm. So: one constant, and the only two expressions that consume it are moveDragEl
    * and hitCell. Two expressions that must agree is the family this project has been
-   * bitten by four times; this is that family reduced to one expression each side of a
-   * single name.
+   * bitten by four times; this is that family reduced to ONE NAME AND ONE DERIVATION.
+   * Precisely: `DRAG_LIFT_CELLS` has one consumer, `dragLiftPx()`, which has two —
+   * moveDragEl and hitCell. Neither of those two can drift from the other without
+   * changing the derivation both read.
    *
    * Whether 0.9 of a cell clears Buddy's palm is HIS question, not ours. It is one
    * constant so the answer is a one-line change. */

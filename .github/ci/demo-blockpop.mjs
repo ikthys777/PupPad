@@ -227,7 +227,18 @@ async function shape(vp, pin = 0) {
   const recordCues = () => page.evaluate(() => {
     window.__cues = [];
     window.__cueUnknown = [];
-    const banks = ['ping','chime','scan','alert','tap','twinkle','blip','powerUp','lock','unlock','keyTap','error'];
+    /* THE BANK LIST IS READ OUT OF THE SHELL, NOT PASTED HERE. A hardcoded copy grades
+     * the module against this file's idea of the twelve banks: delete `lock` from
+     * doSound's own table and the refusal goes silent while the check still calls the
+     * name valid. Two expressions that must agree, one of them in the test. doSound's
+     * table is a local inside its try block, so it is probed by CALLING it — a name that
+     * exists produces a sound path, one that does not is a no-op — which is not
+     * observable either. So: read the source of the shipped function and take the keys of
+     * the object literal it switches on. If that ever stops parsing, the check says so
+     * rather than silently trusting a stale list. */
+    const src = String(window.doSound);
+    const banks = [...src.matchAll(/(\w+)\s*:\s*function\s*\(/g)].map((m) => m[1]);
+    window.__banks = banks;
     const real = window.doSound;
     window.doSound = function (name) {
       window.__cues.push(name);
@@ -235,7 +246,7 @@ async function shape(vp, pin = 0) {
       try { return real.apply(this, arguments); } catch (e) {}
     };
   });
-  const cues = () => page.evaluate(() => ({ all: window.__cues.slice(), unknown: window.__cueUnknown.slice() }));
+  const cues = () => page.evaluate(() => ({ all: window.__cues.slice(), unknown: window.__cueUnknown.slice(), banks: window.__banks.slice() }));
 
   const openBlocks = async ({ clearStorage = false } = {}) => {
     await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
@@ -1062,7 +1073,18 @@ try {
           const d = document.querySelector('.bp-drag');
           if (!d || d.hidden) return null;
           const r = d.getBoundingClientRect();
-          return { cx: r.x + r.width / 2, cy: r.y + r.height / 2 };
+          /* AN EMPTY BOX STILL HAS A RECT. A build whose drag proxy draws NOTHING — no
+           * cells, or cells at zero size — passed every assertion below, because all of
+           * them measure this rectangle and a rectangle comes from style, not from ink.
+           * The child would see nothing follow his finger. */
+          const cs = [...d.querySelectorAll('.bp-piececell')].map((e) => e.getBoundingClientRect())
+            .filter((b) => b.width > 0 && b.height > 0);
+          let ix0 = Infinity, iy0 = Infinity, ix1 = -Infinity, iy1 = -Infinity;
+          for (const b of cs) { ix0 = Math.min(ix0, b.x); iy0 = Math.min(iy0, b.y);
+            ix1 = Math.max(ix1, b.x + b.width); iy1 = Math.max(iy1, b.y + b.height); }
+          return { cx: r.x + r.width / 2, cy: r.y + r.height / 2, w: r.width, h: r.height,
+            drawn: cs.length, minCell: cs.length ? Math.min(...cs.map((b) => b.width)) : 0,
+            inkW: cs.length ? ix1 - ix0 : 0, inkH: cs.length ? iy1 - iy0 : 0 };
         });
         /* The lift probe must not consume a tray piece or occupy a cell a later phase
          * aims at — it leaves the grid before lifting, so it measures and changes nothing.
@@ -1085,6 +1107,13 @@ try {
       /* 1. Derive the lift from the picture itself. */
       const probe = await dragTo((await s.rect('.bp-well[data-row="3"][data-col="3"]')).cx, geom.top + geom.cell * 3.5, true);
       if (!probe.painted) { bad(`${vp.name}: nothing was painted under the finger — .bp-drag was hidden mid-drag`); await s.ctx.close(); continue; }
+      if (!probe.painted.drawn) { bad(`${vp.name}: the dragged piece draws no cells at all — an empty box follows the finger`,
+        'every measurement here reads that box\'s rect, and a rect comes from style, not from ink'); await s.ctx.close(); continue; }
+      if (probe.painted.minCell < geom.cell * 0.5) { bad(`${vp.name}: the dragged piece renders at ${probe.painted.minCell.toFixed(1)}px against a ${geom.cell.toFixed(1)}px board cell`,
+        'what follows the finger must be the size it will land at'); await s.ctx.close(); continue; }
+      if (Math.abs(probe.painted.inkW - probe.painted.w) > geom.cell * 0.35 || Math.abs(probe.painted.inkH - probe.painted.h) > geom.cell * 0.35)
+        bad(`${vp.name}: the drag proxy's box (${probe.painted.w.toFixed(0)}x${probe.painted.h.toFixed(0)}) is not the size of what it draws (${probe.painted.inkW.toFixed(0)}x${probe.painted.inkH.toFixed(0)})`,
+          'the rect this section measures is not the picture the child sees');
       const LIFT = (geom.top + geom.cell * 3.5) - probe.painted.cy;
 
       /* 2. Coherence, at three arbitrary points that are NOT cell centres. */
@@ -1122,11 +1151,99 @@ try {
       }
       /* Zero, with 2px of slack for sub-pixel layout. The picture is either over the
        * cell it fills or it is not. */
+      /* AND ONE AIM WHERE THE ANSWER IS ZERO. Containment tolerates up to half a cell in
+       * each axis on a CORRECT build, because the picture floats and the cell is discrete
+       * — so a 20px horizontal desync and a 12px lift error both sat inside it and were
+       * green. Aim the picture at an exact cell centre and the expected offset is 0, so
+       * any desync shows up at its true size. */
+      {
+        const w3 = await s.rect('.bp-well[data-row="3"][data-col="2"]');
+        const r3 = await dragTo(w3.cx, Math.min(geom.vh - 3, w3.cy + LIFT), true);
+        if (!r3.painted) bad(`${vp.name}: nothing painted on the centred aim`);
+        else {
+          const ex = Math.abs(r3.painted.cx - w3.cx);
+          const ey = Math.abs(r3.painted.cy - w3.cy);
+          if (ex > 4 || ey > 4) bad(`${vp.name}: aimed at a cell centre, the picture lands ${ex.toFixed(1)},${ey.toFixed(1)}px off it`,
+            'on a coherent build this is zero — the picture and the drop are computed from different points');
+          else ok(`${vp.name}: aimed at a cell centre the picture sits ${ex.toFixed(1)},${ey.toFixed(1)}px off it`);
+        }
+      }
+
+      /* AND THE PROXY MUST BE THE PIECE'S SIZE, WHICH A 1x1 CANNOT SHOW. A build whose
+       * proxy is always one cell is identical to a correct one for a dot. */
+      {
+        const t3 = await shape(vp, PIN_TRI);
+        await t3.openBlocks({ clearStorage: true });
+        const gp3 = await t3.page.evaluate(() => {
+          const r = document.querySelector('.bp-slot[data-slot="0"] .bp-piece').getBoundingClientRect();
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        const mid3 = await t3.rect('.bp-well[data-row="3"][data-col="2"]');
+        await t3.touch('touchStart', [{ x: gp3.x, y: gp3.y, id: 1 }]);
+        for (let i = 1; i <= 6; i++) {
+          await t3.touch('touchMove', [{ x: gp3.x + (mid3.cx - gp3.x) * (i / 6), y: gp3.y + (mid3.cy - gp3.y) * (i / 6), id: 1 }]);
+          await t3.wait(12);
+        }
+        const px = await t3.page.evaluate(() => {
+          const d = document.querySelector('.bp-drag');
+          const r = d.getBoundingClientRect();
+          const cs = [...d.querySelectorAll('.bp-piececell')].map((e) => e.getBoundingClientRect());
+          const g = document.querySelector('.bp-grid').getBoundingClientRect();
+          return { boxW: r.width, boxH: r.height, cells: cs.length, cell: g.width / 6 };
+        });
+        await t3.touch('touchEnd', []);
+        await t3.wait(120);
+        if (px.cells < 3) bad(`${vp.name}: a 3-wide piece drags as ${px.cells} cell(s)`);
+        else if (px.boxW < px.cell * 2.5) bad(`${vp.name}: a 3-wide piece drags in a ${px.boxW.toFixed(0)}px box against a ${px.cell.toFixed(0)}px cell`,
+          'the proxy is not the size of the piece — it will not look like what lands');
+        else ok(`${vp.name}: a 3-wide piece drags as ${px.cells} cells in a ${px.boxW.toFixed(0)}x${px.boxH.toFixed(0)} box (cell ${px.cell.toFixed(0)})`);
+        await t3.ctx.close();
+      }
+
       const TOL = 2;
       if (broke) bad(`${vp.name}: ${broke}`);
       else if (worst.d > TOL) bad(`${vp.name}: the piece is painted ${worst.d.toFixed(1)}px OUTSIDE the cell it lands in`,
         `worst ${worst.label}: ${worst.dx.toFixed(1)}px horizontally, ${worst.dy.toFixed(1)}px vertically off a ${geom.cell.toFixed(1)}px cell — he aims at the picture and the block goes elsewhere`);
       else ok(`${vp.name}: lift measured at ${LIFT.toFixed(1)}px; at mid-board, near the top and near the bottom the painted piece sits INSIDE the cell it fills`);
+
+      /* 2b. WHERE THE GHOST IS PAINTED. Nothing in this file asserted it: §2 reads the
+       * ghost's DOM PARENT (`closest('.bp-well')`), never its geometry, so a ghost given
+       * `transform: translateY(-72%)` — painted a cell away from the well it belongs to —
+       * was green everywhere, and §2's comment claiming this section covered it was
+       * false. A ghost is the child's only preview; where it is drawn IS the feature. */
+      {
+        const w2 = await s.rect('.bp-well[data-row="2"][data-col="2"]');
+        const g2 = await grabPoint();
+        await s.touch('touchStart', [{ x: g2.x, y: g2.y, id: 1 }]);
+        for (let i = 1; i <= 8; i++) {
+          await s.touch('touchMove', [{ x: g2.x + (w2.cx - g2.x) * (i / 8), y: g2.y + (w2.cy + LIFT - g2.y) * (i / 8), id: 1 }]);
+          await s.wait(12);
+        }
+        const gp = await s.page.evaluate(() => [...document.querySelectorAll('.bp-ghost')]
+          .filter((e) => !e.hidden).map((e) => {
+            const r = e.getBoundingClientRect();
+            const q = e.closest('.bp-well').getBoundingClientRect();
+            return { dx: (r.x + r.width / 2) - (q.x + q.width / 2), dy: (r.y + r.height / 2) - (q.y + q.height / 2),
+              w: r.width, h: r.height, pw: q.width };
+          }));
+        /* Leave the grid before lifting: this block measures, it must not occupy a cell
+         * the reachability loop below then reports as unreachable. */
+        const away2 = await s.page.evaluate(() => {
+          const t = document.querySelector('.bp-tray').getBoundingClientRect();
+          return { x: t.x + t.width - 10, y: t.y + t.height - 10 };
+        });
+        await s.touch('touchMove', [{ x: away2.x, y: away2.y, id: 1 }]);
+        await s.wait(20);
+        await s.touch('touchEnd', []);
+        await s.wait(140);
+        const strayed = gp.filter((q) => Math.abs(q.dx) > q.pw * 0.2 || Math.abs(q.dy) > q.pw * 0.2);
+        const tiny = gp.filter((q) => q.w < q.pw * 0.4 || q.h < q.pw * 0.4);
+        if (!gp.length) bad(`${vp.name}: the drag previewed no ghost at all`);
+        else if (strayed.length) bad(`${vp.name}: a ghost is painted ${strayed[0].dx.toFixed(1)},${strayed[0].dy.toFixed(1)}px from the centre of the cell it marks`,
+          'the preview is drawn somewhere other than the cell it claims');
+        else if (tiny.length) bad(`${vp.name}: a ghost is drawn ${tiny[0].w.toFixed(1)}x${tiny[0].h.toFixed(1)} inside a ${tiny[0].pw.toFixed(1)}px cell — too small to read`);
+        else ok(`${vp.name}: every ghost is painted centred in the cell it marks (worst offset ${Math.max(...gp.map((q) => Math.hypot(q.dx, q.dy))).toFixed(1)}px)`);
+      }
 
       /* 3. REACHABILITY, which is what a lift can quietly take away. A lifted hit point
        * leaves the grid at the extremes: to put the picture on the bottom row the finger
@@ -1138,8 +1255,13 @@ try {
         const lo = Math.max(3, w.y + LIFT);
         const hi = Math.min(geom.vh - 3, w.y + w.h + LIFT);
         bands.push(Math.max(0, hi - lo));
-        const res = await dragTo(w.cx, Math.min(geom.vh - 3, Math.max(3, w.cy + LIFT)));
-        if (!res.landed.some((x) => x.r === r)) unreachable.push(r);
+        /* THE COLUMN TOO, AND A DIFFERENT ONE EACH ROW. This loop asserted only the row
+         * and used column 0 for all six, so a build clamping the last column out of
+         * reach by drag was green. */
+        const col = r % 6;
+        const wc = await s.rect(`.bp-well[data-row="${r}"][data-col="${col}"]`);
+        const res = await dragTo(wc.cx, Math.min(geom.vh - 3, Math.max(3, wc.cy + LIFT)));
+        if (!res.landed.some((x) => x.r === r && x.c === col)) unreachable.push(`${r},${col}`);
       }
       /* AND THE CAP IS ASSERTED, NOT JUST ITS EFFECT. Every row stays "reachable" even
        * at an uncapped lift — the bottom one just shrinks to a 15px band — so
@@ -1149,7 +1271,7 @@ try {
       const ROOM = geom.vh - (geom.bottom - geom.cell * 0.5);
       if (LIFT > ROOM + 1) bad(`${vp.name}: the drag lift is ${LIFT.toFixed(1)}px against ${ROOM.toFixed(1)}px of room below the last row`,
         `the finger cannot leave the glass, so every pixel over that is a pixel off the bottom row's touch band`);
-      else if (unreachable.length) bad(`${vp.name}: row(s) ${unreachable.join(', ')} cannot be reached with the piece visible`,
+      else if (unreachable.length) bad(`${vp.name}: cell(s) ${unreachable.join(' ')} cannot be reached with the piece visible`,
         `the lift is ${LIFT.toFixed(1)}px on a ${geom.cell.toFixed(1)}px cell and the finger cannot leave the glass`);
       else ok(`${vp.name}: every one of the 6 rows is reachable; touch bands ${bands.map((b) => b.toFixed(0)).join('/')}px (narrowest ${Math.min(...bands).toFixed(0)}px)`);
       await s.ctx.close();
@@ -1188,7 +1310,11 @@ try {
 
     if (afterClear.unknown.length) bad(`${afterClear.unknown.length} cue(s) name a bank that does not exist`,
       `${JSON.stringify([...new Set(afterClear.unknown)])} — doSound ignores an unknown name silently, so this ships a sound that never plays`);
+    else if (afterClear.banks.length < 8) bad(`could not read the shell's sound banks (${afterClear.banks.length} found)`,
+      'the bank list must come from doSound, not from a copy in this file');
     else if (!beforeClear.all.length) bad('placing a piece made no sound at all');
+    else if (beforeClear.all.indexOf('tap') < 0) bad(`a piece LANDING makes no sound of its own`,
+      `placing recorded ${JSON.stringify([...new Set(beforeClear.all)])} — those are the pickup and the tray refill; nothing marks the landing`);
     else if (!clearCues.length) bad('clearing a line made no sound at all');
     else if (clearCues.indexOf('twinkle') < 0) bad('the line clear does not play the reward cue', `it played ${JSON.stringify(clearCues)}`);
     else if (vibAfter <= vibBefore) bad('the line clear did not buzz', 'api.vibrate on the clear and nothing else');
@@ -1231,10 +1357,14 @@ try {
     await s.fingerTap('#gameBack');
     await s.page.waitForTimeout(300);
     await s.page.evaluate(() => { window.__cues.length = 0; });
-    await s.page.waitForTimeout(700);
+    /* 3 SECONDS, NOT 700ms. A cue scheduled 2.5s out survived a 700ms window and both
+     * this clause and section 8's timer clause — the timer wrapper only sees timeouts
+     * armed from blockpop.js, and a straight `setTimeout(() => api.sound(...))` inside
+     * the module is exactly that, so it was section 8's window that was short too. */
+    await s.page.waitForTimeout(3000);
     const afterTeardown = (await s.cues()).all;
-    if (afterTeardown.length) bad(`${afterTeardown.length} cue(s) fired after teardown`, JSON.stringify(afterTeardown));
-    else ok('nothing spoke after the child left');
+    if (afterTeardown.length) bad(`${afterTeardown.length} cue(s) fired in the 3s after teardown`, JSON.stringify(afterTeardown));
+    else ok('nothing spoke in the 3 seconds after the child left');
     await s.ctx.close();
   }
   });
@@ -1261,7 +1391,13 @@ try {
       const st = [...document.querySelectorAll('.bp-stamp')].filter((e) => !e.hidden);
       return {
         stamps: st.length,
-        withPaw: st.filter((e) => (getComputedStyle(e).backgroundImage || '').indexOf('svg') >= 0).length,
+        /* `indexOf('svg')` matches the MIME string in EVERY svg data URI, so a blank
+         * <svg></svg> passed as "a paw". pawSVG draws five ellipses; require them. */
+        withPaw: st.filter((e) => {
+          const u = getComputedStyle(e).backgroundImage || '';
+          const n = (decodeURIComponent(u).match(/<ellipse/g) || []).length;
+          return n >= 5;
+        }).length,
         sweeps: document.querySelectorAll('.bp-sweeparm').length,
         stampOverFilled: st.filter((e) => {
           const c = e.parentNode.querySelector('.bp-candy');
@@ -1279,8 +1415,8 @@ try {
     else if (idle.sweeps || idle.visibleStamps) bad('flair is on the board before anything happened',
       `${idle.sweeps} sweep(s), ${idle.visibleStamps} stamp(s)`);
     else if (!during.stamps) bad('a cleared line stamped no paw');
-    else if (during.withPaw !== during.stamps) bad(`${during.stamps - during.withPaw} stamp(s) carry no paw image`,
-      'pawSVG was not reached, so the stamp is an empty box');
+    else if (during.withPaw !== during.stamps) bad(`${during.stamps - during.withPaw} stamp(s) do not carry a paw`,
+      'pawSVG draws five ellipses; a data URI without them is some other picture, or a blank one');
     else if (during.stampOverFilled) bad(`${during.stampOverFilled} paw(s) are over a cell that is NOT clearing`,
       'a stamp over a live candy masks it — invariant 1');
     else if (!during.sweeps) bad('the line clear ran no sweep');
@@ -1288,6 +1424,85 @@ try {
       `${after.sweeps} sweep(s) and ${after.visibleStamps} stamp(s) still present ~1s later`);
     else if (after.wellBg !== idle.wellBg) bad('an empty cell changed colour during the flair', `${idle.wellBg} -> ${after.wellBg}`);
     else ok(`radar ground painted; a clear stamped ${during.stamps} paws and turned 1 sweep, both gone ~1s later, and the empty cell is still ${after.wellBg}`);
+
+    /* THE STRAND, AND §13 HAD THE ASSERTION FOR IT ALL ALONG WITHOUT EVER SAMPLING AT
+     * THE MOMENT IT HAPPENS. A stamp is released when its cell empties — but there is a
+     * second way out of the dying state: a piece LANDS on the cell inside the 280ms
+     * window and it goes straight back to live. That path left the paw parented over a
+     * live candy. Invisible today only because the keyframe ends at opacity 0 with
+     * `forwards`; end it visible and the paw masks the cell. So do the §6 move here and
+     * then look. */
+    {
+      const s2 = await shape(FLEET[0], PIN_DOT);
+      await s2.openBlocks({ clearStorage: true });
+      const slot0 = await s2.rect('.bp-slot[data-slot="0"]');
+      const cell00 = await s2.rect('.bp-well[data-row="0"][data-col="0"]');
+      for (let c = 0; c < 6; c++) await s2.placeAt(0, c);
+      await s2.touch('touchStart', [{ x: slot0.cx, y: slot0.cy, id: 1 }]);
+      await s2.wait(10);
+      await s2.touch('touchEnd', []);
+      await s2.wait(10);
+      await s2.touch('touchStart', [{ x: cell00.cx, y: cell00.cy, id: 1 }]);
+      await s2.wait(10);
+      await s2.touch('touchEnd', []);
+      await s2.page.waitForTimeout(900);
+      const stranded = await s2.page.evaluate(() => {
+        const out = [];
+        for (const e of document.querySelectorAll('.bp-stamp')) {
+          if (e.hidden) continue;
+          const c = e.parentNode.querySelector('.bp-candy');
+          if (c && !c.hidden && !c.classList.contains('bp-clear')) {
+            out.push(e.parentNode.getAttribute('data-row') + ',' + e.parentNode.getAttribute('data-col'));
+          }
+        }
+        return out;
+      });
+      if (stranded.length) bad(`${stranded.length} paw(s) left over a cell that is NOT clearing: ${JSON.stringify(stranded)}`,
+        'a piece landed there inside the clear window and the stamp was never released — it is transparent only because the keyframe ends at opacity 0');
+      else ok('a piece landing inside the clear window leaves no paw stranded over it');
+      await s2.ctx.close();
+    }
+
+    /* NOTHING MAY BE PAINTED OVER THE BOARD. The contrast clause below reads computed
+     * style, which CANNOT SEE COMPOSITING: move the radar ground on top of the board as a
+     * ::after with a green wash and `.bp-well`'s own backgroundColor is still opaque tan,
+     * so the clause passes while the child looks at a green haze. Demonstrated green.
+     * elementFromPoint answers the question computed style cannot — what is actually on
+     * top at the pixel the child touches. */
+    const onTop = await s.page.evaluate(() => {
+      const out = [];
+      for (const w of document.querySelectorAll('.bp-well')) {
+        const r = w.getBoundingClientRect();
+        const e = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        if (!e) { out.push('nothing'); continue; }
+        if (e === w || w.contains(e)) continue;
+        out.push(e.className || e.tagName);
+      }
+      return [...new Set(out)];
+    });
+    /* AND elementFromPoint IS NOT ENOUGH ON ITS OWN: a decorative overlay with
+     * `pointer-events:none` is skipped by hit testing entirely, so a green haze laid over
+     * the board as a ::after was green here. Pseudo-elements are invisible to both
+     * elementFromPoint and querySelectorAll, so they are asked for by name. */
+    const pseudo = await s.page.evaluate(() => {
+      const out = [];
+      for (const sel of ['.bp-boardwrap', '.bp-grid', '.bp-well', '.bp-root']) {
+        const e = document.querySelector(sel);
+        if (!e) continue;
+        for (const which of ['::before', '::after']) {
+          const cs = getComputedStyle(e, which);
+          if (!cs || cs.content === 'none' || cs.content === '') continue;
+          if (sel === '.bp-well') continue;
+          out.push(`${sel}${which}`);
+        }
+      }
+      return out;
+    });
+    if (onTop.length) bad(`something is painted over the board: ${JSON.stringify(onTop)}`,
+      'the ground is meant to sit behind the wells; computed style cannot see compositing and this can');
+    else if (pseudo.length) bad(`a decorative layer is drawn over the board: ${JSON.stringify(pseudo)}`,
+      'pointer-events:none makes such a layer invisible to elementFromPoint, so it is asked for by name');
+    else ok('every board cell is the topmost thing at its own centre, and no pseudo-layer is painted over it');
 
     /* CONTRAST, MEASURED WITH THE FLAIR PRESENT — a filled cell must stay plainly
      * different from an empty one, and a legal ghost from an illegal one. */
@@ -1354,6 +1569,85 @@ try {
     else if (rmState.sweeps) bad(`${rmState.sweeps} sweep(s) ran with prefers-reduced-motion set`);
     else ok('with prefers-reduced-motion set the sweep is never created, and the line still clears');
     await rm.close();
+  }
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(14, async () => {
+  console.log('\n--- 14. the thing he grabs is not smaller than the thing he aims at ---');
+  {
+    /* §1a. The source divides both axes by max(w, h, 3) against a hardcoded 88px that
+     * assumed ITS OWN 128px slot, so in this port's 357x123 landscape slot a 1x1 dot was
+     * drawn at 35px beside a 64px board cell. Scotty saw it on the device; it was
+     * predicted in the layout reconnaissance and never reached a work order.
+     *
+     * EVERY SHAPE, not the one the deal pin happens to give: the tray is seeded through
+     * api.load, which is the real load path (loadSaved validates and rebuilds w/h from
+     * the cells), so this drives the shipped renderTray rather than a stand-in. */
+    const SHAPES = [
+      { name: 'dot', cells: [[0, 0]] },
+      { name: 'tri-h', cells: [[0, 0], [0, 1], [0, 2]] },
+      { name: 'quad-v', cells: [[0, 0], [1, 0], [2, 0], [3, 0]] },
+      { name: 'square', cells: [[0, 0], [0, 1], [1, 0], [1, 1]] },
+      { name: 'quad-h', cells: [[0, 0], [0, 1], [0, 2], [0, 3]] },
+      { name: 'tri-v', cells: [[0, 0], [1, 0], [2, 0]] },
+    ];
+    for (const vp of FLEET) {
+      const s = await shape(vp, PIN_DOT);
+      const rows = [];
+      for (let g = 0; g < SHAPES.length; g += 3) {
+        const trio = SHAPES.slice(g, g + 3);
+        await s.page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+        await s.page.evaluate((t) => {
+          const board = [];
+          for (let r = 0; r < 6; r++) { const row = []; for (let c = 0; c < 6; c++) row.push(0); board.push(row); }
+          try {
+            localStorage.setItem('pupgame:blocks', JSON.stringify({ v: 1, board,
+              tray: t.map((x) => ({ name: x.name, cells: x.cells, color: 2 })), score: 0, combo: 0 }));
+          } catch (e) {}
+        }, trio);
+        await s.page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+        await s.fingerTap('.pad-btn[data-id="7"]');
+        await s.page.waitForSelector('.pickerTile[data-game="blocks"]', { timeout: 10000 });
+        await s.fingerTap('.pickerTile[data-game="blocks"]');
+        await s.page.waitForFunction(() => {
+          const h = document.getElementById('gameHost');
+          return !!(h && h.blocks && h.querySelector('.bp-grid'));
+        }, { timeout: 10000 });
+        await s.wait(200);
+        const got = await s.page.evaluate((names) => {
+          const boardCell = document.querySelector('.bp-grid').getBoundingClientRect().width / 6;
+          return [...document.querySelectorAll('.bp-slot')].map((sl, i) => {
+            const sr = sl.getBoundingClientRect();
+            const cs = [...sl.querySelectorAll('.bp-piececell')].map((e) => e.getBoundingClientRect());
+            if (!cs.length) return { name: names[i], drawn: 0 };
+            const x0 = Math.min(...cs.map((b) => b.x)), x1 = Math.max(...cs.map((b) => b.x + b.width));
+            const y0 = Math.min(...cs.map((b) => b.y)), y1 = Math.max(...cs.map((b) => b.y + b.height));
+            return { name: names[i], drawn: cs.length, cell: Math.min(...cs.map((b) => b.width)),
+              extent: Math.max(x1 - x0, y1 - y0), shortAxis: Math.min(sr.width, sr.height),
+              slotW: sr.width, slotH: sr.height, boardCell };
+          });
+        }, trio.map((x) => x.name));
+        rows.push(...got);
+      }
+      const empty = rows.filter((r) => !r.drawn);
+      const small = rows.filter((r) => r.drawn && r.extent < r.shortAxis * 0.5);
+      if (empty.length) bad(`${vp.name}: ${empty.length} tray slot(s) drew no piece at all`, empty.map((r) => r.name).join(' '));
+      else if (small.length) bad(`${vp.name}: ${small.length} shape(s) fill under half the slot's shorter axis`,
+        small.map((r) => `${r.name} ${r.extent.toFixed(0)}px of ${r.shortAxis.toFixed(0)}`).join(' · '));
+      else {
+        const worst = rows.reduce((a, b) => (b.extent / b.shortAxis < a.extent / a.shortAxis ? b : a));
+        const minCell = rows.reduce((a, b) => (b.cell < a.cell ? b : a));
+        ok(`${vp.name}: all ${rows.length} shapes fill >= half the slot's short axis (worst ${worst.name} at ${(100 * worst.extent / worst.shortAxis).toFixed(0)}%)`);
+        /* REPORTED, NOT ASSERTED, AND THE WORK ORDER SAYS WHY: a piece cell cannot always
+         * reach the board cell. A 4-long piece at a 64px cell wants 256px of slot; three
+         * such slots want 768px against a 396px tray column. CC-A verified the arrangement
+         * space and struck the clause. The ghost resizing to the board cell on pickup is
+         * what makes the shortfall safe, and §11 asserts that. */
+        info(`${vp.name}: smallest tray cell is ${minCell.name} at ${minCell.cell.toFixed(0)}px against a ${minCell.boardCell.toFixed(0)}px board cell — a 4-long piece cannot reach it in a ${minCell.slotW.toFixed(0)}x${minCell.slotH.toFixed(0)} slot`);
+      }
+      await s.ctx.close();
+    }
   }
   });
 

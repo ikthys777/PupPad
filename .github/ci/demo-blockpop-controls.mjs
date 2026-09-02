@@ -126,8 +126,7 @@ plan(5, 'every pointermove repaints the board and re-pops every candy', {
      * the trailing `else`, and the module then fails to parse — which the control
      * harness correctly refused to score as "the check caught the defect". */
     let out = sub(s, '      if (st.shown !== show || st.dying !== isDying) {', '      if (show !== 0) {');
-    out = sub(out, `        else if (st.shown === 0) toPop.push(st.candy);
-        else st.candy.classList.remove('bp-clear');`, `        else toPop.push(st.candy);`);
+    out = sub(out, '        else if (st.shown === 0) toPop.push(st.candy);', '        else if (true) toPop.push(st.candy);');
     out = sub(out, `    moveDragEl(ev.clientX, ev.clientY);
     drag.hover = hitCell(ev.clientX, ev.clientY, drag);
     renderGhost();`, `    moveDragEl(ev.clientX, ev.clientY);
@@ -201,16 +200,19 @@ plan(1, 'a word is painted inside host', {
 });
 
 plan(1, 'the tray renders 1px pieces — three empty boxes', {
-  mutate: (s) => sub(s, '      var cell = Math.max(8, Math.floor((room > 0 ? room : 88) / span));',
-    '      var cell = 1;'),
+  mutate: (s) => sub(s, '      if (cell < 8) cell = 8;', '      cell = 1;'),
   expectText: 'tray piece cell',
 });
 
-plan(2, 'grabCell divides the SLOT, not the piece — a 3-wide piece is unaimable', {
-  mutate: (s) => sub(s, `    var pbox = target.querySelector('.bp-piece');
-    var rect = (pbox || target).getBoundingClientRect();
-    if (!rect.width || !rect.height) rect = target.getBoundingClientRect();`,
-    '    var rect = target.getBoundingClientRect();'),
+/* The original plant here reverted grabCell to dividing the SLOT rather than the piece.
+ * IT NO LONGER MANIFESTS, and that is a result rather than a problem: §1a's tray sizing
+ * grew the piece box from ~114px to ~264px of a 371px slot, so the slot's own column
+ * boundaries now fall inside the piece and the grab lands in the right column either way.
+ * The §1a fix incidentally cured it. Planted instead is the defect the assertion is
+ * actually written against — a grab offset that ignores where the finger went. */
+plan(2, 'the grab always takes the piece\'s first cell, wherever the finger landed', {
+  mutate: (s) => sub(s, '    var g = grabCell(rect, piece, ev.clientX, ev.clientY);',
+    '    var g = { r: piece.cells[0][0], c: piece.cells[0][1] };'),
   expectText: 'the ghost did not move with the grab point',
 });
 
@@ -380,6 +382,79 @@ plan(13, 'the ground texture bleeds through the empty cells', {
   mutate: (s) => sub(s, "    '-webkit-appearance:none;background:#e3cfa8;border-radius:22%;',",
     "    '-webkit-appearance:none;background:rgba(227,207,168,.55);border-radius:22%;',"),
   expectText: 'translucent',
+});
+
+/* ------------------------------------------------------------------------
+ * THE THIRD WAVE. A three-lens pass planted nine more defects against the 0402
+ * sections and check 21 went GREEN on every one — including an INVISIBLE DRAGGED
+ * PIECE, which turned out not to be a plant at all but the shipped state.
+ * ---------------------------------------------------------------------- */
+
+plan(11, 'the dragged piece draws nothing — an empty box follows the finger', {
+  mutate: (s) => sub(s, "    '.bp-drag{position:absolute;left:0;top:0;display:grid;pointer-events:none;z-index:5;',",
+    "    '.bp-drag{position:absolute;left:0;top:0;pointer-events:none;z-index:5;',"),
+  expectText: 'draws no cells at all',
+});
+
+plan(11, 'the picture is desynced from the drop HORIZONTALLY only', {
+  mutate: (s) => sub(s, '    var ox = x - rr.left - (drag.grabC + 0.5) * cellPx;',
+    '    var ox = x - rr.left - (drag.grabC + 0.5) * cellPx - 20;'),
+  expectText: 'the picture lands',
+});
+
+plan(11, 'the drag proxy is always one cell, whatever the piece', {
+  mutate: (s) => sub(s, '    var w = drag.piece.w * cellPx;\n    var h = drag.piece.h * cellPx;',
+    '    var w = cellPx;\n    var h = cellPx;'),
+  expectText: 'box against a',
+});
+
+plan(11, 'the ghost is painted a cell away from the well it marks', {
+  mutate: (s) => sub(s, "    '.bp-ghost{position:absolute;inset:8%;border-radius:22%;pointer-events:none}',",
+    "    '.bp-ghost{position:absolute;inset:8%;border-radius:22%;pointer-events:none;transform:translateY(-72%)}',"),
+  expectText: 'from the centre of the cell it marks',
+});
+
+plan(11, 'the last column is unreachable by drag', {
+  mutate: (s) => sub(s, '    var col = Math.floor(((x - rect.left) / rect.width) * N) - d.grabC;',
+    '    var col = Math.floor(((x - rect.left) / rect.width) * N) - d.grabC;\n    if (col >= N - 1) col = N - 2;'),
+  expectText: 'cannot be reached with the piece visible',
+});
+
+plan(12, 'the piece landing makes no sound of its own', {
+  mutate: (s) => sub(s, '    } else {\n      cue(CUE.drop);\n    }', '    }'),
+  expectText: 'makes no sound of its own',
+});
+
+plan(12, 'a cue is scheduled 2.5s out and speaks after the child has gone', {
+  mutate: (s) => sub(s, '    else cue(CUE.refuse);',
+    "    else { cue(CUE.refuse); setTimeout(function () { try { api.sound('chime'); } catch (e) {} }, 2500); }"),
+  expectText: 'after teardown',
+});
+
+plan(13, 'the stamp is a blank SVG rather than the paw', {
+  mutate: (s) => sub(s, 'encodeURIComponent(pawSVG(100, ramp.light))', "encodeURIComponent('<svg/>')"),
+  expectText: 'do not carry a paw',
+});
+
+plan(13, 'the radar ground is painted ON TOP of the board as a green haze', {
+  mutate: (s) => sub(s, "    '.bp-grid{display:grid;width:100%;height:100%;gap:3px}',",
+    "    '.bp-grid{display:grid;width:100%;height:100%;gap:3px}',\n" +
+    "    '.bp-boardwrap::after{content:\"\";position:absolute;inset:0;z-index:9;pointer-events:none;' +\n" +
+    "      'background:repeating-radial-gradient(circle at 50% 50%,rgba(0,255,136,.55) 0 2px,rgba(0,255,136,.42) 2px 40px)}',"),
+  expectText: 'decorative layer is drawn over the board',
+});
+
+plan(13, 'a paw is left stranded over a cell that came back to life', {
+  mutate: (s) => sub(s, `          st.stamp.classList.remove('bp-stamped');
+          st.stamp.hidden = true;
+        }`, '        }'),
+  expectText: 'NOT clearing',
+});
+
+plan(14, 'the tray divides both axes by one span, as the source did', {
+  mutate: (s) => sub(s, '      var cell = Math.floor(Math.min(innerW / p.w, innerH / p.h));',
+    '      var cell = Math.floor(Math.min(innerW, innerH) / Math.max(p.w, p.h, 3));'),
+  expectText: 'half the slot',
 });
 
 console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time.\n`);

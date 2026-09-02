@@ -1,138 +1,196 @@
 # PUP-WO-0402 — the drag that lies, the sounds, and the flair — builder feedback
 
-**DRAFT, frozen for the adversarial pass** (§6 order: build → freeze → pass → disposition
-→ feedback → PR; architecture §6.1 member 5 requires the pass to read this as a
-deliverable and measure its claims). Nothing below is final.
-
-**Subject:** `build/wo-0402`, based on live `main` at `3efbb5d`.
-**Built:** `games/blockpop.js`, `.github/ci/demo-blockpop.mjs` (sections 11, 12, 13 new;
-sections 2 and 8 corrected), `.github/ci/demo-blockpop-controls.mjs` (14 new red proofs).
+**Subject:** `build/wo-0402`, merged with live `main`.
+**Built:** `games/blockpop.js` · `.github/ci/demo-blockpop.mjs` (sections **11, 12, 13, 14**
+new; sections **1, 2, 8** corrected) · `.github/ci/demo-blockpop-controls.mjs` (**26** new
+red proofs, 50 total).
 **Fence:** `sw.js`, `manifest.json`, both icons, `games/gyre.js`, `games/hello.js` and
-`index.html` all diff to empty. No new asset file. No `urlsToCache` change.
+`index.html` all diff to empty against `origin/main`. No new asset file, no `urlsToCache`
+change, no edit to `pawSVG`.
+
+**Order:** build §1 alone → §2, §3 → freeze at `bc5bc55` → three-lens adversarial pass →
+disposition → this document → PR. **The draft frozen with the build had four false claims
+and the pass falsified all four**; they are corrected here and noted in §5.
 
 ---
 
-## 1. §1 — the drag
+## 1. §1 — the drag, and the part of it I got wrong
 
-Committed alone as `6ab612a`, ahead of everything else, per §8.
+### 1.1 THE PIECE WAS NEVER VISIBLE AT ALL
 
-**The mechanism, confirmed:** `moveDragEl` lifted the picture by `cellPx * 0.9`;
-`hitCell` resolved the drop at the raw finger. The piece was painted ~58px above the hole
-it fell into — nearly a whole 64px cell, in the one interaction the game is made of.
+Scotty's words were *"the piece should be visible under your finger when you drag so it's
+visually coherent."* **That is two requirements and I read it as one.** I fixed coherence.
+**The dragged piece was drawing nothing.**
 
-**Why no check saw it.** Every drag assertion dispatched a touch at `(x, y)` and then
-asserted the cell at `(x, y)` filled. **Both halves read the same number**, so the picture
-could have been painted anywhere on the screen and they would still have agreed. §6.1
-member 7. **Section 2 was one of those assertions and it is corrected here**: it now reads
-the ghost immediately before the drop and asserts the cells that fill are the cells that
-were previewed.
+`.bp-drag` had no `display:grid`. `fillPieceBox` sets `grid-template-columns/rows` on
+whatever box it is handed, and the tray's `.bp-piece` carries `display:grid`; the drag
+proxy did not. So the template was inert, the piece cell had no intrinsic size, and it laid
+out at **0×0 inside a correctly-positioned, correctly-sized 64×64 box.** Measured on the
+frozen build:
 
-**Built as ruled:** one constant, `DRAG_LIFT_CELLS`, consumed by exactly two expressions —
-`moveDragEl` and `hitCell` — and the off-grid `pad` tolerance is measured against the
-lifted point too.
+```
+.bp-drag box 64x64 · children 1 · class "bp-piececell" · child rect 0x0
+```
 
-### 1.1 A lift silently costs REACH, and that was not in the ruling
+**Nothing saw it**, including the section written that day to measure the drag, because
+every assertion read `.bp-drag`'s **bounding rect** — and a rect comes from style, not from
+ink. The blindness lens planted "the proxy draws nothing" as a hypothetical defect and
+found it already shipped.
+
+§11 now requires the proxy to contain drawn `.bp-piececell` children, requires their
+smallest to be at least half the board cell, and requires their union to be the box it
+measures.
+
+### 1.2 The coherence defect
+
+`moveDragEl` lifted the picture by `cellPx * 0.9`; `hitCell` resolved at the raw finger.
+Fixed as ruled: `DRAG_LIFT_CELLS` has **one** consumer, `dragLiftPx()`, which has two —
+`moveDragEl` and `hitCell` — so neither can drift without changing the derivation both
+read. The off-grid `pad` is measured against the lifted point.
+
+### 1.3 A lift silently costs REACH — and the residual is under the project's own floor
 
 To put the picture on the **bottom** row the finger must go a lift *below* it, and the
-finger cannot leave the glass. Measured at 412px of height with a 64px cell:
+finger cannot leave the glass. The lift is now capped by geometry so no row is ever
+unreachable on any device. **Measured with a finger, walking the glass in 2px steps and
+reading the row the ghost previews:**
 
-| | bottom row touch band | other rows |
+| | row 0–4 band | row 5 band |
 |---|---|---|
-| uncapped 0.9-cell lift | **15px** | 62px |
-| capped (shipped) | **27px** | 62px |
+| uncapped `0.9` | 64px | **15px** |
+| capped (shipped, applied lift 46px) | 62–64px | **32px** |
 
-So the lift is now **capped by geometry** — the distance from the last row's centre to the
-bottom of the screen — which makes it impossible for any row to be unreachable on any
-device whatever the constant is set to. **The residual trade is real and is not ours:**
-every pixel of lift is a pixel off the bottom row's band. `0.9` was chosen with no hand on
-the glass; it is one constant, so "still under my palm" and "can't reach the bottom row"
-are both one-line answers. **Scotty's, on the device.**
+**32px is below the 44px minimum touch target that check 21 §1 itself enforces on board
+cells**, and the last 3px of that band is the physical screen edge. Every row is reachable
+and every band was confirmed by real drops at three points each.
 
-### 1.2 The acceptance measures in a third frame
+**This is the one open decision in this work order and it is Scotty's.** The trade is
+exact: with a 64px cell on a 412px screen, **band = 78 − lift**. A lift that clears a
+toddler's fingertip (~58px) leaves 20px; the 44px floor needs a lift of 34px or less, which
+is about 5.6mm and probably does not clear the finger. **Both cannot hold.** It is one
+constant — `DRAG_LIFT_CELLS`, currently `0.9`, applied at 46px after the cap — so it is a
+one-line answer either way.
 
-Section 11 reads the **painted rect of `.bp-drag` while the finger is still down**, then
-drops, then reads the rect of the cell that actually filled, and asserts the painted piece
-sits **inside** the cell it fills. Neither side is a coordinate the check chose.
+### 1.4 The acceptance measures in a third frame
 
-**The lift is derived from the picture, never written down in the test** —
-`lift = fingerY − paintedCentreY`. Writing `cellPx * 0.9` there would have recreated the
-exact defect being fixed, one copy of it inside the test.
+§11 reads the **painted rect of `.bp-drag` while the finger is down**, then the rect of the
+cell that filled, and asserts the picture sits inside it. **The lift is derived from the
+picture** (`fingerY − paintedCentreY`), never written into the test — writing `cellPx * 0.9`
+there would have put a copy of the defect inside the check.
 
-*(Containment, not centre-to-centre: the picture floats continuously with the finger while
-a cell is discrete, so their centres differ by the finger's sub-cell offset — up to half a
-cell on a **correct** build. My first version asserted centre distance and failed a correct
-build at 23.6px.)*
+Containment alone tolerates half a cell in each axis *on a correct build*, because the
+picture floats and a cell is discrete — a 20px horizontal desync and a 12px lift error both
+survived it. So §11 also aims at an exact cell centre, **where the expected offset is zero**,
+and both plants now go red.
 
-## 2. §2 — the voice
+**§11 also asserts what nothing asserted before: where the GHOST is painted.** §2 reads the
+ghost's DOM *parent*, never its geometry, so a ghost given `transform:translateY(-72%)` —
+drawn a cell away from the well it marks — was green everywhere, and §2's comment claiming
+§11 covered it was false. Corrected in both places.
 
-Every cue is one of `doSound`'s twelve banks, and **the check records the name asked for**
-rather than the sound heard, because an unknown name is a silent no-op that nothing
-reports — which is how `api.sound('pop')` shipped for one commit in `PUP-WO-0400`.
+## 2. §1a — the thing he grabs was half the thing he aims at
 
-| event | cue | why |
-|---|---|---|
-| a piece leaves the tray | `keyTap` | 1800Hz for 30ms — barely there |
-| it lands | `tap` | |
-| it cannot go there | `lock` | **two soft descending sines** |
-| a line goes | `twinkle` + `api.vibrate(18)` | the reward, and the only buzz |
-| the tray refills | `blip` | |
+The source divides **both** axes by `max(w, h, 3)` against a hardcoded `88` that assumed
+its own 128px slot. In this port's 357×123 landscape slot a 1×1 dot drew at **35px beside a
+64px board cell** — the biggest, emptiest panel on screen holding the smallest graphic.
 
-**The refusal is deliberately the quietest thing in the game.** `error` and `alert` are
-square waves; a buzz for "I changed my mind" teaches a three-year-old that the controls
-bite. The check asserts the refusal is never one of those **and** that it is not silent.
+Per-axis against the measured slot, with a shared cap at 1.35× the board cell: **the
+smallest tray piece cell is now 86px, up from 36px.**
 
-No `AudioContext` is constructed by the module — asserted by attributing every
-construction to its stack, so the shell's one does not mask the module's.
+**CC-A's clause "no piece cell under the board cell" was struck, and I raised it before
+building rather than discovering it after.** A 4-long piece at a 64px cell needs 256px on
+its long axis; a slot holding both a 4-wide and a 4-tall piece is square at 256px; three of
+those is 768px against a 357×396 tray column. CC-A verified the arrangement space
+independently. What holds instead, and is asserted in §14 across six shapes seeded through
+the real `api.load` path: **every shape fills at least half the slot's shorter axis**
+(worst 68%). The residual — a `quad-v` at 27px — is **reported, not asserted**, and is safe
+only because **the ghost resizes to the board cell on pickup**, which §11 asserts.
 
-## 3. §3 — the flair, and it is the console's own geometry
+## 3. §2 — the voice
 
-| | what it is | cost |
-|---|---|---|
-| **radar ground** | `repeating-radial-gradient` rings + a crosshair on `.bp-root`, behind the board | no elements, painted once |
-| **the paw stamp** | `pawSVG(100, colour)` as a `data:` URI on a cleared cell as it vanishes, in the candy's own colour | one span per well, only ever over a cell on its way out |
-| **the sweep** | one arm, **one turn, 620ms, on a line clear only** | one element, only on the reward |
+| event | cue |
+|---|---|
+| a piece leaves the tray | `keyTap` |
+| it lands | `tap` |
+| it cannot go there | `lock` — two soft descending sines |
+| a line goes | `twinkle` + `api.vibrate(18)`, the only buzz |
+| the tray refills | `blip` |
 
-`pawSVG` is **called, never edited** (§7), and reached as a `data:` URI so there is no
-`innerHTML`, no image file, no `urlsToCache` line — **invariant 3 untouched**, confirmed
-by check 11.
+`error` and `alert` are square waves and the refusal must never be one: a buzz for "I
+changed my mind" teaches a three-year-old that the controls bite.
 
-**The console's own sweep is `5s linear infinite`** and an infinite rotation under a drag
-is exactly what stutters an S10+. This is one turn on the reward, and under
-`prefersReducedMotion` **it is never created at all** — asserted in a real reduced-motion
-browser context, with the assertion refusing to pass if the context did not take.
+**§12 reads the bank list out of the shipped `doSound`, not from a copy in the check.**
+With a pasted list, deleting `lock` from the shell's own table left the refusal **silent**
+while the check still called the name valid — two expressions that must agree, one of them
+in the test. Demonstrated green before the fix.
 
-**Contrast is asserted after, not before:** the ground sits *behind* the wells, which stay
-fully opaque; the check fails if an empty cell's alpha drops below 1, and a planted
-translucent well goes red.
+**The post-teardown window went 700ms → 3s.** A cue scheduled 2.5s out survived both this
+clause *and* section 8's timer clause.
 
-## 4. What did not work
+No `AudioContext` is constructed by the module, attributed by construction stack.
 
-- **A race in the harness that reports on races.** The red proofs run in lanes, and each
-  scenario found its own record by reading `results.length` — a shared counter two lanes
-  can read the same value of. One scenario's row appeared **five times** and four others
-  vanished. Scenarios now return their record instead of indexing a shared array.
-- **A vacuous pass I shipped for one run.** §12's refusal test tapped an empty cell just
-  after a clear, so the piece **placed** — and the recording came back `["keyTap","tap"]`,
-  `tap` being the *drop* cue. It asserted "no harsh cue" against a move that succeeded. It
-  now occupies the cell first and requires a refusal cue to have fired at all. **Third time
+## 4. §3 — the flair, the console's own geometry
+
+- **Radar ground** — `repeating-radial-gradient` rings plus a horizontal scan line on
+  `.bp-root`, behind the board. No elements, painted once.
+- **The paw** — `pawSVG(100, colour)` as a `data:` URI on a cleared cell in the candy's own
+  colour. Called, never edited. No `innerHTML`, no image file, no `urlsToCache` line;
+  invariant 3 confirmed by check 11.
+- **The sweep** — one turn, 620ms, on a line clear only, built from **two** elements (the
+  rotating container and its arm). The console's own sweep is `5s linear infinite`, and an
+  infinite rotation under a drag is what stutters an S10+.
+
+**Measured on the budget rather than assumed.** At 4× and 6× CPU throttle the sweep costs
+≤0.5ms on the `pointermove` p95 and the dropped-frame count is **identical with and without
+it** (0→0 at 4×, 1→1 at 6×), against a positive control arm — 40ms injected per move — that
+drops 11/25 and 12/22 frames and raises 4 long tasks.
+
+**A defect found here and fixed:** a paw was left stranded over a cell that came back to
+life. There are two ways out of the dying state — the cell empties, or a piece lands on it
+*inside* the clear window — and only the first released the stamp. It was invisible only
+because the keyframe ends at `opacity:0` with `forwards`, and it made the code comment
+claiming *"it cannot mask a filled cell"* false as written. **§13 already had the assertion
+that catches it and simply never sampled at that moment**; it does now.
+
+## 5. What did not work
+
+- **Four false claims in the frozen draft**, all corrected: `api.sound('pop')` never
+  shipped (removed before the commit); section **8** was not corrected in this WO;
+  the sweep is **two** elements, not one; and there is **no crosshair** — one horizontal
+  scan line. A fifth was pedantically false and sat in the **code comment as well** — the
+  lift is one *name* with one derivation and two consumers, not "one constant consumed by
+  two expressions".
+- **A race in the harness that reports on races.** The red proofs run in lanes and each
+  scenario located its record by reading `results.length` — a shared counter two lanes read
+  the same value of. One row appeared **five times** and four vanished. Scenarios now return
+  their record.
+- **A vacuous pass.** §12's refusal tapped an empty cell just after a clear, so the piece
+  **placed**, and it asserted "no harsh cue" against a move that succeeded. **Third time
   this file has needed a liveness precondition added to an assertion about absence.**
-- **Section 11's first version failed a correct build** by comparing centres (see §1.2),
-  and its lift probe **placed a piece on the cell the next phase aimed at**.
+- **Three plants that proved nothing.** One was a syntax error; one guarded only the first
+  of two statements; one — `grabCell` dividing the slot — **no longer manifests**, because
+  §1a's larger tray piece incidentally cured it. That last is a result, and it is recorded
+  rather than deleted.
+- **`elementFromPoint` cannot see a decorative overlay**, because `pointer-events:none`
+  removes it from hit testing. A green haze laid over the board as a `::after` was green.
+  §13 now asks for pseudo-layers by name as well.
 
-## 5. Gates
+## 6. Gates
 
 | P4 exit gate | state |
 |---|---|
-| 1 — both sizes playable | **unchanged.** Easy only; classic is 0401's. |
-| 2 — no-moves state, one control | **unchanged.** Still unreachable in easy by design. |
-| 3 — `players: 2` | not attempted; out of scope. |
-| **4 — with all text covered, board and tray operable** | **premise still asserted** (§1: no painted word inside `host`), and the flair adds none. |
-| 5 — airplane mode, cold start | not proven here; no network construct (check 11). |
-| §5 — every new check red with a real defect | **met: 39 of 39**, and no plant changes whether the file parses. |
+| 1 — both sizes playable | unchanged; easy only, classic is 0401's |
+| 2 — no-moves state, one control | unchanged; still unreachable in easy by design |
+| 3 — `players: 2` | not attempted, out of scope |
+| **4 — with all text covered, board and tray operable** | premise asserted (no painted word inside `host`); the flair adds none. **Gate is human.** |
+| 5 — airplane mode, cold start | not proven here; no network construct |
+| §5 — every new check red **with a real defect** | **met: 50 of 50**, and every mutant parses |
 
-## 6. Not built
+## 7. Not built
 
-- The score's presentation — still Scotty's.
-- The 8×8 entry and the four assists — `PUP-WO-0401`, blocked on `0111`.
-- Any change to `pawSVG` or the radar markup.
-- Haptics beyond the single clear buzz.
+The score — **ruled closed**: nothing renders it, which is northstar §5's non-goal
+honoured, and making it visible is a change to a non-goal that goes to the northstar first.
+The 8×8 entry and the four assists (`0401`, blocked on `0111`). Any change to `pawSVG` or
+the radar markup. Haptics beyond the single clear buzz. **The paw stamp is not suppressed
+under reduced motion** — it is shortened to 40ms and never reaches a visible frame; if the
+intent was "no transform animation at all", that is the one that was missed.
