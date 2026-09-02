@@ -56,23 +56,55 @@ function getAudioCtx() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
 }
+/* mk() AND sw() LIVE HERE, NOT INSIDE doSound. That move is the whole cost of
+ * api.tone, and architecture §5 says so in the row that ratifies it: the findings
+ * estimated one function over existing helpers, and CC-A corrected the estimate
+ * because both helpers were declared inside doSound's try block and were therefore
+ * reachable from nowhere else. Nothing about either body changed; they take the
+ * audio context from getAudioCtx() instead of closing over doSound's local, which
+ * is the same object and the same currentTime read the cues always made per call. */
+function mk(freq, dur, wave, delay, vol) {
+  var c = getAudioCtx();
+  var o = c.createOscillator(), g = c.createGain();
+  o.type = wave; o.frequency.value = freq;
+  var t = c.currentTime + (delay || 0), v = vol || 0.12;
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
+}
+function sw(f1, f2, dur, wave, delay, vol) {
+  var c = getAudioCtx();
+  var o = c.createOscillator(), g = c.createGain();
+  o.type = wave; var t = c.currentTime + (delay || 0), v = vol || 0.12;
+  o.frequency.setValueAtTime(f1, t); o.frequency.linearRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
+}
+
+/* THE api.tone PRIMITIVE — ratified in architecture §5 on 2026-09-01, built here on
+ * 2026-09-02 by PUP-WO-0300 §2.1. The twelve-cue bank offers no pitch and no
+ * duration, so a xylophone, a lullaby or an aquarium is INEXPRESSIBLE through
+ * api.sound, and the only escape was editing the switch table above — which makes
+ * northstar invariant 6's "nothing else" false for any game that wants a note.
+ *
+ * EVERY ARGUMENT IS CLAMPED, and the reason is not tidiness. A game module runs in
+ * this realm and hands these values straight to a live AudioContext: a frequency of
+ * 0 or NaN throws, a negative duration schedules a stop before its start, and 40 kHz
+ * at 30 seconds is a sound a three-year-old is wearing headphones for. The bounds are
+ * a child's ears and a child's patience, and a game that wants more does not get it.
+ * An unknown wave name becomes 'sine' rather than throwing, because a game asking for
+ * a sound it cannot have should still make one. */
+var TONE_WAVES = ['sine', 'square', 'sawtooth', 'triangle'];
+function playTone(hz, ms, wave) {
+  var f = Number(hz), d = Number(ms);
+  if (!isFinite(f) || !isFinite(d)) return;
+  f = Math.min(4000, Math.max(40, f));
+  d = Math.min(3000, Math.max(20, d));
+  var w = TONE_WAVES.indexOf(wave) === -1 ? 'sine' : wave;
+  mk(f, d / 1000, w, 0, 0.12);
+}
+
 function doSound(type) {
   try {
-    var c = getAudioCtx();
-    function mk(freq, dur, wave, delay, vol) {
-      var o = c.createOscillator(), g = c.createGain();
-      o.type = wave; o.frequency.value = freq;
-      var t = c.currentTime + (delay || 0), v = vol || 0.12;
-      g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
-    }
-    function sw(f1, f2, dur, wave, delay, vol) {
-      var o = c.createOscillator(), g = c.createGain();
-      o.type = wave; var t = c.currentTime + (delay || 0), v = vol || 0.12;
-      o.frequency.setValueAtTime(f1, t); o.frequency.linearRampToValueAtTime(f2, t + dur);
-      g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur);
-    }
     var S = {
       ping:function(){mk(880,.08,'sine',0,.15);mk(1320,.12,'sine',.08,.12);mk(1760,.2,'sine',.16,.08)},
       chime:function(){mk(392,.3,'sine',0,.1);mk(523,.3,'sine',.1,.1);mk(659,.3,'sine',.2,.1);mk(784,.4,'sine',.3,.12)},
@@ -120,7 +152,17 @@ var BTNS_RIGHT=[
  * not a game. It exists so gate 2 can be run and so games/ is non-empty, which check
  * 11 requires (it fails closed on an empty directory).
  */
+/* GYRE IS FIRST, AND THAT ORDERING IS THE WHOLE OF THIS WORK ORDER'S UI DECISION.
+ * The picker is PUP-WO-0201's and is not built here, so `openGames()` mounts
+ * GAMES[0] — which means the position in this array IS what the Games button opens.
+ * PUP-WO-0300 acceptance 8 requires "console -> games -> Gyre -> play -> back" on a
+ * cold offline device, and a Gyre sitting second would be unreachable until the
+ * picker ships: shipped, cached, and invisible to the child it was built for.
+ * Reordering data is not building a chooser, so this does not cross into 0201.
+ * `hello` stays as the contract demonstration checks 13 and 14 corrupt on purpose. */
 var GAMES=[
+  {id:'gyre',module:'./games/gyre.js',label:'Gyre',icon:'\uD83C\uDF00',
+   color:'#06B6D4',glow:'#67E8F9',sound:'twinkle',players:1,params:{}},
   {id:'hello',module:'./games/hello.js',label:'Hello',icon:'\uD83D\uDC4B',
    color:'#8B5CF6',glow:'#A78BFA',sound:'chime',players:1,params:{}}
 ];
@@ -1830,6 +1872,11 @@ function openGames(entry) {
     entry: frozen,
     close: function() { endGameSession(); },
     sound: function(name) { try { doSound(name); } catch (e) {} },
+    /* PUP-WO-0300 §2.1. Ratified architecture §5 2026-09-01, built 2026-09-02 — the
+     * fourth ruling this project made and had not turned into a commit. Same
+     * fire-and-forget discipline as `sound`: playTone clamps, this never throws, and
+     * a game that asks for a note on a device with no audio simply gets silence. */
+    tone: function(hz, ms, wave) { try { playTone(hz, ms, wave); } catch (e) {} },
     vibrate: function(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} },
     save: function(obj) {
       try { localStorage.setItem('pupgame:' + frozen.id, JSON.stringify(obj)); } catch (e) {}

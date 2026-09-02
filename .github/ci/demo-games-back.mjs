@@ -26,6 +26,7 @@
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join, extname, normalize, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
@@ -65,6 +66,7 @@ async function serve({ override = {}, delay = {} } = {}) {
 }
 
 const failures = [];
+let cases = 0;
 const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m, d) => { failures.push({ m, d }); console.log(`  FAIL  ${m}`); if (d) console.log(`        ${d}`); };
 
@@ -119,6 +121,7 @@ const probe = (page) => page.evaluate(() => {
 });
 
 async function runCase(label, { override = {}, delay = {}, expect }) {
+  cases++;
   const { server, origin } = await serve({ override, delay });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -161,31 +164,52 @@ async function runCase(label, { override = {}, delay = {}, expect }) {
   }
 }
 
-const GOOD = await readFile(join(REPO, 'games', 'hello.js'), 'utf8');
+/* WHICH MODULE THE GAMES BUTTON LOADS IS A FACT ABOUT THE REGISTRY, NOT A CONSTANT.
+ * This file used to hard-code `/games/hello.js` in nine places, which was true only
+ * while the placeholder happened to be first in GAMES. PUP-WO-0300 put Gyre first —
+ * and every corruption case below would have gone on overriding a module the shell no
+ * longer loads, so the shell would have loaded the REAL game, succeeded, and the cases
+ * that must end with the surface torn down would have failed for a reason that has
+ * nothing to do with what they test. A pointer that resolves in the author's head and
+ * not in the tree is architecture §6.1 member 4; this resolves it in the tree.
+ *
+ * FAILS CLOSED. If the registry cannot be read, this check does not fall back to a
+ * guess — a guess is how it would silently test nothing. */
+function firstRegistryModule() {
+  const html = readFileSync(join(REPO, 'index.html'), 'utf8');
+  const reg = html.match(/var GAMES\s*=\s*\[([\s\S]*?)\n\];/);
+  if (!reg) throw new Error('demo-games-back: cannot find `var GAMES = [ ... ];` in index.html');
+  const m = reg[1].match(/module\s*:\s*'([^']+)'/);
+  if (!m) throw new Error('demo-games-back: the first registry entry has no `module` field');
+  return m[1].replace(/^\./, '');   /* './games/x.js' -> '/games/x.js' */
+}
+const MODULE = firstRegistryModule();
+const GOOD = await readFile(join(REPO, MODULE.replace(/^\//, '')), 'utf8');
 
 console.log('CHECK 13 — the way back, in a browser, against the cases that produce §1.6\n');
+console.log(`  the Games button loads ${MODULE} — read from the registry, not assumed\n`);
 
 console.log('--- 1. the ordinary path ---');
-await runCase('unmodified placeholder', { expect: 'back-works' });
+await runCase('the registry\'s first module, unmodified', { expect: 'back-works' });
 
 console.log('\n--- 2. mount() THROWS — PUP-WO-0200 §3.4, stated as the demonstration ---');
 await runCase('mount throws', {
-  override: { '/games/hello.js': 'export default function mount(){ throw new Error("deliberate"); }\n' },
+  override: { [MODULE]: 'export default function mount(){ throw new Error("deliberate"); }\n' },
   expect: 'gone',
 });
 
 console.log('\n--- 3. the module 404s (offline with nothing cached lands here) ---');
-await runCase('module missing', { override: { '/games/hello.js': null }, expect: 'gone' });
+await runCase('module missing', { override: { [MODULE]: null }, expect: 'gone' });
 
 console.log('\n--- 4. the module will not parse ---');
 await runCase('module is a syntax error', {
-  override: { '/games/hello.js': 'export default function mount({ \n' },
+  override: { [MODULE]: 'export default function mount({ \n' },
   expect: 'gone',
 });
 
 console.log('\n--- 5. mount returns no teardown — a contract violation, not a crash ---');
 await runCase('mount returns undefined', {
-  override: { '/games/hello.js': 'export default function mount(){ }\n' },
+  override: { [MODULE]: 'export default function mount(){ }\n' },
   expect: 'gone',
 });
 
@@ -195,7 +219,7 @@ console.log('     line after the call. A teardown that throws before the host is
 console.log('     strands the child behind a full-bleed overlay — §1.6 reproduced by the');
 console.log('     very contract written to prevent it.)');
 await runCase('teardown throws', {
-  override: { '/games/hello.js': 'export default function mount(host){ host.textContent="x"; return function(){ throw new Error("deliberate"); }; }\n' },
+  override: { [MODULE]: 'export default function mount(host){ host.textContent="x"; return function(){ throw new Error("deliberate"); }; }\n' },
   expect: 'back-works',
 });
 
@@ -204,8 +228,8 @@ console.log('    Map appends its overlay and then throws before CLOSE is wired. 
 console.log('    equivalent is a module that hangs: if the way back were wired after the');
 console.log('    await, this is the case that would strand a child indefinitely.');
 await runCase('module hangs for 30s', {
-  override: { '/games/hello.js': GOOD },
-  delay: { '/games/hello.js': 30000 },
+  override: { [MODULE]: GOOD },
+  delay: { [MODULE]: 30000 },
   expect: 'back-works',
 });
 
@@ -214,7 +238,7 @@ console.log('    A one-word bug — document.body instead of host — and the pa
 console.log('    shell\'s own three openers use. The first version of this check asserted');
 console.log('    only that #gamesChrome was gone and passed while the child was stranded.');
 await runCase('module leaks a full-bleed node to document.body', {
-  override: { '/games/hello.js':
+  override: { [MODULE]:
     'export default function mount(host, api) {\n' +
     '  const fx = document.createElement("div"); fx.id = "leaked";\n' +
     '  fx.style.cssText = "position:fixed;inset:0;background:#102040;z-index:400";\n' +
@@ -226,7 +250,7 @@ await runCase('module leaks a full-bleed node to document.body', {
 
 console.log('\n--- 9. the same leak created BY teardown, after the chrome is already gone ---');
 await runCase('teardown itself appends to document.body', {
-  override: { '/games/hello.js':
+  override: { [MODULE]:
     'export default function mount(host, api) {\n  host.textContent = "x";\n' +
     '  return function teardown() {\n' +
     '    const bye = document.createElement("div"); bye.id = "bye";\n' +
@@ -247,7 +271,7 @@ if (failures.length) {
   console.error('  already has and gives it to every future game.');
   process.exit(1);
 }
-console.log(`CHECK 13 PASSED at ${COMMIT.slice(0, 12)} — 9 cases, and in every one the child can get out.`);
+console.log(`CHECK 13 PASSED at ${COMMIT.slice(0, 12)} — ${cases} cases against ${MODULE}, and in every one the child can get out.`);
 console.log('  The way back is created, appended and WIRED before the module is fetched,');
 console.log('  so mount throwing, the module 404ing, failing to parse, returning no');
 console.log('  teardown, tearing down with a throw, or never arriving at all all leave a');

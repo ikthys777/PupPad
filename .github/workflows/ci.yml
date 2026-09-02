@@ -331,6 +331,31 @@ jobs:
         # impossible to satisfy alongside northstar invariant 6.
         run: node .github/ci/check-cache-name-controls.mjs
 
+      - name: "Check 16 — Gyre does what its work order says, in a browser"
+        # PUP-WO-0300 §4 is headed "proven, not asserted", and every item on it is a
+        # claim about a running canvas: a parameter changes the field within a second,
+        # five randomize presses give five usable worlds, attract inverts, settings
+        # survive a restart, teardown leaves nothing running. None of that is visible to
+        # a static scanner, and a builder reporting it from a local browser session is
+        # the shape this project has already been burned by — a claim about an artifact
+        # with no mechanism that can contradict it.
+        #
+        # It reads PIXELS: how much ink is on the canvas, how much of it sits under the
+        # finger, its mean hue, and what colour the ground is. Those are the terms the
+        # acceptance list is written in and the terms a three-year-old sees. Two of its
+        # thresholds were set only after the first run DISAGREED with the author —
+        # attract/repel turned out not to invert visibly from the sign alone, which is
+        # why the sim now shapes repel rather than merely signing it.
+        #
+        # It runs in a TOUCH context on purpose: the sim draws a cursor glow only for
+        # fine pointers, the tablet never sees it, and with a mouse context that glow
+        # saturated the very disc this check measures.
+        #
+        # The frame rate it prints is a REGRESSION BASELINE on this runner and is NOT
+        # the device number. Headless chromium on a CI box is not a tablet; the device
+        # measurement is Scotty's, like the cold-start number P2 gate 5 asks for.
+        run: node .github/ci/demo-gyre.mjs .
+
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
   #

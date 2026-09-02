@@ -320,7 +320,8 @@ var urlsToCache = [
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
-  './games/hello.js'
+  './games/hello.js',
+  './games/gyre.js'
 ];
 
 self.addEventListener('install', function(event) {
