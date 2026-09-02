@@ -34,12 +34,24 @@ import { chromium } from 'playwright';
 
 const REPO = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
 
-/* PUP-WO-0300 acceptance 10: every demonstration asserts the COMMIT it ran against.
- * FAILS CLOSED, which the sibling checks do not — they initialise COMMIT to 'unknown'
- * and pass, so a green with no identifiable subject is a claim about a tree nobody can
+/* PUP-WO-0300 acceptance 10: every demonstration asserts the COMMIT it ran against, and
+ * FAILS CLOSED — a green with no identifiable subject is a claim about a tree nobody can
  * name, which is architecture §6.1 member 1 wearing a provenance line. A tree with no
  * .git (a `git archive` export, which is what §6's freeze protocol hands a read-only
- * pass) can state its subject explicitly instead. */
+ * pass) can state its subject explicitly through PUPPAD_SUBJECT instead.
+ *
+ * THIS COMMENT USED TO SAY "which the sibling checks do not — they initialise COMMIT to
+ * 'unknown' and pass". That stopped being true when PUP-WO-0201 swept them, and no check
+ * in this directory has initialised COMMIT to 'unknown' since. PUP-WO-0301's feedback
+ * then claimed the stale sentence had been corrected while leaving it byte-identical —
+ * a false claim about a false claim, caught by an adversarial pass running `git diff`
+ * rather than reading the paragraph that said it was fixed. Corrected here, for real, and
+ * verifiable with `git diff eeadf46 -- .github/ci/demo-gyre.mjs`.
+ *
+ * The rule this file implements inline now also exists once in ./lib/subject.mjs. This
+ * copy is NOT converted, deliberately and visibly: nine files still carry it, and
+ * converting four of them while writing "the rule lives here, once" is how a fence drifts.
+ * The remaining nine are named in docs/feedback/PUP-WO-0301.md §5.1 as owed work. */
 let COMMIT = process.env.PUPPAD_SUBJECT || '';
 if (!COMMIT) {
   try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
@@ -207,6 +219,13 @@ const INIT = () => {
     let ink = 0, total = 0, distSum = 0, hueX = 0, hueY = 0;
     let nearInk = 0, nearTotal = 0;
     let lumSum = 0, lumSq = 0;
+    /* PUP-WO-0301 §2.4, second obligation. RELATIVE luminance (sRGB linearised, the
+     * WCAG definition), histogrammed over the INKED pixels only, so the section below
+     * can ask what fraction of the ink actually stands out from the ground it is drawn
+     * on rather than merely differing from it by an L1 threshold. 256 buckets. */
+    const RL = (v) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const relLum = (r, g, b) => 0.2126 * RL(r) + 0.7152 * RL(g) + 0.0722 * RL(b);
+    const inkHist = new Uint32Array(256);
     for (let y = 0; y < H; y += STEP) for (let x = 0; x < W; x += STEP) {
       const i = (y * W + x) * 4;
       const r = d[i], g = d[i + 1], b = d[i + 2];
@@ -218,6 +237,7 @@ const INIT = () => {
       if (isNear) nearTotal++;
       if (Math.abs(r - br) + Math.abs(g - bg) + Math.abs(b - bb) < 40) continue;
       ink++;
+      inkHist[Math.min(255, Math.max(0, Math.round(relLum(r, g, b) * 255)))]++;
       if (isNear) nearInk++;
       distSum += dOrigin;
       /* Mean hue as a unit vector, so 359 and 1 average to 0 rather than 180. */
@@ -234,7 +254,27 @@ const INIT = () => {
       hueX += Math.cos(rad); hueY += Math.sin(rad);
     }
     const meanLum = lumSum / total;
+    /* A PERCENTILE, NOT A MAXIMUM. A single bright speck is not a visible field, and a
+     * maximum is a one-pixel claim. p10 and p90 each describe a TENTH of the ink. */
+    const pct = (frac) => {
+      if (!ink) return 0;
+      let want = Math.max(1, Math.round(ink * frac)), seen = 0;
+      for (let b2 = 0; b2 < 256; b2++) { seen += inkHist[b2]; if (seen >= want) return b2 / 255; }
+      return 1;
+    };
+    const bgLum = relLum(br, bg, bb);
+    const ratio = (a, b2) => (Math.max(a, b2) + 0.05) / (Math.min(a, b2) + 0.05);
+    /* THE FIELD MAY BE BRIGHTER OR DARKER THAN ITS GROUND — two of the ten backgrounds
+     * are light, and on those the draw flips to `multiply` and the strokes are DARKER
+     * than what they sit on. Taking the better of the two tails is what makes one
+     * number describe both draw paths; taking only the bright tail would report a light
+     * background as invisible while a child looks straight at it. */
+    const contrast = ink ? Math.max(ratio(pct(0.9), bgLum), ratio(bgLum, pct(0.1))) : 1;
     return {
+      inkContrast: contrast,
+      inkLumP90: pct(0.9),
+      inkLumP10: pct(0.1),
+      bgLum: bgLum,
       inkFrac: ink / total,
       meanDist: ink ? distSum / ink / Math.hypot(W, H) : 0,
       /* INK DENSITY IN A DISC AROUND THE POINTER. This is the metric that tells
@@ -289,6 +329,47 @@ try {
 await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
 await openField();
 ok('the Games button opened Gyre and the field exposed its control seam');
+
+/* THE CONTROL PANEL IS ON SCREEN NOW (PUP-WO-0301) AND THIS CHECK MEASURES THE ENGINE.
+ * The drawer ships open — Scotty's direction is that the controls ARE the toy — and it
+ * covers the bottom of the viewport, which is where several readings below press. So
+ * this check closes it, THROUGH THE HANDLE, which is a state a child reaches with one
+ * tap and not a state manufactured for the test: no style is overridden, no node is
+ * removed, and the panel is still mounted and still subscribed for everything that
+ * follows. Its own behaviour is check 19's subject, not this one's.
+ *
+ * Asserted rather than assumed, because "the panel is out of the way" is a premise
+ * every pixel reading below depends on, and a premise nobody checks is how a whole
+ * section comes back green about nothing. */
+const panelPresent = await page.$('#gameControls');
+if (panelPresent) ok('the shell built a control panel from the module\'s manifest');
+else bad('no control panel was built', 'PUP-WO-0301: #gameControls is absent, so every control assertion below is vacuous');
+await page.click('#gameControlsHandle');
+const drawerShut = await page.evaluate(() => {
+  const root = document.getElementById('gameControls');
+  if (!root) return null;
+  const c = document.querySelector('#gameHost canvas');
+  const r = c.getBoundingClientRect();
+  /* Anything of the panel still standing between this check and the canvas, expressed
+   * as the lowest point it can press without hitting a control. */
+  let lowest = 1;
+  const els = root.querySelectorAll('button,[role="slider"]');
+  for (const el of els) {
+    const b = el.getBoundingClientRect();
+    if (b.width === 0 || b.height === 0) continue;
+    /* Only what overlaps the horizontal middle, which is the column every reading uses. */
+    const midX = r.left + r.width * 0.5;
+    if (b.left <= midX && b.right >= midX) lowest = Math.min(lowest, (b.top - r.top) / r.height);
+  }
+  const dr = document.getElementById('gameControlsDrawer');
+  return { open: !!dr && getComputedStyle(dr).display !== 'none', lowest };
+});
+if (drawerShut && drawerShut.open === false && drawerShut.lowest > 0.9) {
+  ok(`one tap on the handle put the drawer away; nothing of the panel now sits above ${(drawerShut.lowest * 100).toFixed(0)}% of the canvas in the column this check reads`);
+} else {
+  bad('the control drawer did not close, or a control still covers the field this check measures',
+    JSON.stringify(drawerShut));
+}
 
 /* ===================================================================== 1. api.tone
  * PUP-WO-0300 acceptance 3: "a tone at two different pitches and two durations, and
@@ -435,7 +516,13 @@ const PARAMS = [
 /* A fixed baseline for every trial, so one parameter's reading cannot be another
  * parameter's leftovers. */
 async function baseline(extra) {
-  const base = { count: 1600, force: 0.68, burst: 50, tail: 32, size: 40, linger: 60, palette: 'ice', background: 'void', polarity: 1 };
+  /* PINNED EXPLICITLY, INCLUDING THE FIVE PUP-WO-0301 ADDED. A baseline that leaves a
+   * parameter to whatever the previous trial left is the leftovers defect this function
+   * exists to stop, and `glow` in particular is decoration that sits on the exact spot
+   * the polarity trial reads. This check measures the ENGINE; check 19 measures what
+   * happens when a child turns these on. */
+  const base = { count: 1600, force: 0.68, burst: 50, tail: 32, size: 40, linger: 60, palette: 'ice', background: 'void', polarity: 1,
+                 ripple: 1, glow: 0, spin: 0, shape: 'streak' };
   await page.evaluate((s) => {
     const g = document.getElementById('gameHost').gyre;
     for (const k of Object.keys(s)) g.set(k, s[k]);
@@ -591,6 +678,97 @@ await settle(300);
 const revived = await sample();
 if (revived && revived.inkFrac > settled.inkFrac * 1.5) ok(`and one tap brings it back — ${(settled.inkFrac * 100).toFixed(2)}% to ${(revived.inkFrac * 100).toFixed(2)}%`);
 else bad('a tap does not revive a settled repel field', `${(settled.inkFrac * 100).toFixed(3)}% -> ${(revived ? revived.inkFrac * 100 : 0).toFixed(3)}%`);
+
+/* ============================== 3c. INK AGAINST GROUND, NOT INK
+ * PUP-WO-0301 §2.4, second obligation, and it is architecture §6.1 MEMBER 6 — the
+ * member this project named: an assertion that measures PRESENCE where the property is
+ * something else. Everything above counts "ink", and ink is defined as a pixel whose
+ * channels differ from the background's by an L1 total of 40. That is a PRESENCE test.
+ * A palette drawn in near-black on a dark ground clears it comfortably and is invisible
+ * to a child looking at the tablet — 40/765 of the way from the ground is a difference
+ * a sampler can see and an eye cannot.
+ *
+ * The property is CONTRAST AGAINST THE GROUND THAT WAS CHOSEN, and 0301 is where it
+ * becomes testable because 0301 is where a child picks a palette and a background
+ * independently, from two strips, with no adult reading the combination first. Eleven
+ * palettes and ten backgrounds is a hundred and ten pairs, and the child can reach
+ * every one of them in two taps.
+ *
+ * So: every pair, measured. The floor is a WCAG contrast ratio computed from RELATIVE
+ * luminance, between the ground and the tenth of the ink furthest from it — better of
+ * the bright and dark tails, because two of the ten backgrounds are light and flip the
+ * draw to `multiply`. 1.0 is invisible; 3.0 is WCAG's floor for a graphical object.
+ * These are not text and a particle field is not a UI icon, so the bar is set where a
+ * field is unmistakably there rather than where a glyph would be legible — and the
+ * measured worst pair is printed on a green so the margin is a fact and not a hope. */
+console.log('\n--- 3c. every palette on every background: ink-versus-GROUND, not ink ---');
+const CONTRAST_FLOOR = 1.9;
+const combos = await page.evaluate(() => {
+  const g = document.getElementById('gameHost').gyre;
+  return { p: g.palettes.map((x) => x.id), b: g.backgrounds.map((x) => x.id) };
+});
+const contrasts = [];
+for (const pid of combos.p) {
+  for (const bid of combos.b) {
+    await baseline({ palette: pid, background: bid, count: 1600, size: 40, tail: 32, linger: 60, polarity: 1 });
+    /* Long enough for the trails to build to their steady density at linger 60 — the
+     * frame right after a palette change is a fade, and a fade is a transient. */
+    await settle(420);
+    const sm = await sample();
+    contrasts.push({ pid, bid, c: sm ? sm.inkContrast : 0, ink: sm ? sm.inkFrac : 0 });
+  }
+}
+contrasts.sort((a, b) => a.c - b.c);
+const dim = contrasts.filter((x) => x.c < CONTRAST_FLOOR);
+if (dim.length === 0) {
+  const w = contrasts[0];
+  ok(`all ${contrasts.length} palette/background pairs clear a ${CONTRAST_FLOOR}:1 ink-to-ground contrast ratio; the worst is ${w.pid} on ${w.bid} at ${w.c.toFixed(2)}:1 with ${(w.ink * 100).toFixed(1)}% ink`);
+} else {
+  bad(`${dim.length} palette/background pair(s) draw ink that does not stand out from the ground a child chose`,
+    dim.slice(0, 6).map((x) => `${x.pid}/${x.bid} ${x.c.toFixed(2)}:1 (ink ${(x.ink * 100).toFixed(1)}%)`).join(' · '));
+}
+/* THE ASSERTION MUST BE ABLE TO FAIL, and "presence passes where contrast does not" is
+ * exactly the claim being made, so it is measured rather than asserted: a palette
+ * forced to the ground's own colour is INKED by the old test and invisible by the new
+ * one. If this ever stops holding, the floor above is measuring nothing. */
+const camo = await page.evaluate(async () => {
+  const c = document.querySelector('#gameHost canvas');
+  const ctx = c.getContext('2d');
+  /* Drawn directly: a field of strokes 40/765 away from the ground in L1 — which is
+   * what "ink" means to every other assertion in this file — on the ground itself. */
+  const bg = [7, 8, 10];
+  /* THE COMPOSITE STATE IS THE SIM'S, NOT THIS FIXTURE'S. draw() leaves the context on
+   * `lighter` (or `multiply` on a light ground), so a fillRect here ADDS to the field
+   * instead of replacing it and the fixture paints something other than what it says it
+   * paints. Reset explicitly — a fixture that inherits state is a fixture whose subject
+   * is whatever ran last. */
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`;
+  ctx.fillRect(0, 0, c.width, c.height);
+  /* FILLED RECTANGLES ON WHOLE PIXELS, not strokes: an antialiased stroke lands most of
+   * its pixels BETWEEN the two colours, and the first version of this fixture measured
+   * 0.00% ink — a red demonstration that failed for its own reasons rather than the one
+   * under test, which is §6.1 member 3. +20 per channel is an L1 distance of 60, half as
+   * far again as the 40 every other assertion in this file calls ink. */
+  ctx.fillStyle = `rgb(${bg[0] + 20},${bg[1] + 20},${bg[2] + 20})`;
+  for (let i = 0; i < 6000; i++) {
+    const x = Math.round(Math.random() * (c.width - 8));
+    const y = Math.round(Math.random() * (c.height - 6));
+    ctx.fillRect(x, y, 8, 6);
+  }
+  const out = window.__sample(undefined, undefined, undefined);
+  /* The fixture reports what it actually painted, so a red here can be told apart from a
+   * red caused by the fixture failing to paint at all. */
+  const px = ctx.getImageData(0, 0, 4, 1).data;
+  return Object.assign({ corner: [px[0], px[1], px[2]] }, out);
+});
+if (camo && camo.inkFrac > 0.01 && camo.inkContrast < CONTRAST_FLOOR) {
+  ok(`the new assertion can fail where the old one cannot: a field drawn at the presence threshold reads ${(camo.inkFrac * 100).toFixed(1)}% INK and only ${camo.inkContrast.toFixed(2)}:1 contrast`);
+} else {
+  bad('the contrast assertion could not be shown red against a field that is present but invisible',
+    `inkFrac ${(camo ? camo.inkFrac * 100 : 0).toFixed(2)}%, contrast ${(camo ? camo.inkContrast : 0).toFixed(2)}:1, ground read as ${JSON.stringify(camo && camo.bg)}, corner pixel ${JSON.stringify(camo && camo.corner)} — presence and contrast are not being measured differently`);
+}
 
 /* ATTRACT/REPEL VISIBLY INVERTS — roadmap P3 gate 3. Section 2 measured polarity as a
  * parameter; this measures it as the CHILD experiences it, with a finger held down,

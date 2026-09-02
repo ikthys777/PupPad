@@ -33,6 +33,7 @@ import { readFile } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { FakeCacheStorage, loadWorker } from './lib/sw-harness.mjs';
+import { requireSubject } from './lib/subject.mjs';
 
 const REPO = resolve(process.argv[2] || process.cwd());
 /* SERVED AT THE REAL DEPLOYED PATHS (PUP-WO-0103 F0, fix 4).
@@ -81,6 +82,14 @@ const ORIGIN = `http://127.0.0.1:${server.address().port}`;
  * MANDATES whenever a cached asset changes — this check went red and the two
  * checks contradicted each other on every app change. A check that cannot survive
  * the change another check requires is a check that will be deleted. */
+/* PUP-WO-0301 §2.4: check 6 asserted no subject at all. It is run twice in CI — once
+ * against the repo and once against each published copy — and a demonstration that
+ * cannot say which commit produced the tree it just proved something about is a
+ * demonstration about no particular tree. The subject is the commit the CHECK came
+ * from, which is well defined even when the argument is dist/stable. */
+const SUBJECT = requireSubject(resolve(join(import.meta.dirname, '..', '..')), 'CHECK 6');
+console.log(`  subject commit ${SUBJECT.slice(0, 12)}`);
+
 const probeStore = new FakeCacheStorage();
 const ROOT_CACHE = loadWorker(join(REPO, 'sw.js'), `${ORIGIN}${BASE}`, probeStore).get('CACHE_NAME');
 const STABLE_CACHE = loadWorker(join(REPO, 'sw.js'), `${ORIGIN}${STABLE_BASE}`, probeStore).get('CACHE_NAME');

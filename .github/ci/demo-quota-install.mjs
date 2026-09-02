@@ -38,6 +38,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { join, extname, resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { requireSubject } from './lib/subject.mjs';
 
 const NEW_DIR = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
 const BASE = '/PupPad/';
@@ -149,7 +150,13 @@ async function scenario({ label, oldSw, newSw, squeeze, breakIt }) {
   return { life, shell, filled };
 }
 
+/* PUP-WO-0301 §2.4. This demonstration printed two blob hashes and NO COMMIT, so its
+ * provenance line named two byte sequences and no tree — and `blob()` falls back to a
+ * string on failure, which is the same fall-open one level down. The commit is now
+ * required; the blobs stay, because which sw.js was squeezed is the interesting half. */
+const SUBJECT = requireSubject(resolve(join(import.meta.dirname, '..', '..')), 'demo-quota-install');
 console.log(`demo-quota-install`);
+console.log(`  subject commit : ${SUBJECT.slice(0, 12)}`);
 console.log(`  NEW sw.js blob : ${blob(join(NEW_DIR,'sw.js'))}`);
 console.log(`  origin         : ${ORIGIN}${BASE}\n`);
 

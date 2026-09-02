@@ -27,16 +27,15 @@ import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join, extname, resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { requireBlob } from './lib/subject.mjs';
 
 /* Architecture §5: a demonstration asserts the COMMIT that ran, never the conclusion
  * alone. PUP-WO-0105's first version printed only a path and its feedback file then
  * claimed the blob was "recorded in each run" — it was computed by hand at a shell.
- * Claiming a mechanism that does not exist is the defect this file is about. */
-function subjectBlob(swPath) {
-  try {
-    return execFileSync('git', ['hash-object', swPath], { encoding: 'utf8' }).trim();
-  } catch { return '(git unavailable)'; }
-}
+ * Claiming a mechanism that does not exist is the defect this file is about.
+ *
+ * AND IT FELL OPEN UNTIL PUP-WO-0301 §2.4: no git meant the string '(git unavailable)'
+ * printed under the word SUBJECT and a green underneath it. requireBlob refuses. */
 
 const DIR = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
 const BASE = '/PupPad/';
@@ -91,9 +90,10 @@ const shellInCache = () => page.evaluate(async (url) => {
 }, SHELL);
 
 const SW_PATH = join(DIR, 'sw.js');
-const SUBJECT = subjectBlob(SW_PATH);
+const SUBJECT = requireBlob(resolve(join(import.meta.dirname, '..', '..')), 'demo-error-poisoning', SW_PATH);
 console.log(`demo-error-poisoning: ${SW_PATH}`);
-console.log(`  SUBJECT sw.js blob : ${SUBJECT}`);
+console.log(`  subject commit     : ${SUBJECT.commit.slice(0, 12)}`);
+console.log(`  SUBJECT sw.js blob : ${SUBJECT.blob}`);
 console.log(`  origin             : ${ORIGIN}${BASE}\n`);
 
 /* ---- 1. healthy ---- */
@@ -162,11 +162,11 @@ if (!isTheApp(served))
   problems.push(`OFFLINE the device did not serve the real app: ${JSON.stringify(served)}`);
 
 if (problems.length) {
-  console.error(`DEMO RED — subject ${SUBJECT}`);
+  console.error(`DEMO RED — subject ${SUBJECT.commit.slice(0, 12)} / sw.js ${SUBJECT.blob}`);
   for (const p of problems) console.error(`  ${p}`);
   console.error('  Buddy taps his icon and gets this. Northstar invariants 3 and 5.');
   process.exit(1);
 }
-console.log(`DEMO GREEN — subject ${SUBJECT}`);
+console.log(`DEMO GREEN — subject ${SUBJECT.commit.slice(0, 12)} / sw.js ${SUBJECT.blob}`);
 console.log('  the shell was cached healthy, survived a 404 received while online,');
 console.log('  and is what the device serves with the origin gone.');

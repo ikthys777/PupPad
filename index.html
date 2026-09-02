@@ -1851,6 +1851,499 @@ function makeBackButton(z, onExit) {
   return btn;
 }
 
+/* ============================ THE CONTROL PANEL — PUP-WO-0301 ===============
+ * WHAT IT IS: a control surface built from a DECLARATIVE MANIFEST a module publishes,
+ * by a shell that knows nothing about any module. It is the same contract the picker
+ * holds (architecture §4) applied one level down — the picker renders tiles from the
+ * registry with no knowledge of a game; this renders controls from a seam with no
+ * knowledge of what any of them do.
+ *
+ * WHERE THE SEAM IS AND WHY THAT IS NOT A SPECIAL CASE. `host[entry.id]` — for Gyre
+ * that reads `host.gyre`, which is the seam PUP-WO-0300 built and PUP-WO-0301 §2.1
+ * names. It is not a name this file knows: it is the registry id of whatever entry is
+ * mounting, so a second game publishing `host.blockpop` gets a panel with no edit here.
+ * A module that publishes nothing gets no panel and no error — games/hello.js is the
+ * live proof of that path.
+ *
+ * THE VOCABULARY IS THREE KINDS. `slider` (bounds from the seam's own `.ranges`, so
+ * a range is specified once — PUP-WO-0300 §9's first warning), `choice` (options carry
+ * either an `icon` glyph or a `hex`, and a hex swatch IS the colour it selects, which
+ * is §2.3's "colour is the label" and invariant 1 with no text at all), and `action`
+ * (a method name on the seam; the shell calls it and knows nothing else).
+ *
+ * NOTHING HERE PAINTS A WORD. Every affordance is a pictograph, a geometric glyph or a
+ * colour. `label` on a descriptor is used for `aria-label` only — a screen reader is a
+ * different audience from a non-reader and costs nothing. That is what makes acceptance
+ * 8 a test of the design rather than of a screenshot.
+ *
+ * WHY NOTHING ANIMATES. §3.6 forbids any state where getting out takes more than one
+ * tap, "including mid-drag, mid-animation". The cheapest way to hold that clause for a
+ * mid-animation state is not to have one: the drawer is shown or hidden, never in
+ * between. The exit is also never covered — this whole layer is `pointer-events:none`
+ * except on the controls themselves, the drawer is pinned to the BOTTOM and #gameBack
+ * is at the TOP-LEFT, and the back button is appended to the chrome after this root so
+ * it wins at equal z-index. */
+var PANEL_Z = GAMES_Z + 1;
+
+/* One glyph, drawn as text, never parsed as markup. `textContent`, so a manifest can
+ * carry no markup even by accident — a module is same-realm and could do worse, but a
+ * shell that innerHTMLs module-supplied strings is a habit, and habits outlive the
+ * realm they were safe in. */
+function panelGlyph(text, px) {
+  var g = document.createElement('span');
+  g.textContent = typeof text === 'string' ? text : '';
+  g.style.cssText = 'font-size:' + px + 'px;line-height:1;pointer-events:none;'
+    + 'display:block;text-align:center;letter-spacing:-0.06em';
+  return g;
+}
+
+/* The shared shape of every pressable thing on this surface. `wireTap` is not optional
+ * decoration: a browser synthesises no `click` while a second finger is on the glass or
+ * after ~15px of touch slop, and both are a three-year-old's ordinary gesture
+ * (architecture §6.1 member 6). Every control here is pressed the same way #gameBack is. */
+function panelButton(size, radius, background, onTap, ariaLabel) {
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.setAttribute('aria-label', ariaLabel || '');
+  b.style.cssText = 'width:' + size + 'px;height:' + size + 'px;border-radius:' + radius + 'px;'
+    + 'border:2px solid rgba(255,255,255,0.22);background:' + background + ';padding:0;margin:0;'
+    + 'display:flex;align-items:center;justify-content:center;cursor:pointer;'
+    /* `pan-y`, AND `none` HERE WAS A REAL DEFECT ON THE ONLY DEVICE THAT MATTERS.
+     * `touch-action: none` on a control tells the browser that NO gesture starting on it
+     * may scroll an ancestor — so on a short screen, where the drawer holds more than it
+     * can show, a finger landing anywhere on a control could not pan it. The controls are
+     * most of the drawer's surface; the gaps between them are 8px. A child would have had
+     * to find those gaps to reach the controls below the fold. `pan-y` lets the browser
+     * take a vertical drag and leaves everything else to wireTap, which disarms on the
+     * pointercancel the browser sends when it claims the gesture — so a pan never fires a
+     * control and a tap still does. */
+    + 'touch-action:pan-y;-webkit-tap-highlight-color:transparent;flex:0 0 auto;'
+    /* EXPLICIT, because the bar this may sit in is `pointer-events:none` so that the
+     * field shows through the gaps between the controls. A button that inherits none
+     * is painted, reachable by `elementFromPoint`, and dead to a finger — which is
+     * architecture §6.1 member 6 wearing a different costume. */
+    + 'pointer-events:auto';
+  wireTap(b, onTap, { repeat: true });
+  return b;
+}
+
+function mountControlPanel(chrome, host, entry) {
+  var seam = null;
+  try { seam = host[entry.id]; } catch (e) { seam = null; }
+  if (!seam || typeof seam !== 'object') return null;
+  if (typeof seam.get !== 'function' || typeof seam.set !== 'function') return null;
+  var controls = seam.controls;
+  if (!controls || typeof controls.length !== 'number' || !controls.length) return null;
+
+  var root = document.createElement('div');
+  root.id = 'gameControls';
+  root.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:' + PANEL_Z + ';'
+    + 'pointer-events:none;-webkit-tap-highlight-color:transparent';
+
+  var dock = document.createElement('div');
+  dock.style.cssText = 'position:absolute;left:0;right:0;bottom:0;display:flex;'
+    + 'flex-direction:column;align-items:stretch;pointer-events:none';
+
+  var bar = document.createElement('div');
+  /* THE LEFT INSET IS NOT PADDING, IT IS THE EXIT'S COLUMN, AND ITS ABSENCE WAS THE WORST
+   * DEFECT IN THIS WORK ORDER. #gameBack is `position:fixed` at top ~62px, 64px square,
+   * so it occupies x 10-74 and y 62-126 forever. The dice sits in this bar directly above
+   * the drawer, so its centre is at roughly 0.28*H - 48 while the drawer's height cap
+   * binds — which lands inside 62..126 for every viewport between about 393px and 621px
+   * tall. At 800x480, 640x480, 1024x600 and 915x412 an adversarial pass measured that a
+   * tap on the dice's own centre HIT THE BACK BUTTON: no randomize, the game closed, and
+   * the child was dumped on the console. Only 26.5% of the dice was reachable at all.
+   *
+   * Every check passed throughout, including the one written for this panel, because they
+   * all asked whether the panel covers the exit and none asked whether the EXIT covers a
+   * control. The z-order discipline was right and one-directional.
+   *
+   * 84px clears x=74 with a margin, at every height, without depending on either
+   * element's vertical position — which is what makes it a fix rather than a coincidence
+   * that holds at the sizes someone happened to test. */
+  bar.style.cssText = 'display:flex;align-items:flex-end;justify-content:space-between;'
+    + 'gap:12px;padding:0 12px 10px max(84px,calc(env(safe-area-inset-left) + 74px));'
+    + 'pointer-events:none';
+
+  /* `align-content:safe start`, and the `safe` is load-bearing for the same reason it is
+   * in the picker: a centred overflowing container pushes its first rows ABOVE the
+   * scroll origin, `scrollTop` cannot go negative, and those rows become permanently
+   * unreachable. `start` cannot produce that state and `safe` says so out loud. */
+  var drawer = document.createElement('div');
+  drawer.id = 'gameControlsDrawer';
+  drawer.style.cssText = 'pointer-events:auto;background:rgba(9,13,22,0.86);'
+    + 'border-top:2px solid rgba(255,255,255,0.18);box-shadow:0 -8px 26px rgba(0,0,0,0.55);'
+    /* 72vh, RAISED FROM 58 ON A MEASUREMENT: at 58 the last two rows sat below the fold
+     * on a 1024x640 screen and `spin` could not be pressed without scrolling first. It
+     * still scrolls on a short viewport — sixteen controls with no words take room, and
+     * §2.2b's ruling is that a control is worth a row — so the drawer pans with a finger
+     * and check 19 proves that it does, rather than assuming a child will find it. */
+    /* 78vh AND A DENSER GRID. At 72vh with 56px rows this held 460px of content in a
+     * 459px box on a 1024x640 screen — overflow by one pixel, which is not "it fits", and
+     * on the 480px-tall shape this actually runs on FOUR CONTROLS WERE PAINTED AND COULD
+     * NOT BE PRESSED. Sixteen controls with no words take room and §2.2b's ruling is that
+     * a control is worth a row, so the room comes from the rows rather than from the
+     * controls: 56px sliders become 50, 52px buttons become 46, the gap 10 becomes 8. The
+     * drawer still pans when it must, and now the pan actually works (see panelButton). */
+    /* THE CAP IS THE EXIT'S BAND, NOT A FRACTION OF THE SCREEN. #gameBack is fixed at
+     * y 62-126 forever, so any surface whose TOP rises above ~140px puts its first row
+     * under the exit — and on a 480px screen at 78vh it did exactly that: the polarity
+     * button and the first colour swatches sat inside the exit's hit box, where a tap
+     * closes the toy instead of pressing them. The dice had the same collision in the bar
+     * above (see there). Capping the drawer's top below the band removes it at EVERY
+     * height rather than at the heights someone happened to measure, which is what the
+     * 84px inset does for the bar. Two geometric rules, both independent of viewport. */
+    /* THE LEFT GUTTER IS THE EXIT'S COLUMN, the same 84px the bar above uses, and it is
+     * what makes the collision impossible rather than unlikely. Capping the drawer's
+     * HEIGHT below the exit's band worked only until the drawer was scrolled, at which
+     * point its top rows slid up under the exit again. #gameBack owns x 10-74 at every
+     * height and every scroll position; keeping the drawer's content out of that column
+     * is a rule no scroll can defeat, and it lets the drawer keep its full height. */
+    + 'max-height:78vh;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;'
+    + 'padding:10px 10px calc(10px + env(safe-area-inset-bottom)) max(84px,calc(env(safe-area-inset-left) + 74px));'
+    + 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));'
+    + 'gap:8px;align-content:safe start';
+
+  /* Every control registers a repaint here. `randomize()` changes nine settings at once
+   * and the seam announces once; without this the sliders would show the settings the
+   * child had BEFORE he pressed the dice, which is a control surface that lies. */
+  var syncs = [];
+  var lastValues = {};
+  function currentValues() {
+    try { return seam.get() || {}; } catch (e) { return lastValues; }
+  }
+  function repaint(vals) {
+    lastValues = vals || {};
+    for (var i = 0; i < syncs.length; i++) { try { syncs[i](lastValues); } catch (e) {} }
+  }
+  function write(key, value) {
+    try { seam.set(key, value); } catch (e) {}
+    repaint(currentValues());
+  }
+
+  /* ---- slider ---- */
+  function buildSlider(desc) {
+    var rng = null;
+    try { rng = seam.ranges && seam.ranges[desc.key]; } catch (e) { rng = null; }
+    if (!rng || typeof rng.length !== 'number' || rng.length < 2) return null;
+    var lo = Number(rng[0]), hi = Number(rng[1]), step = Number(rng[2]);
+    if (!isFinite(lo) || !isFinite(hi) || !(hi > lo)) return null;
+    if (!isFinite(step) || step <= 0) step = 0;
+
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;pointer-events:auto';
+    var ico = panelGlyph(desc.icon, 24);
+    ico.style.cssText += ';width:30px;flex:0 0 auto';
+    row.appendChild(ico);
+
+    var track = document.createElement('div');
+    track.setAttribute('role', 'slider');
+    track.setAttribute('tabindex', '0');
+    track.setAttribute('aria-label', desc.label || desc.key);
+    track.setAttribute('aria-valuemin', String(lo));
+    track.setAttribute('aria-valuemax', String(hi));
+    track.dataset.control = desc.key;
+    /* 56px tall, and the WHOLE BAR is the target — a tap anywhere on it jumps the value
+     * to that position. A three-year-old's aim is not an adult's, and a 20px thumb he
+     * has to catch first is a control he cannot use. */
+    /* `pan-y` for the same reason, and it is exactly right for a HORIZONTAL control
+     * inside a VERTICAL scroller: the browser keeps vertical panning and hands us
+     * everything horizontal, which is the only direction this slider reads. */
+    track.style.cssText = 'position:relative;flex:1 1 auto;height:50px;border-radius:14px;'
+      + 'background:rgba(255,255,255,0.10);border:2px solid rgba(255,255,255,0.20);'
+      + 'overflow:hidden;touch-action:pan-y;cursor:pointer;min-width:0';
+    var fill = document.createElement('div');
+    fill.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:0;'
+      + 'background:linear-gradient(90deg,#22D3EE,#818CF8);pointer-events:none';
+    var knob = document.createElement('div');
+    knob.style.cssText = 'position:absolute;top:5px;bottom:5px;width:12px;border-radius:7px;'
+      + 'background:#ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.7);pointer-events:none;'
+      + 'margin-left:-6px;left:0';
+    track.appendChild(fill);
+    track.appendChild(knob);
+    row.appendChild(track);
+
+    var painted = null;
+    function paint(vals) {
+      var v = Number(vals[desc.key]);
+      if (!isFinite(v)) return;
+      if (v === painted) return;
+      painted = v;
+      var t = (v - lo) / (hi - lo);
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      fill.style.width = (t * 100) + '%';
+      knob.style.left = (t * 100) + '%';
+      track.setAttribute('aria-valuenow', String(v));
+    }
+    syncs.push(paint);
+
+    /* THE PROJECTION IS NOT A SECOND SET OF BOUNDS. What is clamped here is the POINTER
+     * POSITION to the track it was pressed on — geometry — and `lo`/`hi` come from the
+     * seam's own `.ranges`. PUP-WO-0300 §9's first warning is against a control
+     * re-stating a range the setter already enforces; this restates nothing, and a value
+     * the setter rejects is still a no-op there rather than a reset here. */
+    function valueAt(clientX) {
+      var r = track.getBoundingClientRect();
+      var t = r.width > 0 ? (clientX - r.left) / r.width : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      var v = lo + t * (hi - lo);
+      if (step > 0) v = Math.round(v / step) * step;
+      /* Binary floating point turns 0.68 into 0.6800000000000001 through one multiply,
+       * and that value is not `===` the one the seam holds, so every drag would report a
+       * change and schedule a save. Six places is finer than any step this seam has. */
+      return Number(v.toFixed(6));
+    }
+
+    /* ONE FINGER OWNS THE TRACK. A second pointer landing on the same slider is ignored
+     * rather than fighting the first for it — and, more to the point, a second finger
+     * anywhere else on the screen still reaches #gameBack, which is §3.6's clause and
+     * the reason none of this is wired on `click`. */
+    var dragging = -1;
+    track.addEventListener('pointerdown', function(e) {
+      if (dragging !== -1) return;
+      dragging = e.pointerId;
+      try { track.setPointerCapture(e.pointerId); } catch (err) {}
+      write(desc.key, valueAt(e.clientX));
+    });
+    track.addEventListener('pointermove', function(e) {
+      if (e.pointerId !== dragging) return;
+      write(desc.key, valueAt(e.clientX));
+    });
+    function endDrag(e) {
+      if (e.pointerId !== dragging) return;
+      dragging = -1;
+      try { track.releasePointerCapture(e.pointerId); } catch (err) {}
+    }
+    track.addEventListener('pointerup', endDrag);
+    track.addEventListener('pointercancel', endDrag);
+    track.addEventListener('keydown', function(e) {
+      var cur = Number(currentValues()[desc.key]);
+      if (!isFinite(cur)) return;
+      var d = step > 0 ? step : (hi - lo) / 20;
+      var next = null;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = cur + d;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = cur - d;
+      else if (e.key === 'Home') next = lo;
+      else if (e.key === 'End') next = hi;
+      if (next === null) return;
+      e.preventDefault();
+      write(desc.key, Number(next.toFixed(6)));
+    });
+    return row;
+  }
+
+  /* ---- choice: a row of options, or ONE cycling affordance when `single` ---- */
+  function buildChoice(desc) {
+    var opts = desc.options;
+    if (!opts && typeof desc.from === 'string') {
+      try { opts = seam[desc.from]; } catch (e) { opts = null; }
+    }
+    if (!opts || typeof opts.length !== 'number' || opts.length < 2) return null;
+    var isSwatch = !!(opts[0] && typeof opts[0].hex === 'string');
+
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;pointer-events:auto';
+    if (isSwatch) row.style.gridColumn = '1 / -1';
+
+    var indexOfValue = function(v) {
+      for (var i = 0; i < opts.length; i++) if (opts[i] && opts[i].id === v) return i;
+      return -1;
+    };
+
+    if (desc.single) {
+      /* §2.2: attract/repel is ONE two-state affordance, not a slider and not a pair.
+       * One tap flips it, and PUP-WO-0300 measured that the flip is visible on sight —
+       * 37% of the frame inked becomes 0.0%. A row of two would make the child choose
+       * between two things he cannot read; a single button that changes what it shows
+       * is a thing he presses to see what happens, which is the only instruction a
+       * non-reader ever gets. */
+      var cycle = panelButton(58, 16, 'linear-gradient(145deg,#334155,#1e293b)', function() {
+        var i = indexOfValue(currentValues()[desc.key]);
+        var next = opts[(i + 1 + opts.length) % opts.length];
+        if (next) write(desc.key, next.id);
+      }, desc.label || desc.key);
+      cycle.dataset.control = desc.key;
+      var cg = panelGlyph('', 26);
+      cycle.appendChild(cg);
+      syncs.push(function(vals) {
+        var i = indexOfValue(vals[desc.key]);
+        var o = opts[i === -1 ? 0 : i];
+        cg.textContent = o && typeof o.icon === 'string' ? o.icon : '';
+        cycle.dataset.value = String(o ? o.id : '');
+      });
+      row.appendChild(cycle);
+      return row;
+    }
+
+    var cells = [];
+    for (var i = 0; i < opts.length; i++) {
+      (function(opt) {
+        if (!opt || opt.id === undefined || opt.id === null) return;
+        /* VALIDATED, because this string is concatenated into an inline `style` and the
+         * picker learned this exact lesson on the registry's `color` four hundred lines
+         * above: a `hex` of "red;position:fixed;inset:0;z-index:2147483647" builds a
+         * button that covers the entire screen and every other control. The exit survived
+         * it — the insertBefore ordering held — but the toy did not. Same trust level as
+         * the registry, same answer: a typo surface gets a validator, not a promise. */
+        var bg = isSwatch && GAMES_HEX_RE.test(opt.hex)
+          ? opt.hex : 'linear-gradient(145deg,#334155,#1e293b)';
+        var b = panelButton(isSwatch ? 42 : 46, isSwatch ? 21 : 14, bg, function() {
+          write(desc.key, opt.id);
+        }, (desc.label || desc.key) + ' ' + String(opt.id));
+        b.dataset.control = desc.key;
+        b.dataset.value = String(opt.id);
+        if (isSwatch) {
+          if (!GAMES_HEX_RE.test(opt.hex)) return;
+          b.dataset.hex = String(opt.hex);
+        } else {
+          var g = panelGlyph(opt.icon, 24);
+          if (opt.off) {
+            /* OFF IS DRAWN, NOT OMITTED: the same pictograph, dimmed, with a bar through
+             * it. A child compares the two buttons and sees which one is lit; the effect
+             * itself is the other half of the answer and it is immediate. */
+            g.style.opacity = '0.4';
+            var slash = document.createElement('span');
+            slash.style.cssText = 'position:absolute;left:8px;right:8px;height:3px;'
+              + 'background:#f87171;border-radius:2px;transform:rotate(-32deg);pointer-events:none';
+            b.style.position = 'relative';
+            b.appendChild(slash);
+          }
+          b.appendChild(g);
+        }
+        cells.push({ el: b, id: opt.id });
+        row.appendChild(b);
+      })(opts[i]);
+    }
+    if (!cells.length) return null;
+    syncs.push(function(vals) {
+      var v = vals[desc.key];
+      for (var k = 0; k < cells.length; k++) {
+        var on = cells[k].id === v;
+        cells[k].el.style.boxShadow = on
+          ? '0 0 0 3px #ffffff,0 0 0 7px rgba(0,0,0,0.55)'
+          : '0 2px 6px rgba(0,0,0,0.4)';
+        cells[k].el.style.transform = on ? 'scale(1.06)' : 'scale(1)';
+        cells[k].el.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    });
+    return row;
+  }
+
+  /* ---- action ---- */
+  function buildAction(desc, big) {
+    if (typeof desc.method !== 'string') return null;
+    /* OWN PROPERTY ONLY. `seam['toString']` is a function, so a one-word typo in a
+     * manifest built a real, pressable button — `prominent: true` put it in the dice's
+     * place — that called Object.prototype.toString and did nothing a child could see.
+     * §7: better absent than present-and-uninterpretable. */
+    if (!Object.prototype.hasOwnProperty.call(seam, desc.method)) return null;
+    var fn = seam[desc.method];
+    if (typeof fn !== 'function') return null;
+    var size = big ? 88 : 50;
+    var bg = big
+      ? 'linear-gradient(145deg,#FBBF24,#D97706)'
+      : 'linear-gradient(145deg,#334155,#1e293b)';
+    var b = panelButton(size, big ? 26 : 16, bg, function() {
+      try { seam[desc.method](); } catch (e) {}
+      repaint(currentValues());
+    }, desc.label || desc.method);
+    b.dataset.control = desc.method;
+    if (big) {
+      b.style.border = '3px solid rgba(255,255,255,0.9)';
+      b.style.boxShadow = '0 0 0 4px rgba(0,0,0,0.45),0 6px 18px rgba(0,0,0,0.55)';
+      b.style.pointerEvents = 'auto';
+    }
+    b.appendChild(panelGlyph(desc.icon, big ? 38 : 26));
+    return b;
+  }
+
+  /* ---- assemble ---- */
+  var prominent = [];
+  for (var c = 0; c < controls.length; c++) {
+    var desc = controls[c];
+    if (!desc || typeof desc !== 'object') continue;
+    var node = null;
+    if (desc.kind === 'slider') node = buildSlider(desc);
+    else if (desc.kind === 'choice') node = buildChoice(desc);
+    else if (desc.kind === 'action') node = buildAction(desc, !!desc.prominent);
+    if (!node) continue;
+    if (desc.kind === 'action' && desc.prominent) prominent.push(node);
+    else drawer.appendChild(node);
+  }
+  if (!drawer.children.length && !prominent.length) return null;
+
+  /* The dice lives OUTSIDE the drawer and is always on screen. §2.2: "one big button …
+   * make it the most obvious thing on the surface", and at 76px it was 5,776px2 against a
+   * slider's 15,828 — a third of the size of the thing it was supposed to out-shout. 88px
+   * with a white ring and the only amber on the screen. It is still smaller than a slider
+   * in area, and that is a deliberate trade rather than an oversight: a slider is wide
+   * because it is a TRACK a finger travels, and the dice only has to be HIT. What makes
+   * it the most obvious thing is that it is the only warm-coloured control, it is always
+   * on screen when the drawer is shut, and nothing else sits in that corner.
+   *
+   * It is bigger than #gameBack on purpose — the exit is deliberately small so it does
+   * not dominate the field (PUP-WO-0201 §1a.1) — and the two are in opposite corners. */
+  var left = document.createElement('div');
+  left.style.cssText = 'display:flex;align-items:flex-end;gap:10px;pointer-events:none';
+  for (var p = 0; p < prominent.length; p++) left.appendChild(prominent[p]);
+
+  var drawerOpen = true;
+  var handle = panelButton(60, 18, 'linear-gradient(145deg,#334155,#0f172a)', function() {
+    setOpen(!drawerOpen);
+  }, 'Show or hide the controls');
+  handle.style.boxShadow = '0 4px 14px rgba(0,0,0,0.55)';
+  handle.id = 'gameControlsHandle';
+  var handleGlyph = panelGlyph('', 28);
+  handle.appendChild(handleGlyph);
+
+  /* Remembered per game, in the SHELL's own key — the module's `api.save` namespace is
+   * the child's settings and this is a shell preference about a shell surface. Reading
+   * it is wrapped: private mode throws on the getter, and a toy that will not open
+   * because storage is unavailable is a worse bug than a drawer in the wrong state. */
+  var OPEN_KEY = 'pupctl:' + entry.id + ':open';
+  function setOpen(open) {
+    drawerOpen = !!open;
+    /* `display`, NOT the `hidden` attribute. `[hidden]{display:none}` is a UA rule and
+     * this element carries an INLINE `display:grid`, which wins — so `drawer.hidden =
+     * true` would set the attribute, satisfy every assertion that reads it, and leave
+     * the drawer on screen. An assertion that passes over a visible panel is exactly
+     * the family this project keeps finding. */
+    drawer.style.display = open ? 'grid' : 'none';
+    handleGlyph.textContent = open ? '▾' : '🎛️';
+    handle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    try { localStorage.setItem(OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+  }
+  var startOpen = true;
+  try { startOpen = localStorage.getItem(OPEN_KEY) !== '0'; } catch (e) { startOpen = true; }
+
+  bar.appendChild(left);
+  bar.appendChild(handle);
+  dock.appendChild(bar);
+  dock.appendChild(drawer);
+  root.appendChild(dock);
+
+  setOpen(startOpen);
+  repaint(currentValues());
+
+  /* APPENDED BEFORE #gameBack IS. `back` is already in the chrome, so `appendChild`
+   * would put this layer on top of it at equal z-index — and a panel over the exit is
+   * §3.6 failing in the one place this project has already been bitten. `insertBefore`
+   * with the chrome's first child keeps the exit last in paint order, whatever this
+   * layer does. */
+  chrome.insertBefore(root, chrome.firstChild);
+
+  var unsub = null;
+  if (typeof seam.subscribe === 'function') {
+    try { unsub = seam.subscribe(function(vals) { repaint(vals); }); } catch (e) { unsub = null; }
+  }
+
+  return function panelTeardown() {
+    try { if (typeof unsub === 'function') unsub(); } catch (e) {}
+    try { if (root.parentNode) root.parentNode.removeChild(root); } catch (e) {}
+  };
+}
+
+
 /* Genuinely recursive: the first version froze two levels and was named for a depth it
  * did not have, so a `params:{grid:{w:3}}` entry would hand the game a mutable `grid`. */
 function deepFreezeEntry(entry) {
@@ -1925,6 +2418,12 @@ function endGameSession() {
      * the call. */
     if (window.console && console.error) console.error('[games] teardown threw; removing host anyway', e);
   } finally {
+    /* FIRST IN THE `finally`, and wrapped like everything else in it. The panel holds a
+     * subscription on the module's seam; the seam is already dead by now, so this is
+     * belt and braces rather than the load-bearing release — but a teardown that skips
+     * its own unsubscribe because an earlier line threw is how a watcher array survives
+     * a session, and PUP-WO-0300's pass proved that one the hard way. */
+    try { if (typeof s.panel === 'function') s.panel(); } catch (e) {}
     if (s.chrome && s.chrome.parentNode) s.chrome.parentNode.removeChild(s.chrome);
     /* ================= THE SWEEP, AND IT IS THE POINT OF THIS FUNCTION =================
      * The adversarial pass produced §1.6's trap THROUGH this host, with a one-word bug:
@@ -2116,6 +2615,19 @@ function openGames(entry) {
       return;
     }
     gameSession.teardown = td;
+
+    /* THE CONTROL PANEL — PUP-WO-0301. Built AFTER `teardown` is recorded, and that
+     * order is the whole safety argument: everything above this line is the contract
+     * PUP-WO-0000 §8.1 specifies, and nothing here may put it at risk. If this throws,
+     * the game is already mounted, the teardown is already held, the exit already
+     * works, and the child gets a toy with no panel instead of no toy. A module that
+     * publishes no seam takes the same path and it is not an error — games/hello.js is
+     * the live case. */
+    try {
+      gameSession.panel = mountControlPanel(chrome, host, entry);
+    } catch (e) {
+      if (window.console && console.error) console.error('[games] control panel failed to build; the game runs without it', e);
+    }
   }).catch(function(e) {
     /* The module could not be fetched or parsed. Offline with no cached copy lands
      * here, and the way back already works. */
