@@ -82,28 +82,57 @@ becomes `dragLiftPx(y)`; it remains the **one** derivation, and `moveDragEl` and
 `hitCell` remain its **only two** consumers, called with the **same `y`**. If those two
 ever pass different arguments, this is the original defect again wearing a taper.
 
-### THE TRAP, AND IT IS A CORRECTNESS BUG RATHER THAN A TUNING ONE
+### ~~THE TRAP~~ — **CC-A'S SIGN WAS REVERSED. CC-B REFUTED IT AND I VERIFIED THE REFUTATION.**
 
-The drop resolves at `target = y − lift(y)`, so `d(target)/dy = 1 − lift′(y)`.
-**A taper that sheds lift faster than 1px per 1px of finger travel makes the mapping
-NON-MONOTONIC — the piece moves UP the board as the finger moves DOWN.**
+I ruled that a taper shedding lift *"faster than 1px per 1px of finger travel"* makes the
+mapping non-monotonic. **That cannot happen.** The drop resolves at `target = y − lift(y)`,
+so `d(target)/dy = 1 − lift′(y)` — and **a taper SHEDS lift as the finger DESCENDS, so
+`lift′(y)` is NEGATIVE** and the slope is `1 + base/span`, **which is greater than 1 for
+every span.** The mapping runs backwards only if the lift *grows* toward the bottom
+faster than the finger travels, which is the opposite of a taper. **My table's
+1.80 / 0.90 / 0.60 / 0.45 was `base/span` — the magnitude of the slope's EXCESS over 1,
+not the slope.**
 
-| taper span | slope | |
-|---|---|---|
-| 0.5 cell (32px) | **1.80** | **INVERTS** |
-| 1.0 cell (64px) | 0.90 | ok, thin margin |
-| **1.5 cell (96px)** | **0.60** | **use this or wider** |
-| 2.0 cell (128px) | 0.45 | ok |
+**The 1.5-cell floor was right in direction and wrong in reason, and the real constraint
+is CC-B's: COMPRESSION.** Inside the taper the mapping compresses by that same slope, so
+a row answers across `cell / slope` of glass:
 
-**Taper over at least 1.5 cells.** The obvious implementation — ease to zero across the
-last row — is a 1.0-cell span at slope 0.90, which works and leaves almost no margin
-against a future cell-size change.
+| span | slope | band on glass | |
+|---|---|---|---|
+| 1.0 cell | 1.90 | 33.7px | under 44 |
+| 1.5 cell | 1.60 | 40.0px | under 44 |
+| **2.0 cell** | 1.45 | **44.1px** | the floor, no margin |
+| **2.6 cell** | 1.35 | **47.5px** | **built** |
 
-**Assert monotonicity directly, at all three fleet viewports:** walk `y` from the top of
-the board to the bottom of the screen in 2px steps and require the resolved row to be
-**non-decreasing** throughout. That is the assertion the taper needs and it is cheap.
-**And keep the existing cap** — it is what guarantees no row is unreachable on any
-device, whatever the constant is.
+`span >= base / (cell/44 − 1)` ≈ **2 cells** to hold the floor at all. **Built at 2.6.**
+
+**AND MY "KEEP THE EXISTING CAP" INSTRUCTION SILENTLY DISABLED THE THING IT WAS PROTECTING.**
+Both caps were derived for a **constant** lift, so they clamped the base to 34px — at
+which point **the taper does nothing**, and **its own red proof went GREEN against a build
+with the taper switched off entirely.** *A guard written for the old mechanism disabled
+the new one, and the only thing that caught it was a plant refusing to go red.* The caps
+now guard only the degenerate case where the taper is off, which is the case they are
+still right about.
+
+**Same disease one layer up, and it is the transferable half:** `§11` predicted the
+finger position from one measured lift — `finger = target + LIFT` — **a model of a
+constant lift living inside the test.** Under the taper it aimed at the wrong place and
+**failed a correct build by 11px**, reporting reachable cells as unreachable. It now
+carries **no model of the lift at all**: it drags, reads where the picture actually is,
+corrects by the residual, repeats. **AIM BY OBSERVATION, NOT BY PREDICTION.**
+
+**And the monotonicity assertion earned its place by finding a gap in itself:** row
+granularity is too coarse, because an inversion confined *inside* one row produces no row
+change and was green. It now records **the picture's own y**, which is continuous —
+165 row samples and 204 pixel samples across six rows, neither ever running backwards.
+
+**Single derivation held as ruled:** `dragLiftPx(y)` is the one derivation, `moveDragEl`
+and `hitCell` its only two consumers, both handed the same raw client `y`, and the plant
+that passes them different arguments goes red.
+
+**Result: bands 64 / 64 / 60 / 48 / 48 / 46 at a FULL 57.6px lift.** Every row over the
+floor with palm clearance intact. **The trade Scotty was asked to settle is dissolved,
+not compromised** — which is why the constant went back to `0.9`.
 
 ---
 
