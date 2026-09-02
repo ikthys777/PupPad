@@ -81,7 +81,13 @@ concurrency:
 
 jobs:
   checks:
-    name: Ten checks
+    # NAMED WITHOUT A COUNT, DELIBERATELY. This was "Ten checks" while running
+    # fourteen — the count was wrong for four checks, in the single highest-traffic
+    # string in the file, because A COUNT IN A NAME IS A FACT THAT HAS TO BE
+    # MAINTAINED and nothing maintains it. It is what a human reads off a red run.
+    # (CC-A authorised "rename it to what it actually runs"; a countless name is what
+    # actually runs, permanently, and cannot rot the way the last one did.)
+    name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -306,6 +312,24 @@ jobs:
         # that it does not stop a service worker's fetch to loopback, so a check built
         # on it would pass while the worker quietly served from the network.
         run: node .github/ci/demo-games-offline.mjs .
+
+      - name: "Check 15 — check 3 can go red on each branch of its rule"
+        # PUP-WO-0200 rewrote check 3's rule from "any change to a listed asset needs a
+        # CACHE_NAME bump" to a FOUR-BRANCH rule about whether install's addAll will
+        # refresh the asset. A four-branch rule with no controls is an assertion that
+        # can pass by not running, and the demonstrations for that rewrite lived only in
+        # a commit message — evidence about a tree that no longer exists.
+        #
+        # Same principle PUP-WO-0105 set one level up: a WORKER change is gated by a
+        # check for the class it changes, so a CHECK change is regression-guarded for
+        # the branches it introduces.
+        #
+        # 11 controls: two fail-closed conditions on the base resolver (the mechanism
+        # that produced a false negative during this work order), all four branches each
+        # RED or GREEN for its own NAMED reason, the two cases a bump must satisfy, and
+        # three that must stay green — including ADDING A GAME, which the old rule made
+        # impossible to satisfy alongside northstar invariant 6.
+        run: node .github/ci/check-cache-name-controls.mjs
 
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
