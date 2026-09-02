@@ -31,15 +31,50 @@ schema exists rather than after.
 
 ## 1. RETENTION — the question the spike exists for, and CC-A's measurement
 
-**Measured on `main` 2026-09-02, and it is why this is a spike:**
+### 1.0 THE DEVICE-SIDE QUESTION IS ALREADY ANSWERED, AND THE ANSWER IS "NOTHING IS STORED"
+
+*Measured 2026-09-02 after Scotty's cache-only constraint. **The premise that images
+have an unbounded-growth problem voice would inherit is REFUTED — and refuted in the
+direction that makes this work order smaller.***
+
+- **`var cameraGallery = []` — a plain in-memory array.** `.push(thumbUrl)` is its only
+  growth path.
+- **It is persisted NOWHERE.** No `localStorage`, no IndexedDB, no Cache API reference
+  touches it. The only `localStorage` keys this app writes are `pupgame:`,
+  `puppad_device_id`, `puppad_sb_key` and `puppad_sb_url`.
+- **`closeCamera()` does `cameraGallery = []`.** **Photos are destroyed the moment the
+  panel closes** — they do not survive closing it, let alone a reload.
+
+**So Scotty's constraint — *"everything is cache-only on the device… because kids"* —
+is already satisfied for images in the strongest possible way: nothing reaches disk at
+all.** There is no cap to build and no defect to fix first. **Voice matches images by
+doing the same thing: record, play, send, discard.** No Cache API, no IndexedDB, and
+emphatically no base64 audio in `localStorage`.
+
+**Two things that ARE real, and neither is what was expected:**
+
+1. **The bound is accidental, not designed.** "Until the panel closes" is not a limit
+   anyone chose, and within one session an unbounded array of base64 JPEGs grows the
+   JS heap on a low-end tablet. **Cap the clip LENGTH and the in-session COUNT,
+   oldest-evicted** — a designed bound where there is currently a lucky one.
+2. **Photos vanishing on close was nobody's decision.** It falls out of a `= []` in a
+   teardown. It may well be right under "cache-only, because kids" — but it should be
+   *ruled* rather than inherited, and **it makes `PUP-WO-0700`'s CAPTURE button
+   ambiguous: pulled into WHAT, if the gallery dies on close?** That is 0700's
+   question and it is flagged there.
+
+### 1.1 What the spike must still answer — the SERVER side, which is smaller now
+
+**Measured on `main` 2026-09-02:**
 
 - The existing comms tables are **`pup_pad_alerts` and `pup_pad_xmarks`** — alert text
   and map coordinates.
 - **`grep -cE "DELETE|expires|retention|purge" index.html` returns 1 in 2,642 lines.**
   **There is effectively no retention policy anywhere in this app.**
 
-**That is fine for an X-mark and it is not obviously fine for a recording of a child's
-voice.** A coordinate is not identifying; a voice is. Northstar invariant 2 is about
+**A clip that reaches another device exists somewhere on Supabase, and that is where
+the question now lives — not on the phone.** And it is fine for an X-mark and not
+obviously fine for a recording of a child's voice. A coordinate is not identifying; a voice is. Northstar invariant 2 is about
 reaching an adult's data from inside PupPad, and this is the mirror case: **the
 child's own data leaving.** *"Follow the existing pattern" is not an answer here,
 because the existing pattern is silence.*

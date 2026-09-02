@@ -54,6 +54,13 @@ width cannot distinguish "correct" from "correct at 600px."
 ## 2. The two buttons
 
 - **CAPTURE** — on a received shared image, pull it into this device's own gallery.
+  **AND FIRST, ANSWER WHAT THAT MEANS, because it is not obvious:** measured
+  2026-09-02, `cameraGallery` is a **plain in-memory array persisted nowhere**, and
+  **`closeCamera()` empties it** — so today "its own gallery" survives only until the
+  panel closes. **Capturing into a store that dies on close may be exactly right**
+  under Scotty's *"cache-only… because kids"*, and it may be useless. **Rule it in the
+  feedback before building the button**, and if it needs to persist, that is a
+  flag-and-stop and a separate decision, not a quiet `localStorage.setItem`.
 - **RESHARE** — on an expanded cached image, send it out again.
 
 **Both one-tap and operable by a non-reader.** Icons carry the meaning; any word is
