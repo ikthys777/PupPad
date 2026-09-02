@@ -331,3 +331,66 @@ as §8.3, committed by me in the method rather than the code. Next pass runs aga
    broken image on a cold offline device.
 5. **`PUP-WO-0106` and `PUP-WO-0600` both claim the un-closable-overlay trap**, and
    neither document knows about the other. Pre-existing, not introduced here.
+
+---
+
+## CHECK 3 — I REPORTED A FALSE NEGATIVE, AND THE OLD RULE MADE INVARIANT 6 UNSATISFIABLE
+
+**Two of my own claims were false and CC-A caught both.**
+
+**(a) There was no CI on my park.** `ci.yml` triggers on `pull_request` and `push:main`,
+so pushing a build branch triggers **neither** — zero runs on `3329a8c`. "All 14 checks
+green" described my **local suite** as though it were the gate. *Second time in two work
+orders I have made a claim about state that was true of my machine and false of the
+system.* **Park with a PR.**
+
+**(b) My "did not reproduce" on check 3 was a false negative**, by the exact mechanism
+that check's own header warns about — *"THE BASE REF IS THIS CHECK. An unstated or
+unreachable base is how a check like this silently compares nothing and passes
+forever."* Outside a `pull_request` event it falls back to `HEAD~1`, comparing my last
+commit to its predecessor, **where `index.html` did not change**. The check was never
+asked the question:
+
+```
+default (HEAD~1 fallback)                 exit=0    <- my false negative
+PR_BASE_SHA=origin/main (as CI sees it)   exit=1    <- the real answer
+```
+
+**AND THE RED WAS CORRECT UNDER A RULE THAT SHOULD NOT STAND.** `install` is
+`caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))`. With the name unchanged that
+opens the **existing** cache and puts fresh copies over **every listed entry** — so a
+changed asset that is still listed cannot go stale, and the old rule's stated
+justification (*"already-installed clients keep serving the previous build's assets"*)
+**is not true for assets that are themselves in `urlsToCache`**.
+
+**The part that reaches past this work order:** adding a game *always* adds a
+`urlsToCache` line, so check 3 fired on **every game this project will ever add** —
+while invariant 6 says *"nothing else"* and gate 2 counts three things. A bump is a
+fourth. **Check 3 and invariant 6 could not both stand as written**, and this would have
+hit Gyre and Block Pop identically.
+
+A bump is not free: `activate` deletes the old cache whole and the runtime cache lives
+in it — **24 of 24 map tiles offline before a bump, 0 of 24 after** (`PUP-WO-0105`).
+
+| change | verdict |
+|---|---|
+| changed AND still listed | addAll refreshes it → **no bump** |
+| changed AND dropped from the list | the old copy is stranded → **bump** |
+| an entry ADDED | nothing stale exists yet → **no bump** |
+| an entry REMOVED | its cached copy is stranded → **bump** |
+
+**Demonstrated in a clone, with the base a PR would use:**
+
+```
+entry REMOVED from urlsToCache, no bump        exit=1   named the stranded entry
+...the same change WITH a bump                 exit=0
+changed asset DROPPED from the list, no bump   exit=1   named both reasons
+changed asset that STAYS listed, no bump       exit=0
+this work order                                exit=0
+```
+
+**NOT DONE, DELIBERATELY: no permanent control harness for check 3.** CC-A said *"build
+this, and nothing else"*, and after today I am not widening scope on my own judgement.
+But **by my own finding, a demonstration living only in a commit message is evidence
+about a tree that no longer exists** — so this is flagged as a follow-up rather than
+assumed away. Check 3 is now the only one of the changed checks with no controls.
