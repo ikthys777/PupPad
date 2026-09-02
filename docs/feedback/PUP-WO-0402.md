@@ -67,20 +67,46 @@ and every band was confirmed by real drops at three points each.
 **This was put to Scotty rather than settled here**, because it is a question about his
 child's hand. With a *constant* lift the trade is exact — `band = 78 − lift` — so clearing
 a fingertip (~58px) leaves 20px while the 44px floor needs ≤34px, and **both cannot hold.**
-He chose the even board. §1b then dissolved the trade; see §1.4.
+He was asked, and answered. **He was then asked again, by the other session, and answered
+differently — see §1.4a, which is the more useful finding.**
 
 ### 1.4 §1b — the taper, and a sign error in the ruling that the assertion settled
 
-Scotty ruled the lift down to 34px, accepting a hand over the piece to get an even board.
-**CC-A's taper dissolved that trade**, and the constant is back to a full `0.9` — full
-clearance where he plays, easing to nothing over the last 2.6 cells of glass. **He decided
-under a constraint that then moved, and it is recorded here because of that.** Measured:
+The constant is a full `0.9` — full clearance where he plays, easing to nothing over the
+last 2.6 cells of glass. Measured:
 
 | | rows 0–5 touch bands | lift |
 |---|---|---|
 | 0.9, no taper | 62/62/62/62/62/**32** | 46px (capped) |
 | 0.53, no taper | 64/64/64/64/52/46 | 34px |
 | **0.9 + 2.6-cell taper (shipped)** | **64/64/60/48/48/46** | **57.6px** |
+
+#### 1.4a THE OPERATOR WAS ASKED THE SAME QUESTION TWICE, BY TWO SESSIONS, AND GAVE TWO DIFFERENT ANSWERS
+
+A process defect in the dual-session arrangement, and it nearly shipped a contradiction.
+
+- **I asked first**, with three options — keep the 46px lift, drop to 34px, or decide it on
+  the glass. **The taper was not among them because the idea did not exist yet.** He chose
+  **34px**: the even board, accepting a hand over the piece.
+- **CC-A asked minutes later**, with four options including **"taper it near the bottom"**.
+  He chose **the taper**, refusing both horns of the trade.
+
+**Both records are accurate and neither is the whole thing.** My first draft of this section
+said he "accepted a hand over the piece" — true of the question I put, misleading as a
+standing account, because by then he had been offered something better and taken it. CC-A
+read that as having his choice backwards. **The right correction is not to swap one partial
+account for the other: it is that he answered two different questions.**
+
+**What made it dangerous:** I had already built to `0.53` and was verifying it when CC-A's
+ruling arrived. Had the messages crossed the other way, this branch would have shipped the
+answer to the superseded question while the work order recorded the other — **with both of
+us correctly quoting him.**
+
+**How to avoid it:** an operator question is a shared resource. Whichever session asks
+should say so to the other *before* the answer is acted on, and a ruling that changes the
+options on a question already asked must say which asking it supersedes. Neither of us did
+either. The cost here was one wasted build; the mirror case is a directive and a build that
+disagree while both cite the operator.
 
 **Two things had to be undone to make the taper load-bearing.** The reach cap and the
 floor cap were both derived for a *constant* lift; left in place they clamped the base to
@@ -101,6 +127,11 @@ The planted inversion is built with the sign that actually inverts, and it expos
 gap: **row granularity is too coarse.** An inversion confined inside one row shows no row
 change at all and was green. The walk now also records **the picture's own y**, which is
 continuous.
+
+**That gap was found by the assertion itself** — the plant refused to go red, and the reason
+was the assertion's own resolution rather than the build. It is the first time an instrument
+in this project has caught its own blindness rather than having it demonstrated by a plant,
+and it is worth more than the 204 samples it now takes.
 
 ### 1.5 The acceptance measures in a third frame
 
@@ -202,6 +233,17 @@ that catches it and simply never sampled at that moment**; it does now.
   of two statements; one — `grabCell` dividing the slot — **no longer manifests**, because
   §1a's larger tray piece incidentally cured it. That last is a result, and it is recorded
   rather than deleted.
+- **AIM BY OBSERVATION, NOT BY PREDICTION.** §11 predicted the finger position from one
+  measured lift — `finger = target + LIFT` — which is **a model of the old mechanism living
+  inside the test.** Under §1b's taper it aimed at the wrong place, **failed a correct build
+  by 11px, and reported reachable cells as unreachable.** It now carries no model of the
+  lift at all: it drags, reads where the picture actually is, corrects by the residual, and
+  repeats. **This and "a rect comes from style, not from ink" are the same lesson at two
+  ranges** — do not let a test hold a belief about the thing it is measuring.
+- **A guard carries its assumptions invisibly.** Both lift caps were derived for a constant
+  lift; kept across a mechanism change they clamped the base and **silently disabled the
+  new mechanism**, and the taper's own red proof passed against a build with no taper.
+  "Keep the existing guard" is an instruction that needs the question *derived under what?*
 - **`elementFromPoint` cannot see a decorative overlay**, because `pointer-events:none`
   removes it from hit testing. A green haze laid over the board as a `::after` was green.
   §13 now asks for pseudo-layers by name as well.

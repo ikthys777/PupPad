@@ -1071,10 +1071,10 @@ export default function mount(host, api) {
    * 32px against 62-64px everywhere else — under the 44px minimum touch target check 21
    * enforces on the board cells themselves, i.e. the game contradicting its own floor.
    *
-   * He chose the even board: 0.53 of a cell, ~34px, accepting that it may not clear a
-   * three-year-old's fingertip. THE TAPER BELOW DISSOLVES THAT TRADE and the constant is
-   * back to a full 0.9 — he gets both halves. It is recorded because he decided under the
-   * old constraint and should know the constraint moved. */
+   * ASKED TWICE, BY TWO SESSIONS, AND ANSWERED DIFFERENTLY BOTH TIMES — see FEEDBACK.md
+   * §1.4a. Offered keep-the-lift / cap-at-34 / decide-on-the-glass he chose the even board
+   * at 34px; offered a fourth option minutes later he chose THE TAPER, which refuses both
+   * horns. The taper is what shipped, so the constant stays at a full 0.9. */
   var DRAG_LIFT_CELLS = 0.9;
 
   /* The same 44px minimum touch target check 21 §1 applies to a board cell. */
