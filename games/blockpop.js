@@ -1080,21 +1080,25 @@ export default function mount(host, api) {
   /* The same 44px minimum touch target check 21 §1 applies to a board cell. */
   var MIN_TOUCH_BAND = 44;
 
-  /* §1b. THE LIFT TAPERS TO NOTHING OVER THE LAST 1.5 CELLS OF GLASS. Full clearance
+  /* §1b. THE LIFT TAPERS TO NOTHING OVER THE LAST 2.6 CELLS OF GLASS. Full clearance
    * where the child spends the game, easing away at the bottom edge where the finger runs
    * out of screen — so the palm is kept off the piece in the middle of the board AND the
    * bottom row still answers across a full band.
    *
-   * 1.5 CELLS, NOT 1. The taper's steepness is base/span, and the drop resolves at
-   * y - lift(y), so the mapping's slope is 1 + base/span. A span equal to one cell is the
-   * obvious reading of "ease across the last row" and leaves no margin at all against a
-   * change in cell size — and cellPx is DERIVED FROM A MEASURED RECT, so it will change.
+   * WIDER THAN ONE CELL, AND THE FIRST REASON GIVEN FOR THAT WAS WRONG. CC-A ruled a
+   * 1.5-cell floor to stop the mapping INVERTING. It cannot invert: a taper SHEDS lift as
+   * the finger descends, so lift'(y) is NEGATIVE and the slope is 1 + base/span, which is
+   * greater than 1 for every span. The ruling's table was base/span mislabelled as the
+   * slope. Right direction, wrong mechanism — the real one is two paragraphs down.
+   * A span of one cell is still the obvious reading of "ease across the last row" and
+   * still leaves no margin against a change in cell size — and cellPx is DERIVED FROM A
+   * MEASURED RECT, so it will change.
    * §11 walks the glass in 2px steps and requires the resolved row to be non-decreasing,
    * which is the assertion a bounding-rect check cannot fake — and it measures every
    * row's band from that same walk rather than deriving it, because a band derived from
    * one constant lift is a band for a mapping this game no longer has.
    *
-   * THE SPAN IS 2.25 CELLS BECAUSE OF ARITHMETIC, NOT TASTE. Inside the taper the mapping
+   * THE SPAN IS 2.6 CELLS BECAUSE OF ARITHMETIC, NOT TASTE. Inside the taper the mapping
    * compresses: slope = 1 + base/span, so a row answers across cell/slope of glass. For
    * the bottom row to keep the 44px floor at a 64px cell and a 0.9-cell base,
    * span >= base / (cell/MIN - 1) = 57.6 / 0.4545 = 127px, i.e. just under 2 cells. At 2.25
