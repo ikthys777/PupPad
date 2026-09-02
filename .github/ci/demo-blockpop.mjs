@@ -292,6 +292,25 @@ try {
       return { boardW: br.width, boardH: br.height, gridW: gr.width, cell: wr.width,
         pieceCells: pcs.length, minPieceCell: pcs.length ? Math.min(...pcs) : 0, vh: innerHeight };
     });
+    /* THE PREMISE ROADMAP P4 GATE 4 RESTS ON. That gate — "with all text covered, the
+     * board and tray are operable" — is a human one and simulating it is a flag-and-stop.
+     * What CAN be asserted is that there is nothing to cover: no letter is painted
+     * anywhere inside host. Check 19 holds the same line for the control panel. */
+    const letters = await s.page.evaluate(() => {
+      const h = document.getElementById('gameHost');
+      if (!h) return ['no host'];
+      const out = [];
+      const w = document.createTreeWalker(h, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) {
+        /* A <style> element's rules are text nodes too, and they are full of letters.
+         * What invariant 1 is about is a word the child can SEE. */
+        const tag = n.parentNode && n.parentNode.nodeName;
+        if (tag === 'STYLE' || tag === 'SCRIPT') continue;
+        const t = (n.nodeValue || '').trim();
+        if (t && /[A-Za-z]/.test(t)) out.push(t.slice(0, 40));
+      }
+      return out;
+    });
     const MIN_TOUCH = 44;
     const offscreen = geo.out.filter((e) => e.x < 0 || e.y < 0 || e.x + e.w > geo.vw + 0.5 || e.y + e.h > geo.vh + 0.5);
     const inBack = geo.back
@@ -302,6 +321,8 @@ try {
       offscreen.slice(0, 3).map((e) => `${e.q} at ${Math.round(e.x)},${Math.round(e.y)} ${Math.round(e.w)}x${Math.round(e.h)}`).join(' · '));
     else if (inBack.length) bad(`${vp.name}: ${inBack.length} game control(s) intersect #gameBack's column (x ${Math.round(geo.back.x)}-${Math.round(geo.back.x + geo.back.w)})`,
       inBack.slice(0, 3).map((e) => `${e.q} at ${Math.round(e.x)},${Math.round(e.y)}`).join(' · '));
+    else if (letters.length) bad(`${vp.name}: ${letters.length} painted word(s) inside host — invariant 1`,
+      JSON.stringify(letters.slice(0, 3)))
     else if (Math.abs(play.boardW - play.boardH) > 1)
       bad(`${vp.name}: the board is not square (${play.boardW.toFixed(1)} x ${play.boardH.toFixed(1)})`);
     else if (play.boardH < play.vh * 0.8)
@@ -313,7 +334,7 @@ try {
       bad(`${vp.name}: the tray renders no piece cells at all — three empty boxes`);
     else if (play.minPieceCell < 8)
       bad(`${vp.name}: the smallest tray piece cell is ${play.minPieceCell.toFixed(1)}px — the tray reads as empty`);
-    else ok(`${vp.name} ${vp.width}x${vp.height}: all ${geo.out.length} controls on screen, none in the exit's column; board ${Math.round(geo.board.w)}x${Math.round(geo.board.h)} square at x=${Math.round(geo.board.x)}, cell ${play.cell.toFixed(1)}px (>= ${MIN_TOUCH}), ${play.pieceCells} tray piece cells, smallest ${play.minPieceCell.toFixed(1)}px`);
+    else ok(`${vp.name} ${vp.width}x${vp.height}: all ${geo.out.length} controls on screen, none in the exit's column; board ${Math.round(geo.board.w)}x${Math.round(geo.board.h)} square at x=${Math.round(geo.board.x)}, cell ${play.cell.toFixed(1)}px (>= ${MIN_TOUCH}), ${play.pieceCells} tray piece cells, smallest ${play.minPieceCell.toFixed(1)}px, and no painted word anywhere inside host`);
     await s.ctx.close();
   }
   });

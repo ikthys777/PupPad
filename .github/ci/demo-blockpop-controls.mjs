@@ -188,6 +188,12 @@ plan(1, 'the board is a tenth of its height — 39x39, still "on screen"', {
   expectText: 'the board is',
 });
 
+plan(1, 'a word is painted inside host', {
+  mutate: (s) => sub(s, "  root.className = 'bp-root';",
+    "  root.className = 'bp-root';\n  var lbl = document.createElement('div'); lbl.textContent = 'Score'; root.appendChild(lbl);"),
+  expectText: 'painted word(s) inside host',
+});
+
 plan(1, 'the tray renders 1px pieces — three empty boxes', {
   mutate: (s) => sub(s, '      var cell = Math.max(8, Math.floor((room > 0 ? room : 88) / span));',
     '      var cell = 1;'),
