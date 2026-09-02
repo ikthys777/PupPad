@@ -230,7 +230,7 @@ and P1 themselves to merge. From P2 onward the rule applies without exception.
   any specific game. Ships with one trivial placeholder game proving the contract.
 
 **Exit gate.**
-1. No reference to a Power **button** remains: no button label, icon, handler or
+1. **[`PUP-WO-0200` — MET]** No reference to a Power **button** remains: no button label, icon, handler or
    registry entry names Power. The only surviving matches for `grep -ri power
    index.html` are **the sound-bank definition and the deliberate `sound:'powerUp'`
    reassignment** named in `PUP-WO-0200` directly above.
@@ -244,15 +244,35 @@ and P1 themselves to merge. From P2 onward the rule applies without exception.
    building `PUP-WO-0200`, which refused to contort it and flagged instead. Same
    shape as `PUP-WO-0105` §3.1 and `PUP-WO-0200` §2: **a document forbidding what it
    demands** — fourth instance in two days, and the third of them CC-A's.)*
-2. Adding a second placeholder game to the picker requires changes to exactly three
-   things — its own module, one registry entry, one `urlsToCache` line — verified by
+2. **[`PUP-WO-0201`]** Adding a game requires changes to exactly three things — its
+   own module, one registry entry, one `urlsToCache` line — verified by
    `git diff --stat`. *(Falsifies northstar invariant 6.)*
-3. With all text covered in a screenshot of the picker, a person who has not seen
-   the app can state what each tile does. *(Falsifies northstar invariant 1.)*
-4. Airplane mode, cold start, open picker, open placeholder game, return to console
-   — all succeed. *(Falsifies northstar invariant 3.)*
-5. Cold-start time to interactive console is recorded on the test device as a
-   baseline number. **Threshold is architecture §10's open question**; this gate
+   *(Amended 2026-09-02: **this becomes a CI mutation** rather than a hand-run count —
+   `PUP-WO-0201` §2.4. `PUP-WO-0200` demonstrated it with a throwaway module and
+   correctly did **not** ship it, which left the evidence living only in a commit
+   message — architecture §6.1 **member 5**. The wording also dropped "second
+   placeholder", which was never the point: the count is what falsifies invariant 6,
+   and `PUP-WO-0300`'s Gyre is the first entry whose cost is real.)*
+3. **[`PUP-WO-0201`]** With all text covered in a screenshot of the picker, **a real
+   person who has not seen the app** states what each tile does. *(Falsifies northstar
+   invariant 1.)*
+   *(Amended 2026-09-02: **this gate may not be simulated.** A model predicting what a
+   stranger would say is not evidence about a stranger, and invariant 1 is the one the
+   northstar calls "the project." No human available means the gate stays **open and
+   unrun** — `PUP-WO-0201` §7. The builder's prediction is recorded **before** the
+   test, which is what makes the test capable of surprising anyone.)*
+4. **[`PUP-WO-0201`]** Airplane mode, cold start, open picker, open a game, return to
+   console — all succeed. *(Falsifies northstar invariant 3.)*
+   *(Amended 2026-09-02: worded against a picker that did not exist when `PUP-WO-0200`
+   ran, so 0200 could not satisfy it and correctly did not claim to. **These are PHASE
+   gates spanning both work orders**, not per-work-order acceptance — which is why each
+   now names the one that answers it. Flagged by CC-B, which had silently recast this
+   gate's sibling and reported doing so; **a gate you cannot satisfy is a flag, never
+   an edit.**)*
+5. **[`PUP-WO-0200` — instrument committed, device reading outstanding]** Cold-start
+   time to interactive console is recorded on the test device as a baseline number.
+   `.github/ci/measure-coldstart.mjs` exists and reports a median; **the number this
+   gate wants is from the real device and is the operator's to take.** **Threshold is architecture §10's open question**; this gate
    requires the measurement, not a verdict.
 
 ---
@@ -393,6 +413,28 @@ Stated because folding it into either was the obvious move and both are wrong.
 5. No credential renders into the DOM in a state reachable without an adult action
    whose containment is specified.
 
+## 4a. Parked work — carried past a phase gate, and where each one goes
+
+*Added 2026-09-02. **Every item below has been living in chat messages and nowhere
+else**, which is exactly the shape architecture §6.6 names: a thing everyone believes
+is recorded, that no document actually holds. Written down so the next context-less
+reader inherits the queue instead of rediscovering it.*
+
+| # | What | Why it is parked, not dropped | Ranked |
+|---|---|---|---|
+| `PUP-WO-0104` | The cache gate at the right shape — a real browser at the production origin, content assertions across `urlsToCache`, M9/M7/G1–G8 | Blocks **the next `sw.js` change**, not any merge that has happened. P1 closed without it, **recorded rather than waived** (architecture §6.4). | Behind P2 |
+| `PUP-WO-0106` | The un-closable Map overlay — guard `openTreasureMap` on `typeof L !== 'undefined'` and take the existing toast path | A **confirmed live trap** needing an app restart, but on a copy nobody is using. `PUP-WO-0200` §3.4 stopped the games host from *reproducing* the shape; this repairs the three existing openers. **CC-A's to author.** **Note: `PUP-WO-0600` also claims this defect** — two documents that do not know about each other; the overlap resolves when 0106 is written. | Behind P2 |
+| `PUP-WO-0108` | The quota path — `activate`'s unstated precondition, proportional reclaim, the keep-list scope/script-URL bug, the harness's HTTP-versus-quota ordering model | Split out of `PUP-WO-0105` after **two rounds produced two live-severity regressions** on the install path. Demoted from "ahead of 0104" to strictly behind P2 on 2026-09-01: **nothing is live-severity while nobody is holding the tablet**, and that is the same premise that widened CC-A's merge authority. | Behind P2 |
+| *(tiles)* | Whether the worker should cache cross-origin OSM tiles at all | Real, unratified, and **it has no home**: architecture §6.5 records that `PUP-WO-0600` cannot receive it, because tiles are per-coordinate map data and unvendorable. Tiles are the bulk of the opaque entries and the whole of the quota path. **Needs a number.** | Behind P2 |
+| *(CSP / iframe)* | Structural enforcement of invariant 3 for game modules | `PUP-WO-0200`'s check 11 **raises the cost and is not a sandbox, by its own verdict text.** The structural answers are a CSP — `default-src 'self'` **would break the Map panel**, which loads Leaflet and Supabase from CDNs — or running modules in an iframe/worker. Architecture, not something to smuggle into a build. **Needs a number.** | Behind P2 |
+| *(publication concurrency)* | Serialised publication that cannot silently drop a promotion | `pages-publish` and `pages-deploy` are global groups and GitHub's pending queue has **depth 1**, so a pending promotion can be evicted with **no log line**. Not fixable by renaming a group. Mitigated today by the **post-condition**: promote, then verify `/stable/build-stamp.json` reports your sha — **re-fetch rather than concluding failure**, `cache-control: max-age=600`. **Needs a number.** | Behind P2 |
+| *(module-referenced assets)* | `check-assets` cannot see an asset referenced only from a game module | `img.src = './assets/ball.png'` absent from `urlsToCache` gives **CHECK 2 PASSED and a broken image on a cold offline device**. No game ships an asset yet. **Becomes load-bearing the moment one does** — `PUP-WO-0300` §7 flags it. | **P3, blocking** |
+
+**The rule that put this table here:** architecture §6.6 — *when a work order cites a
+ratified mechanism as existing, resolve it before dispatch.* A parked item recorded
+only in a message is the same defect one level up: **everyone believes it is queued
+and nothing holds the queue.**
+
 ## 5. Standing cadence
 
 - **Every phase boundary: audit the numbering and the documents.** Has anything
@@ -455,6 +497,7 @@ planned and what was built; history is left as written and never renumbered.
 | 2026-09-01 | **P6 added** — shipped-app remediation, depending on P1, running parallel to P2–P4 and prioritised ahead of P2. §3's critical path and §4's phase map updated; reconciliation opened. | `PUP-WO-0000` found two defects in the app as it stands — three unconditional third-party CDN loads, and an un-closable full-screen overlay reachable offline — that belong to no planned phase. They cannot go in P1 (their diffs touch a served path, and P1 is the phase with no firebreak) and must not go in P2 (a games phase whose gate would then mean two things). Recorded as a phase rather than folded, so the decision is visible and reviewable. |
 | 2026-09-01 | `PUP-WO-0101` superseded by `PUP-WO-0102` + `PUP-WO-0103`; P1's work-order list and §6 updated. | Two adversarial passes each found serious defects and the second found one — an origin-wide offline **read** — that no check could see, because the work order was broad enough that its own harness stub went blind. The deciding evidence was not the count but the shape: its fixes had begun producing new defects (an encoding fix closed an attack and opened an invariant 3 violation). When fixes generate defects the change is too large to hold at once, which is a scope problem and the architect's to fix. The split also isolates every tablet-reaching byte of P1 into one small file. |
 | 2026-09-01 | P1 gate item 3's prove-it-red requirement is extended by `PUP-WO-0100` §3.3 from two checks to all four. | `PUP-WO-0000`'s lesson, generalised: its module contract passed a demonstration against both games in hand while still holding two defects, because neither game exercised them. A check demonstrated red on the two cases its gate names is the same shape of insufficient proof. |
+| 2026-09-02 | P2's exit gate items each name **which work order satisfies them**; gate 2 becomes a CI mutation and gate 3 may not be simulated. **§4a added — the parked-work table.** | The gates were phase gates read as per-work-order acceptance, so `PUP-WO-0200` could not satisfy three of them and correctly did not claim to — flagged by CC-B, which had silently recast one and reported doing so. **§4a exists because every parked item was living in chat messages and nowhere else**, which is architecture §6.6's defect one level up: everyone believes the queue is recorded and nothing holds it. |
 
 ## 8. Provenance
 
