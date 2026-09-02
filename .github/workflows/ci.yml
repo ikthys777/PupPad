@@ -423,8 +423,11 @@ jobs:
         # The burn is OBSERVED, not inferred: getContext is wrapped before the app loads,
         # so what is asserted is what the shipped save handler actually asked the canvas to
         # draw. Demonstrated red against the original defect at a14573: preview 3.516% /
-        # 4.615% / 2.500% against a burn of 5.990%, i.e. between 42% and 240% of the right
-        # size depending on how wide the screen happened to be.
+        # 4.615% / 2.500% against a burn of 5.990%, i.e. between 42% and 77% of the right
+        # size depending on how wide the screen happened to be. It measures in SCREEN
+        # pixels, not in fractions-of-a-width: the canvas is object-fit:contain, so the
+        # preview's box and the burn's canvas are DIFFERENT rectangles and dividing each
+        # by its own width made a 214px error cancel to 0.01 of a point.
         #
         # CAPTURE and RESHARE are pressed with CDP touch points — plain, sliding, and with
         # a second finger already on the glass — never page.click.

@@ -814,13 +814,56 @@ var cameraGallery = [];
  * this function — the preview with the sticker layer's rendered width, the burn with the
  * canvas's. Whichever width is in play, the sticker is the same fraction of it.
  *
- * A grep for the literal is the cheapest proof that there is no second copy:
- *   $ grep -n '0\.06\|36px' index.html   ->  this constant, and nothing else. */
+ * A BARE GREP DOES NOT PROVE IT, and an earlier version of this comment claimed it did.
+ * `grep -n '0\.06\|36px' index.html` returns fourteen lines here — eight `rgba(...,0.06)`
+ * alpha values and a live, unrelated `36px` on the camera panel's placeholder icon. The
+ * claim was checkable, was checked by an adversarial pass, and was false. What can be
+ * proved is structural and check 20 asserts it: this fraction is declared exactly once,
+ * and both the preview and the burn are matched as reaching it through stickerFontPx. */
 var STICKER_W_FRAC = 0.06;
 function stickerFontPx(width) {
   var w = Number(width);
   if (!isFinite(w) || w <= 0) return 0;
   return w * STICKER_W_FRAC;
+}
+
+/* ============ WHERE THE PHOTO ACTUALLY IS — and the first fix was wrong ====
+ * THE FRACTION WAS NEVER THE WHOLE PROBLEM. Removing the second CONSTANT left a second
+ * ANSWER: `#camReviewCanvas` is `width:100%;height:100%;object-fit:contain` and
+ * `#camStickerLayer` is `inset:0` over the SAME box — so the layer is the ELEMENT box
+ * and the photo is letterboxed inside it. Sizing the preview at 6% of the layer and the
+ * burn at 6% of the canvas is the same fraction OF TWO DIFFERENT RECTANGLES.
+ *
+ * Measured by an adversarial pass on the first fix, one sticker, canvas 3840x2160:
+ *   1024x640  layer 1024x552, photo 981x552   -> on screen 61.4px vs 58.8px   -4.3%
+ *   1366x768  layer 1366x680, photo 1209x680  -> 82.0 vs 72.4                -11.7%
+ *   2400x1080 layer 2400x992, photo 1764x992  -> 144 vs 105.6                -26.7%
+ *   1920x500  layer 1920x412, photo  732x412  -> 115.2 vs 43.9               -61.9%
+ * POSITION DRIFTS BY THE SAME MECHANISM — up to 214px, 29% of the photo width — which
+ * means the work order's "position is proportional in both paths and was never wrong"
+ * is false whenever the image is letterboxed, and it is letterboxed at most sizes.
+ *
+ * So there is ONE more thing that has to be said once: WHERE THE PHOTO IS. Everything
+ * the child places is a fraction OF THE PHOTO, in both paths, and the layer is only a
+ * surface to draw the preview on. `contain` scales by the smaller ratio and centres. */
+function photoBoxIn(layer, canvas) {
+  var r = layer.getBoundingClientRect();
+  var iw = canvas ? canvas.width : 0, ih = canvas ? canvas.height : 0;
+  if (!iw || !ih || !r.width || !r.height) return { x: 0, y: 0, w: r.width, h: r.height };
+  var scale = Math.min(r.width / iw, r.height / ih);
+  var w = iw * scale, h = ih * scale;
+  return { x: (r.width - w) / 2, y: (r.height - h) / 2, w: w, h: h };
+}
+
+/* The preview's geometry, in one place, RE-RUNNABLE. It was computed once at placement
+ * and never again, so a window resize between placing a sticker and pressing DONE left
+ * the preview 1.72 percentage points from the burn — 8.6x the tolerance the check
+ * enforces — and the sticker visibly jumped on save. */
+function layoutStickerEl(el, s, layer, canvas) {
+  var box = photoBoxIn(layer, canvas);
+  el.style.left = (box.x + box.w * (s.xPct / 100)) + 'px';
+  el.style.top = (box.y + box.h * (s.yPct / 100)) + 'px';
+  el.style.fontSize = stickerFontPx(box.w) + 'px';
 }
 var cameraFilter = 'none';
 var cameraFacing = 'environment';
@@ -869,8 +912,22 @@ function showRemotePhoto(dataUrl) {
     +pawSVG(12,'#F472B6')
     +'<span style="color:#F472B6;font-size:10px;font-weight:700">INCOMING SNAP</span>'
     +'</div>'
-    +'<img src="'+dataUrl+'" style="display:block;border-radius:10px;max-width:260px;max-height:200px"/>'
+    +'<img id="snapIncomingImg" style="display:block;border-radius:10px;max-width:260px;max-height:200px"/>'
     +'</div>';
+  /* THE URL IS ASSIGNED, NEVER CONCATENATED. This built `'<img src="'+dataUrl+'"…'` into
+   * innerHTML, and `dataUrl` arrives verbatim from a broadcast payload — so a payload of
+   *   x" onerror="…" data-z="
+   * closed the attribute and ran script in the child's app. PUP-WO-0700 made that worse
+   * before it made it better: CAPTURE stores the string, and renderGallery and
+   * showGalleryFull concatenate it the same way, so one payload reached THREE sinks and
+   * outlived the four-second popup instead of dying with it.
+   *
+   * This project has already ruled this class dangerous and closed it elsewhere — the
+   * picker's tiles use textContent, and PUP-WO-0201's pass recorded `<img onerror>` as
+   * harmless there FOR THAT REASON. Setting the property cannot escape an attribute
+   * because there is no attribute to escape. */
+  var incoming = popup.querySelector('#snapIncomingImg');
+  if (incoming) incoming.src = dataUrl;
 
   /* ============ CAPTURE — PUP-WO-0700 §2 ================================
    * WHAT "ITS OWN GALLERY" MEANS HERE, RULED BEFORE THE BUTTON WAS BUILT because §2
@@ -915,6 +972,19 @@ function showRemotePhoto(dataUrl) {
      * look like an oversight. */
     if (!isSupabaseConfigured()) return;
     if (cap.dataset.done) return;
+    /* WHAT IS KEPT MUST BE AN IMAGE. Without this, `data:text/plain,hello`, a truncated
+     * base64 string, an empty string and a `javascript:` URL were all stored and all
+     * flipped this button to a tick — the toy telling a child it kept something it did
+     * not. Downstream, RESHARE on such an entry is painted, pressable, and silently does
+     * nothing forever, which is the "control that lies" this shell refuses elsewhere.
+     * The bytes come off a broadcast channel, so the check belongs at the point of
+     * storage rather than at each of the three places that later draw it. */
+    if (!/^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(String(dataUrl))) {
+      if (window.console && console.warn) console.warn('[camera] refused to keep a broadcast payload that is not an image');
+      cap.textContent = '\u2715';
+      cap.style.borderColor = '#F87171';
+      return;
+    }
     cap.dataset.done = '1';
     cameraGallery.push(dataUrl);
     if (typeof window.renderCameraGallery === 'function') {
@@ -1052,6 +1122,19 @@ function openCamera() {
   var reviewCanvas = document.getElementById('camReviewCanvas');
   var reviewMode = false;
   var reviewStickers = [];
+  /* THE PREVIEW IS RE-LAID-OUT WHEN ITS BOX CHANGES. It was computed once at placement,
+   * so a resize between placing a sticker and pressing DONE left the preview showing one
+   * size and the burn producing another — and the sticker visibly jumped on save. The
+   * observer is disconnected in closeCamera beside everything else the panel holds. */
+  window.__camStickerRO = (typeof ResizeObserver === 'function') ? new ResizeObserver(function() {
+    var layer = document.getElementById('camStickerLayer');
+    var canvas = document.getElementById('camReviewCanvas');
+    if (!layer || !canvas) return;
+    for (var i = 0; i < layer.children.length; i++) {
+      var c = layer.children[i];
+      if (c.__sticker) layoutStickerEl(c, c.__sticker, layer, canvas);
+    }
+  }) : null;
 
   /* start camera */
   startCameraStream(video, cameraFacing).catch(function(e) {
@@ -1135,14 +1218,27 @@ function openCamera() {
     document.getElementById('camGalleryStrip').style.display = 'none';
     document.getElementById('camStickerBar').style.display = 'flex';
     document.getElementById('camStickerLayer').style.display = 'block';
+    if (window.__camStickerRO) {
+      try { window.__camStickerRO.observe(document.getElementById('camStickerLayer')); } catch (e) {}
+    }
   });
 
   /* sticker placement in review */
   document.getElementById('camStickerLayer').addEventListener('click', function(e) {
     if (!cameraSticker) return;
     var rect = this.getBoundingClientRect();
-    var xPct = ((e.clientX - rect.left) / rect.width) * 100;
-    var yPct = ((e.clientY - rect.top) / rect.height) * 100;
+    /* MEASURED AGAINST THE PHOTO, NOT THE PANEL. `reviewStickers` is consumed by the
+     * burn as a fraction of the CANVAS, so a percentage taken against the letterboxed
+     * element box is a number in the wrong coordinate system — which is how a sticker
+     * placed on screen ended up somewhere else in the saved image. */
+    var box = photoBoxIn(this, reviewCanvas);
+    var xPct = ((e.clientX - rect.left - box.x) / box.w) * 100;
+    var yPct = ((e.clientY - rect.top - box.y) / box.h) * 100;
+    /* A TAP ON THE BLACK BAR IS NOT A PLACE ON THE PHOTO. Unclamped, a tap at 98%/98%
+     * of the panel landed outside the image and was still burned into it, near but not
+     * at the corner — a sticker appearing somewhere the child did not touch. Refusing is
+     * honest: nothing is drawn, so nothing has to be undone. */
+    if (xPct < 0 || xPct > 100 || yPct < 0 || yPct > 100) return;
     var el = document.createElement('div');
     el.textContent = cameraSticker;
     /* `line-height:1` IS PART OF THE FIX, not tidying. `translate(-50%,-50%)` centres
@@ -1150,11 +1246,13 @@ function openCamera() {
      * the burn's `textBaseline:'middle'` centres the em box — so the preview sat a
      * fraction of a line above where the burn would put it, at every width. Setting the
      * line box equal to the font size makes the two centrings agree. */
-    el.style.cssText = 'position:absolute;left:'+xPct+'%;top:'+yPct+'%;'
-      + 'transform:translate(-50%,-50%);line-height:1;'
-      + 'font-size:'+stickerFontPx(rect.width)+'px;pointer-events:none';
+    el.style.cssText = 'position:absolute;transform:translate(-50%,-50%);'
+      + 'line-height:1;pointer-events:none';
+    var rec = {emoji:cameraSticker, xPct:xPct, yPct:yPct};
+    layoutStickerEl(el, rec, this, reviewCanvas);
+    el.__sticker = rec;
     this.appendChild(el);
-    reviewStickers.push({emoji:cameraSticker, xPct:xPct, yPct:yPct});
+    reviewStickers.push(rec);
     doSound('keyTap');
   });
 
@@ -1249,7 +1347,12 @@ function openCamera() {
       var wrap = document.createElement('div');
       wrap.dataset.galleryIdx = '' + i;
       wrap.style.cssText = 'width:64px;height:64px;border-radius:8px;overflow:hidden;border:2px solid rgba(236,72,153,0.2);flex-shrink:0;background:#111';
-      wrap.innerHTML = '<img src="'+url+'" style="width:100%;height:100%;object-fit:cover;display:block"/>';
+      /* Assigned, not concatenated — the same reason as showRemotePhoto. A captured
+       * payload reaches this sink and the expanded one, not just the popup. */
+      var thumbImg = document.createElement('img');
+      thumbImg.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+      thumbImg.src = url;
+      wrap.appendChild(thumbImg);
       strip.appendChild(wrap);
     });
     strip.scrollLeft = strip.scrollWidth;
@@ -1284,7 +1387,7 @@ function openCamera() {
         +'<div style="position:absolute;top:8px;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:6px;z-index:5">'
         +'<span style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700">'+(currentIdx+1)+' / '+total+'</span>'
         +'</div>'
-        +'<img class="gImg" src="'+cameraGallery[currentIdx]+'" style="max-width:95%;max-height:85%;border-radius:12px;box-shadow:0 0 30px rgba(236,72,153,0.3);user-select:none;-webkit-user-drag:none;transition:transform 0.15s ease-out"/>'
+        +'<img class="gImg" style="max-width:95%;max-height:85%;border-radius:12px;box-shadow:0 0 30px rgba(236,72,153,0.3);user-select:none;-webkit-user-drag:none;transition:transform 0.15s ease-out"/>'
         +'<div style="position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:4px">'
         +cameraGallery.map(function(u, i) {
           return '<div style="width:8px;height:8px;border-radius:50%;background:'+(i===currentIdx?'#F472B6':'rgba(148,197,255,0.2)')+'"></div>';
@@ -1307,9 +1410,20 @@ function openCamera() {
           ? '<div class="gShare" role="button" aria-label="Send this photo again" style="position:absolute;bottom:8px;left:10px;width:46px;height:46px;display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;border-radius:12px;background:rgba(255,255,255,0.12);border:2px solid rgba(244,114,182,0.55);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;z-index:5">\uD83D\uDCE4</div>'
           : '');
 
-      full.querySelector('.gClose').addEventListener('click', function() {
+      /* Assigned after the markup, never concatenated into it. */
+      var gimg = full.querySelector('.gImg');
+      if (gimg) gimg.src = cameraGallery[currentIdx];
+
+      /* THE ONLY WAY OUT OF A FULL-SCREEN MODAL GOES THROUGH `wireTap`. This surface sits
+       * at z-index 200 over the camera panel, so #camCloseBtn and the console pad are both
+       * unreachable while it is open and `.gClose` is the single exit. It was wired on bare
+       * `click` — which a browser does not synthesise while a second finger is on the glass
+       * or after ~15px of slop — eleven lines from a SEND button this work order wired on
+       * pointer events. Hardening the send and not the exit is the wrong asymmetry to ship
+       * on a surface a child can be stranded behind. */
+      wireTap(full.querySelector('.gClose'), function() {
         if (full.parentNode) full.parentNode.removeChild(full);
-      });
+      }, { repeat: true });
 
       var shareBtn = full.querySelector('.gShare');
       if (shareBtn) {
@@ -1324,7 +1438,24 @@ function openCamera() {
            * broadcast" — the same two-expressions shape §1 of this work order exists to
            * remove — and it would put several times more data on the wire. */
           var img = new Image();
+          /* A LOAD THAT NEVER SETTLES USED TO LATCH THIS BUTTON DEAD. `busy` was cleared
+           * only in onload and onerror; against a request that returns neither, the
+           * button stayed pressed for the life of the overlay with no retry — and the
+           * comment below claimed to cover exactly that case while covering only the
+           * error one. A control that can enter a state it cannot leave is the same
+           * defect as a surface a child cannot leave. */
+          var settled = false;
+          var giveUp = setTimeout(function() {
+            if (settled) return;
+            settled = true;
+            img.src = '';
+            delete shareBtn.dataset.busy;
+            if (window.console && console.warn) console.warn('[gallery] reshare: the image did not decode in time');
+          }, 4000);
+          var done = function() { settled = true; clearTimeout(giveUp); };
           img.onload = function() {
+            if (settled) return;
+            done();
             var c = document.createElement('canvas');
             c.width = img.naturalWidth; c.height = img.naturalHeight;
             c.getContext('2d').drawImage(img, 0, 0);
@@ -1347,6 +1478,8 @@ function openCamera() {
           /* A gallery entry that is not a loadable image must not leave the button stuck
            * mid-press with no way to try again. */
           img.onerror = function() {
+            if (settled) return;
+            done();
             delete shareBtn.dataset.busy;
             if (window.console && console.warn) console.warn('[gallery] reshare: entry did not decode as an image');
           };
@@ -1404,6 +1537,7 @@ function closeCamera() {
   }
   cameraGallery = [];
   try { delete window.renderCameraGallery; } catch (e) { window.renderCameraGallery = undefined; }
+  if (window.__camStickerRO) { try { window.__camStickerRO.disconnect(); } catch (e) {} window.__camStickerRO = null; }
   var overlay = document.getElementById('cameraOverlay');
   if (overlay) overlay.parentNode.removeChild(overlay);
   doSound('blip');
