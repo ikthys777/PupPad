@@ -47,3 +47,30 @@ around it, because a reader trusts a field.
 | `ea5e5918538dc4211ca4a9bd43cd9cfa9f867c5b800e895242c6057c1a9d424b` | `sw.js` |
 | `eef22d18977c1cf6f30d8c7913d80b7e9cc8839e6b1ef594044bab8e9b188fe2` | `.github/ci/check-cache-isolation.mjs` |
 | `fd97af461d6dc65010870cc6a06a604b89b3ea8f63fe4d0795b6d3f5b5e45dcb` | `.github/ci/check-cache-name.mjs` |
+
+---
+
+## DISPOSITION RE-VERIFY
+
+`sha256sum -c docs/findings/PUP-WO-0200-freeze.sums` → **19 of 27 unchanged. Eight
+moved, and every one is a fix the pass required:**
+
+| file | why |
+|---|---|
+| `.github/ci/check-games-offline.mjs` | rewritten: graph traversal, the template state machine, tier 3 moved off the stripped source, word boundaries, the bounded claim |
+| `.github/ci/check-games-offline-controls.mjs` | 25 → 41 controls; every case the pass got through is pinned |
+| `.github/ci/demo-games-back.mjs` | hit-tests the button; asserts the console is reachable; two leak cases |
+| `.github/ci/check-mutations.mjs` | A14 re-anchored to the head of `urlsToCache`, so adding a game is three things again |
+| `index.html` | the body-level sweep, registry validation, the early-bound exit, the api.close teardown fix, the corrected containment claim |
+| `games/hello.js` | a comment that described an interval the file does not have |
+| `.github/workflows/ci.yml` | checks wired, `member 5` removed |
+| `docs/feedback/PUP-WO-0200.md` | its own false claims corrected |
+
+**`sw.js` is BYTE-IDENTICAL to the freeze** — the one authorised `urlsToCache` line is
+still exactly one line, and `CACHE_VERSION` is still `v17`.
+
+## DISPOSITION FREEZE — 28 deliverables at `b01c623285c5e98859047ae90a97af94e33fcf15`
+
+```sh
+sha256sum -c docs/findings/PUP-WO-0200-disposition.sums
+```
