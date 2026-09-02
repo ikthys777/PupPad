@@ -81,7 +81,13 @@ concurrency:
 
 jobs:
   checks:
-    name: Ten checks
+    # NAMED WITHOUT A COUNT, DELIBERATELY. This was "Ten checks" while running
+    # fourteen — the count was wrong for four checks, in the single highest-traffic
+    # string in the file, because A COUNT IN A NAME IS A FACT THAT HAS TO BE
+    # MAINTAINED and nothing maintains it. It is what a human reads off a red run.
+    # (CC-A authorised "rename it to what it actually runs"; a countless name is what
+    # actually runs, permanently, and cannot rot the way the last one did.)
+    name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -221,6 +227,109 @@ jobs:
         # and ASSERTS the harm boundary: never an activated worker with no app shell,
         # which is the state the reverted round-3 fix produced.
         run: node .github/ci/demo-quota-install.mjs .
+
+      - name: "Check 11 — a game module cannot reach the network"
+        # PUP-WO-0200 §1.1, and it is item 1 of that work order rather than a footnote.
+        # docs/findings/PUP-WO-0000.md §8.3 says — as a correction its own adversarial
+        # pass forced (F8) — that omitting `fetch` from the api object is A CONVENTION
+        # AND NOT ENFORCEMENT, and that "invariant 3 and architecture §5's 'strictly
+        # offline' rest on THAT CHECK, not on the shape of this object."
+        #
+        # THE CHECK IT NAMES WAS NEVER BUILT. Nothing under .github/ci/ grepped games/
+        # for any of those tokens. Nobody noticed because games/ DID NOT EXIST, so the
+        # check would have scanned nothing — and the absence of a check that scans
+        # nothing is invisible. It became load-bearing the moment PUP-WO-0200 created
+        # that directory, which is why it was built and demonstrated red BEFORE the
+        # first module existed. A check written after the code it guards is a check
+        # shaped by the code it guards.
+        #
+        # FAIL CLOSED: a missing games/, an unreadable one, a directory with no modules
+        # in it, or a module that will not parse is a FAILURE, never a pass.
+        # --experimental-vm-modules is load-bearing: the parse gate uses
+        # vm.SourceTextModule, which parses WITHOUT EXECUTING — the property that
+        # matters when the file under test is untrusted by construction.
+        # `node --check` was measured and rejected, and the measurement is narrower
+        # than a first draft of this comment claimed. On Node 24:
+        #     node --check x.js   containing `export default function f({`  -> exit 0
+        #     node --check x.mjs  containing the same bytes                 -> exit 1
+        # The hole is EXTENSION-DEPENDENT, and games/*.js are .js files carrying module
+        # syntax — precisely the case where --check is unreliable. Check 1 is NOT
+        # affected: check-syntax.mjs writes its module sources to a .mjs temp file
+        # before calling --check, deliberately and with a comment saying why.
+        run: node --experimental-vm-modules .github/ci/check-games-offline.mjs .
+
+      - name: "Check 12 — check 11 can actually go red, on each construct separately"
+        # The positive controls. PUP-WO-0200 §3.2 asks for check 11 demonstrated RED
+        # "against a module carrying each forbidden token, each removed one at a time so
+        # the check is shown to detect EACH rather than ANY". A demonstration run once
+        # into a feedback file is evidence about a tree that no longer exists —
+        # the architecture's freeze finding at architecture.md:317 — a record trusted
+        # because it stayed unchanged. Cited by its words, NOT as "member 5": §6.1 says the
+        # family has FOUR members and CC-A is landing the number on main after this merges. So it runs here, every commit, instead.
+        #
+        # 25 controls: three fail-closed conditions, 13 constructs each ALONE and each
+        # NAMED (a RED for the wrong reason is not evidence — PUP-WO-0103's finding B),
+        # the five-step removal ladder, and four cases that must stay GREEN because a
+        # check that cannot pass is not a check either.
+        run: node --experimental-vm-modules .github/ci/check-games-offline-controls.mjs
+
+      - name: "Check 13 — the way back exists before anything that can throw"
+        # PUP-WO-0200 §3.4, which is a WORK-ORDER-FAILS condition rather than a nicety.
+        # PUP-WO-0000 §1.6: all three existing openers append a full-bleed overlay EARLY
+        # and wire CLOSE LAST — Draw 152 lines later, Camera 287, Map 189 — and Map is a
+        # CONFIRMED LIVE TRAP. If the Leaflet CDN is unreachable the throw aborts the
+        # opener before CLOSE is ever given a listener, and there is no keydown, popstate
+        # or visibilitychange handler anywhere in the file to dismiss it. Recovery is
+        # killing the app, with a three-year-old holding the tablet.
+        #
+        # A games host reproducing that shape would take the one defect the shell already
+        # has and hand it to every future game. So this asserts the property IN A BROWSER
+        # against the cases that actually produce it — mount throwing, the module 404ing,
+        # failing to parse, returning no teardown, tearing down with a throw, and case 7,
+        # §1.6's own shape: a module that never arrives. Asserting instead that the
+        # source contains an addEventListener before a mount call would be satisfied by a
+        # source that reads correctly and behaves otherwise.
+        #
+        # Each case gets its own origin and browser context: a service worker registered
+        # by one case would otherwise serve a cached module to the next, and the mutation
+        # under test would never reach the page.
+        run: node .github/ci/demo-games-back.mjs .
+
+      - name: "Check 14 — the games surface opens cold with no network"
+        # PUP-WO-0200 acceptance §3.5 and roadmap P2 gate 4, which falsify northstar
+        # invariant 3: every core surface works with no network.
+        #
+        # THIS IS THE CHECK THAT JUSTIFIES THE ONE LINE ADDED TO sw.js. CC-A authorised
+        # exactly one urlsToCache entry for the placeholder and REFUSED the
+        # CACHE_VERSION bump. Without that entry the module is absent from a cold
+        # install and this goes red — so the line is not taken on trust, it is the
+        # thing under test, and a future edit that drops it fails here rather than on
+        # the tablet.
+        #
+        # Offline is real: the listener is closed and its keep-alive sockets destroyed,
+        # and a direct fetch is confirmed to fail BEFORE the cold page is opened.
+        # `context.setOffline(true)` is deliberately not used — PUP-WO-0105 measured
+        # that it does not stop a service worker's fetch to loopback, so a check built
+        # on it would pass while the worker quietly served from the network.
+        run: node .github/ci/demo-games-offline.mjs .
+
+      - name: "Check 15 — check 3 can go red on each branch of its rule"
+        # PUP-WO-0200 rewrote check 3's rule from "any change to a listed asset needs a
+        # CACHE_NAME bump" to a FOUR-BRANCH rule about whether install's addAll will
+        # refresh the asset. A four-branch rule with no controls is an assertion that
+        # can pass by not running, and the demonstrations for that rewrite lived only in
+        # a commit message — evidence about a tree that no longer exists.
+        #
+        # Same principle PUP-WO-0105 set one level up: a WORKER change is gated by a
+        # check for the class it changes, so a CHECK change is regression-guarded for
+        # the branches it introduces.
+        #
+        # 11 controls: two fail-closed conditions on the base resolver (the mechanism
+        # that produced a false negative during this work order), all four branches each
+        # RED or GREEN for its own NAMED reason, the two cases a bump must satisfy, and
+        # three that must stay green — including ADDING A GAME, which the old rule made
+        # impossible to satisfy alongside northstar invariant 6.
+        run: node .github/ci/check-cache-name-controls.mjs
 
   # ==========================================================================
   # Publication — two copies, one Pages deployment.

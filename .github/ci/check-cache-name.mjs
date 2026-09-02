@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
  * CHECK 3 — Cache identity (northstar invariant 7).
- * If any asset listed in urlsToCache changed, CACHE_NAME (sw.js:1) must change too.
+ * If a changed cached asset will NOT be refreshed by install's addAll — i.e. the
+ * current urlsToCache does not list it — CACHE_NAME (sw.js:1) must change too.
+ * A change to a STILL-LISTED asset needs no bump: addAll overwrites it. See the long
+ * comment at the trigger block for the mechanism and for what a bump costs.
  *
  * THE BASE REF IS THIS CHECK. An unstated or unreachable base is how a check like
  * this silently compares nothing and passes forever, so the base is resolved
@@ -192,26 +195,80 @@ if (!nameHead) fail('could not establish the cache identity from sw.js at HEAD.\
   '  `var CACHE_NAME = \'…\';`. Reading a version literal that CACHE_NAME does not\n' +
   '  use would compare a number nothing depends on.');
 
-// Union of both revisions: an asset REMOVED from the list still changed what a
-// client caches, so it must still trigger a bump.
+/* ================= THE RULE, REFINED — AND THE OLD ONE'S JUSTIFICATION WAS WRONG
+ *
+ * THIS CHECK USED TO REQUIRE A BUMP FOR *ANY* CHANGE TO A LISTED ASSET, AND FOR ANY
+ * CHANGE TO THE LIST. Its stated reason was that "already-installed clients keep
+ * serving the previous build's assets — invariant 7". THAT REASON IS NOT TRUE FOR
+ * ASSETS THAT ARE THEMSELVES IN urlsToCache, and the mechanism says so:
+ *
+ *     install = caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))
+ *
+ * With the NAME UNCHANGED that opens the EXISTING cache and PUTS FRESH COPIES OVER
+ * EVERY LISTED ENTRY. Any shipped byte-change to sw.js re-runs install, so after it
+ * the cache holds the new copy of every listed asset. Nothing stale survives AMONG
+ * LISTED ENTRIES, so there is no mixture and invariant 7 is not at risk.
+ *
+ * WHAT A BUMP *DOES* COST, measured rather than assumed: `activate` deletes the old
+ * cache WHOLE, and the runtime cache lives in it. PUP-WO-0105 measured a bump at
+ * **24 of 24 map tiles offline before, 0 of 24 after**. So requiring a bump where
+ * addAll already refreshes the asset is strictly worse for the child, for no benefit.
+ *
+ * AND THE OLD RULE MADE NORTHSTAR INVARIANT 6 UNSATISFIABLE. Adding a game ALWAYS
+ * adds a urlsToCache line, so "the list changed" fired on every game this project
+ * will ever add — while invariant 6 says a game is "its own module, one registry
+ * entry, and the asset manifest — NOTHING ELSE" and roadmap P2 gate 2 counts exactly
+ * three things. A bump is a fourth. Check 3 and invariant 6 could not both stand.
+ *
+ * THE REFINED RULE — a bump is required for a changed asset that install's addAll
+ * WILL NOT OVERWRITE, i.e. one the cache holds but the CURRENT urlsToCache does not
+ * list:
+ *   changed AND in listHead        -> addAll refreshes it        -> NO bump
+ *   changed AND dropped from list  -> the old copy is stranded   -> BUMP
+ *   an entry ADDED to the list     -> nothing stale exists yet   -> NO bump
+ *   an entry REMOVED from the list -> its cached copy is stranded -> BUMP
+ *
+ * WHAT THIS CHECK STILL CANNOT SEE, said plainly rather than implied: entries the
+ * RUNTIME cache holds that were never in urlsToCache — cross-origin CDN responses and
+ * map tiles. Nothing in the repository names them, so no diff can reveal a change to
+ * them. For SAME-ORIGIN assets that gap is closed by check 2, which requires every
+ * local asset index.html references to be listed; an asset that is referenced and
+ * unlisted is check 2's red, not this one's.
+ *
+ * (Ruled by CC-A 2026-09-02, flagged upward before landing because this check guards
+ * invariant 7's mechanism and a change to an invariant is a decision, not a build
+ * step. It corrects CC-A's own earlier reasoning — refusing the bump because 0200
+ * "adds a NEW asset" was true of games/hello.js and incomplete, since 0200 also
+ * MODIFIES the already-precached index.html — while keeping the conclusion, now on
+ * the mechanism argument above rather than on PUP-WO-0000 §6.1's wording.) */
 const watched = new Set([...(listBase || []), ...listHead]);
 
 const changed = git('diff', '--name-only', base, head).split('\n').filter(Boolean);
 const changedAssets = changed.filter(f => watched.has(norm(f)));
-const listChanged = listBase && (
-  listBase.size !== listHead.size || [...listHead].some(x => !listBase.has(x))
-);
+/* The two sets that decide it: refreshed by addAll, or stranded in the old cache. */
+const refreshed = changedAssets.filter(f => listHead.has(norm(f)));
+const stranded  = changedAssets.filter(f => !listHead.has(norm(f)));
+const removedFromList = listBase ? [...listBase].filter(x => !listHead.has(x)) : [];
+const addedToList = listBase ? [...listHead].filter(x => !listBase.has(x)) : [];
 
 console.log(`  urlsToCache watched (${watched.size}): ${[...watched].join(', ')}`);
 console.log(`  files changed in range: ${changed.length}${changed.length ? ' -> ' + changed.join(', ') : ''}`);
+if (refreshed.length) console.log(`  changed AND still listed (addAll refreshes these): ${refreshed.join(', ')}`);
+if (addedToList.length) console.log(`  added to urlsToCache (nothing stale can exist yet): ${addedToList.join(', ')}`);
 console.log(`  CACHE_NAME: ${nameBase ?? '(absent at base)'} -> ${nameHead}`);
 
 const triggers = [];
-if (changedAssets.length) triggers.push(`cached asset(s) changed: ${changedAssets.join(', ')}`);
-if (listChanged) triggers.push('the urlsToCache list itself changed');
+if (stranded.length) triggers.push(`changed asset(s) the current urlsToCache does NOT list, so addAll will not refresh them: ${stranded.join(', ')}`);
+if (removedFromList.length) triggers.push(`entr(ies) REMOVED from urlsToCache, whose cached copies are now stranded: ${removedFromList.join(', ')}`);
 
 if (!triggers.length) {
-  console.log('\nCHECK 3 PASSED — no cached asset changed, so no CACHE_NAME bump is required.');
+  console.log('\nCHECK 3 PASSED — every changed cached asset is still in urlsToCache, so');
+  console.log('  install\'s addAll overwrites all of them and no bump is required.');
+  if (refreshed.length || addedToList.length) {
+    console.log('  A bump here would delete the whole old cache on activate, taking the runtime');
+    console.log('  cache with it — measured at 24 of 24 map tiles offline before, 0 of 24 after');
+    console.log('  (PUP-WO-0105) — for no invariant-7 benefit.');
+  }
   process.exit(0);
 }
 // The base may be unreadable in two very different ways, and they must not be
