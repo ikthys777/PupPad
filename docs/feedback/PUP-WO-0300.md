@@ -135,8 +135,12 @@ decision should not require the other file:
    slid more than ~15 px. Wired on `click`, which a browser does not synthesise in either
    case. **`elementFromPoint` returned `#gameBack`, 64×64, throughout** — the project's
    reachability test is the right question at the wrong layer, and across both games checks
-   **the button had never once been pressed with a finger.** Live on the tablet today
-   through the placeholder. Fixed on pointer events.
+   **the button had never once been pressed with a finger.** Fixed on pointer events.
+   **It was live on the ROOT build only, not on the tablet** — `refs/heads/stable` has zero
+   occurrences of `gameBack`, zero of the registry and no `games/` directory, so the games
+   host does not exist on the promoted copy. I claimed otherwise without checking; the
+   firebreak contained the first child-trapping defect since the split existed, on its
+   first real test. See the findings document.
 2. **The exit sat on top of the Settings button**, so a double-tap opened the adult
    Supabase panel — two text inputs and two word-labelled exits a non-reader cannot leave.
    Moved 52 px clear.
