@@ -258,7 +258,7 @@ true while looking nothing like a degenerate stub:
   once — redundancy working, and a badly designed meta-test. *(Recorded because the
   failed first attempt is what makes the second worth anything.)*
 
-**The family, stated once, because it now has five members and one shape.** Each is
+**The family, stated once, because it now has six members and one shape.** Each is
 a run whose exit code is indistinguishable from a sound one:
 
 1. **An assertion that passes by not running** — neuter a stub with an *ordinary
@@ -299,9 +299,34 @@ a run whose exit code is indistinguishable from a sound one:
    recorded its own commit SHA, written before that commit existed, so it named the
    previous one every time — deleted rather than worked around).
 
-**In all five the verdict was read instead of what produced it.** Members 1–2 are
-green, 3 is red, 4 never runs at all, and 5 is not a run — which is why "look harder
-at the result" has never been the fix for any of them.
+6. **A CHECK THAT MEASURES A PROXY THE PROPERTY DOES NOT FOLLOW FROM.** *(Added
+   2026-09-02.)* The assertion ran, compared exactly what it was told to, and **what
+   it was told to compare was not the property.** Distinct from member 2: that one
+   certifies the forbidden state; this one certifies a **true** fact that the
+   dangerous state also satisfies.
+   **The case that named it:** `#gameBack` — the one way out of a game — was wired on
+   `click` **alone**, and a browser synthesises no click while a second finger is on
+   the glass, nor for a tap that slides past ~15px. **A three-year-old plays with both
+   hands and his tap is a smudge.** Every check passed: `elementFromPoint` returned
+   `#gameBack` at 64×64 in every failing case, and all thirty of `PUP-WO-0200`'s
+   probes pressed it with `page.click` — **a synthetic mouse click, subject to neither
+   rule.** *Across all of it the button had never once been pressed with a finger.*
+   **`elementFromPoint` asks "is it under the finger", not "does pressing it do
+   anything."**
+   **Two earlier instances, recognised only in hindsight:** `check-two-trees`'s
+   distinctness test `new Set(names).size === names.length`, **which cannot be false**
+   (`PUP-WO-0103` G6); and `PUP-WO-0104` §2.4 — asserting a cache **name exists**
+   cannot distinguish *survived* from *deleted and recreated by the next step*.
+   **Presence is the recurring proxy.** Existence, geometry and naming are all cheap
+   to measure and none of them is behaviour.
+   **The rule:** name the property in the assertion's own words, then ask what else
+   would satisfy the thing you are about to measure. If the answer is "the broken
+   case too", you have a proxy. *(The builder's, from `PUP-WO-0300`'s pass.)*
+
+**In all six the verdict was read instead of what produced it.** Members 1–2 are
+green, 3 is red, 4 never runs at all, 5 is not a run, and 6 runs correctly on the
+wrong question — which is why "look harder at the result" has never been the fix for
+any of them.
 
 **Member 4 is one line, and being mechanisable makes it a rule rather than advice**
 (§5): before dispatching a pass, resolve every path and every section the prompt
@@ -575,6 +600,17 @@ before there was anything to be green about.**
 **The rule, and it is cheap:** when a work order cites a ratified mechanism as
 existing, **resolve it the way §6.1 member 4 resolves a path** — run the grep, before
 dispatch. Every entry above was found by one command.
+
+**AND THE SECTION IS BROADER THAN ITS TITLE.** *(The builder's extension, 2026-09-02,
+and it is a better statement of this section than the one it replaces.)* The pattern
+is not only **ratified-but-unbuilt** — it is also **ASSERTED-BUT-UNVERIFIED**, and the
+resolving command is the same one. `check-games-offline`'s own header promised that a
+non-literal `.src` "becomes a NOTE, visible to a reviewer"; it did not, because the
+regex required an identifier after the `=`, so `i.src = 'https:' + '//evil/x.png'`
+matched **neither the literal pattern nor the note** — total silence, demonstrated
+fetching off-origin. `PUP-WO-0300` §3 asserted the same check reds on a remote font;
+**it did not, by either form.** A file that describes its own behaviour is making a
+claim, and **a claim in a comment is verified the same way a path is: by running it.**
 
 ## 7. Deferred with intent — realtime co-op
 
