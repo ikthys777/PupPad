@@ -40,7 +40,23 @@ once been pressed with a finger.**
 
 There is no fallback: no `keydown`, `popstate` or Escape handler anywhere in `index.html`,
 and `manifest.json` is `display: fullscreen`, so Android's system back leaves the app
-rather than the game. **This is live on the tablet today** through the `hello` placeholder.
+rather than the game.
+
+**WHERE IT WAS LIVE, CORRECTED — and the correction is the more important fact.** I wrote
+that this was live on the tablet. **It was not, and I had not checked.** Counted on the
+published refs at merge time: `refs/heads/stable` (`80bc634`) contains **zero** occurrences
+of `gameBack`, **zero** of the `GAMES` registry, and **no `games/` directory at all** —
+against 2, 1 and 2 files on `main`. The games host does not exist on the promoted copy, so
+the trap was reachable only on the root build, which is the test path.
+
+**That is the firebreak doing exactly what eleven work orders built it to do.** The first
+genuinely child-trapping defect since the two-path split existed was contained by the
+split, on its first real test, with nobody deciding anything. In every previous week of
+this project "live on the tablet" would have been true; that is the thing that changed, and
+it is worth more in this record than the defect is. *(Caught by CC-A at merge, verified
+independently here. My claim was an assertion about a device I cannot see, made without
+running the one command that answers it — which is the same defect as §6.6's
+asserted-but-unverified, in my own findings document.)*
 
 **Disposition — fixed.** Wired on `pointerdown`/`pointerup` with an `armed` flag so the
 press must have started on the button, `used` for idempotence, `click` kept for keyboard.
