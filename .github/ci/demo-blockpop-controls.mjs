@@ -484,18 +484,30 @@ plan(14, 'the tray divides both axes by one span, as the source did', {
   expectText: 'half the slot',
 });
 
-console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time.\n`);
+console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time (the timing-sensitive ones alone, afterwards).\n`);
 {
-  let next = 0;
+  /* SECTIONS WITH REAL TIME IN THEM DO NOT SHARE THE MACHINE.
+   * §6 lands a piece INSIDE a 280ms window and §13 samples a 620ms sweep — both are wall
+   * clock, and under lane contention on a 2-core CI runner the CDP round trips alone
+   * outlast the window. They went red at random: two local runs failed on different
+   * scenarios, and CI failed on a third combination while CHECK 21 ITSELF PASSED. That is
+   * a harness defect, not a build one, and a gate that is red at random is one people
+   * learn to ignore. Everything else runs in lanes; these run alone, afterwards. */
+  const TIMED = new Set([6, 13]);
+  const parallel = QUEUE.map((q, i) => ({ q, i })).filter((x) => !TIMED.has(x.q.section));
+  const serial = QUEUE.map((q, i) => ({ q, i })).filter((x) => TIMED.has(x.q.section));
   const ordered = new Array(QUEUE.length);
+  let next = 0;
   const lane = async () => {
     for (;;) {
-      const i = next++;
-      if (i >= QUEUE.length) return;
-      ordered[i] = await scenario(QUEUE[i].section, QUEUE[i].label, QUEUE[i].spec);
+      const k = next++;
+      if (k >= parallel.length) return;
+      const { q, i } = parallel[k];
+      ordered[i] = await scenario(q.section, q.label, q.spec);
     }
   };
   await Promise.all(Array.from({ length: LANES }, lane));
+  for (const { q, i } of serial) ordered[i] = await scenario(q.section, q.label, q.spec);
   for (const r of ordered) if (r) results.push(r);
 }
 

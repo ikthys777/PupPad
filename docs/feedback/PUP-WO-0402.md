@@ -255,8 +255,19 @@ that catches it and simply never sampled at that moment**; it does now.
   twenty-four ran at once. **Two consecutive control runs failed on different scenarios** —
   the signature of contention, not a defect — because the sections with real time in them
   (§6 lands a piece *inside* 280ms, §13 samples a 620ms sweep at 90ms) slipped. Lanes are
-  four, and stability was confirmed by running the whole set twice rather than declaring
-  it fixed. **A gate that is red at random is one people learn to ignore.**
+  four — **and that was not enough.** CI then failed on a *third* combination while
+  **check 21 itself passed**, which is the clearest possible statement that the defect was
+  in the harness. The root cause is that §6 lands a piece *inside* a 280ms window and §13
+  samples a 620ms sweep: both are wall clock, and on a 2-core runner the CDP round trips
+  alone outlast the window. **Those sections now run alone, after the lanes.** Stability was
+  confirmed by running the whole set twice at each step rather than declaring it fixed.
+  **A gate that is red at random is one people learn to ignore.**
+- **The job budget went 15 → 20, and this is the last time it should.** Every lever inside
+  the file has now been pulled. **CC-A's rejected split is the right answer**, and its two
+  traps are named at `ci.yml:94` for whoever takes it: a fourth job is not in `publish`'s
+  `needs`, so a red controls job would not block a deploy, and the `publish` job's comment
+  asserting `needs: checks` covers "every check in this file" goes stale the moment one
+  moves out. **That is careful work, not forbidden work.**
 - **`elementFromPoint` cannot see a decorative overlay**, because `pointer-events:none`
   removes it from hit testing. A green haze laid over the board as a `::after` was green.
   §13 now asks for pseudo-layers by name as well.
