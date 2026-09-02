@@ -430,10 +430,13 @@ around it measures its own harness. It read as a 141-node-per-cycle leak that do
 exist. **Every existing `.github/ci/demo-*.mjs` that uses `waitForSelector` inherits that
 artifact and none has been audited.**
 
-## 11. Two lessons this panel taught AFTER it merged, recorded because they generalise
+## 11. What this panel taught AFTER it merged, recorded because it generalises
 
 *Added 2026-09-02, after the fleet turned out to be three phones rather than a tablet and
-this work order's control panel was re-measured at 412px of height. Neither lesson is about
+this work order's control panel was re-measured at 412px of height. **The heading carried a
+count — "Two lessons" over three subsections — and it is removed rather than corrected**,
+per roadmap §5: no hand-maintained number in a name unless something recomputes it. It was
+wrong on the day it was written, which is the usual interval. None of what follows is about
 the panel. Both were extracted by CC-A from cross-session messages and asked for here,
 because a sentence that exists only in a message between two sessions does not survive
 either of them.*
