@@ -145,6 +145,23 @@ else bad(`${off.length} tile(s) off-screen or covered`, JSON.stringify(off));
 if (!wordless.length) ok(`every tile carries an icon AND its word — ${tileInfo.map((t) => `${t.icon} ${t.word}`).join(' · ')}`);
 else bad(`${wordless.length} tile(s) missing an icon or a word`, JSON.stringify(wordless));
 
+/* THE DOOR ITSELF, WHICH THIS CHECK ORIGINALLY NEVER TESTED WITH A BAD FINGER. An
+ * adversarial pass found the pad buttons still wired on bare `click` while the tiles and
+ * exits behind them were hardened — the picker's only entry point inert to exactly the
+ * two gestures the hardening exists to survive. Testing the surface and not the door is
+ * how that survived a green run. */
+console.log('\n--- 1b. the GAMES BUTTON, with a second finger down and with a sliding tap ---');
+for (const [label, opts] of [
+  ['with a second finger resting on the glass', { extraFinger: { x: 760, y: 640 } }],
+  ['sliding 25px', { slide: 25 }],
+]) {
+  await openConsole();
+  await fingerTap('.pad-btn[data-id="7"]', opts);
+  s = await state();
+  if (s.picker) ok(`the Games button ${label} opened the picker`);
+  else bad(`the Games button ${label} did nothing — the door is inert`, JSON.stringify(s));
+}
+
 /* ---------------------------------------------------------- 2. a finger, and a bad finger */
 console.log('\n--- 2. a tile opens its game — with a finger, with a second finger down, and sliding ---');
 await fingerTap(`.pickerTile[data-game="${IDS[0]}"]`);
@@ -171,6 +188,47 @@ for (const [label, opts] of [
   s = await state();
   if (s.host) ok(`a tile tap ${label} opened the game`);
   else bad(`a tile tap ${label} did nothing`, JSON.stringify(s));
+}
+
+/* EVERY TILE, NOT JUST THE FIRST. The pass planted a picker in which every tile launched
+ * GAMES[0] and this check stayed green, because it only ever pressed IDS[0] — a tile that
+ * lies about which game it opens is invisible to a test that presses one tile. */
+console.log('\n--- 2b. every tile opens ITS OWN game ---');
+for (const id of IDS) {
+  await openConsole();
+  await fingerTap('.pad-btn[data-id="7"]');
+  await fingerTap(`.pickerTile[data-game="${id}"]`);
+  await page.waitForSelector('#gameHost', { timeout: 8000 }).catch(() => {});
+  const opened = await page.evaluate(() => (window.gameSession && window.gameSession.entry && window.gameSession.entry.id) || null);
+  if (opened === id) ok(`the '${id}' tile opened '${opened}'`);
+  else bad(`the '${id}' tile opened '${opened}' — a tile that lies about its game`, JSON.stringify(await state()));
+  await fingerTap('#gameBack');
+}
+
+/* THE EXITS, WITH THE SAME BAD FINGERS. The pass reverted #pickerBack to click-only
+ * wiring and this check stayed green while a two-handed child was STRANDED behind the
+ * picker — the precise trap section 3 below claims to rule out. Applying the hard
+ * gestures to tiles and not to exits tested the wrong control. */
+console.log('\n--- 2c. BOTH exits, with a second finger down and with a sliding tap ---');
+for (const [label, opts] of [
+  ['a second finger on the glass', { extraFinger: { x: 760, y: 640 } }],
+  ['a tap that slides 25px', { slide: 25 }],
+]) {
+  await openConsole();
+  await fingerTap('.pad-btn[data-id="7"]');
+  await fingerTap('#pickerBack', opts);
+  s = await state();
+  if (!s.picker && s.consoleReachable) ok(`the PICKER's exit works with ${label}`);
+  else bad(`the picker's exit is dead to ${label} — a two-handed child is stranded`, JSON.stringify(s));
+
+  await openConsole();
+  await fingerTap('.pad-btn[data-id="7"]');
+  await fingerTap(`.pickerTile[data-game="${IDS[0]}"]`);
+  await page.waitForSelector('#gameHost', { timeout: 8000 }).catch(() => {});
+  await fingerTap('#gameBack', opts);
+  s = await state();
+  if (!s.chrome && s.consoleReachable) ok(`the GAME's exit works with ${label}`);
+  else bad(`the game's exit is dead to ${label}`, JSON.stringify(s));
 }
 
 /* ---------------------------------------------------------- 3. §2.3, the §1.6 shape */
@@ -219,6 +277,41 @@ const leaked = s.tiles.filter((t) => ['Bad Id', 'escape', 'wrongext'].includes(t
 if (leaked.length === 0 && s.tiles.length === IDS.length) ok('three entries that fail §9.1 produced NO tile, and the valid ones still rendered — a tile the shell would refuse to load is a control that lies');
 else bad('the picker rendered an invalid registry entry', JSON.stringify({ tiles: s.tiles, leaked }));
 
+/* A COLOUR THAT IS NOT A COLOUR. `color` and `glow` are spliced into the tile's inline
+ * style; the pass turned one into a full-bleed element at z-index 9999 that covered the
+ * picker's own exit. registryEntryIsValid now enforces §9.1's hex constraint on both. */
+await openConsole();
+await page.evaluate(() => {
+  GAMES.push({ id: 'inject', module: './games/x.js', label: 'I', icon: 'I',
+    color: 'red;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999',
+    glow: '#ffffff', sound: 'ping', players: 1, params: {} });
+});
+await fingerTap('.pad-btn[data-id="7"]');
+s = await state();
+const backReachable = await page.evaluate(() => {
+  const b = document.getElementById('pickerBack');
+  if (!b) return false;
+  const r = b.getBoundingClientRect();
+  const e = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+  return !!(e && (e === b || b.contains(e)));
+});
+if (!s.tiles.includes('inject') && backReachable) ok('an entry whose colour is a CSS injection produced NO tile, and the exit is still what a finger at its centre hits');
+else bad('a CSS injection through the registry reached the tile', JSON.stringify({ tiles: s.tiles, backReachable }));
+
+/* THE CORPSE LATCH. openGames carries an explicit recovery for a session whose DOM is
+ * gone; routing the Games button through the picker reopened that bug one function above
+ * where it was closed, and the pass killed the button permanently. */
+console.log('\n--- 4b. a game that removes its own host must not kill the Games button ---');
+await openConsole();
+await fingerTap('.pad-btn[data-id="7"]');
+await fingerTap(`.pickerTile[data-game="${IDS[0]}"]`);
+await page.waitForSelector('#gameHost', { timeout: 8000 }).catch(() => {});
+await page.evaluate(() => { const c = document.getElementById('gamesChrome'); if (c && c.parentNode) c.parentNode.removeChild(c); });
+await fingerTap('.pad-btn[data-id="7"]');
+s = await state();
+if (s.picker) ok('after a module removed its own host, the Games button still opens the picker — it recovers instead of latching on a corpse');
+else bad('the Games button is permanently dead after a session lost its DOM', JSON.stringify(s));
+
 /* ---------------------------------------------------------- 5. §1a.1, the exit's geometry */
 console.log('\n--- 5. §1a.1 — the exit shrinks its PAINT without shrinking its HIT BOX ---');
 const geom = await page.evaluate(() => {
@@ -241,6 +334,47 @@ if (geom && geom.paint[0] <= geom.hit[0] * 0.7) ok(`the paint is ${geom.paint.jo
 else bad('the visible control still dominates the surface', JSON.stringify(geom));
 if (geom && geom.glyphOffset && Math.abs(geom.glyphOffset[0]) <= 1 && Math.abs(geom.glyphOffset[1]) <= 1) ok(`the arrow is centred in its disc to within 1px (${geom.glyphOffset.join(', ')}) — it is a path, not a glyph`);
 else bad('the arrow is not centred in the disc', JSON.stringify(geom));
+
+/* ---------------------------------------------------------- 6. a SMALL screen, MANY games
+ * A centred flex container that overflows pushes its first rows ABOVE the scroll origin,
+ * and scrollTop cannot go negative — the pass measured tiles that no gesture could ever
+ * bring into view, starting at the FIFTH registry entry on an 800x480 tablet. That is
+ * invariant 6 falsified: adding the fifth game would silently delete two, and fixing it
+ * would be surgery on the picker rather than a data change. One viewport with two entries
+ * — which is all this check used to run — cannot see any of it. */
+console.log('\n--- 6. eight games on a small screen: every tile reachable, none above the scroll origin ---');
+for (const [w, h] of [[800, 480], [1024, 600], [640, 480]]) {
+  const small = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true });
+  const sp = await small.newPage();
+  await sp.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+  await sp.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+  await sp.evaluate(() => {
+    for (let i = 0; i < 8; i++) {
+      GAMES.push({ id: 'probe' + i, module: './games/hello.js', label: 'P' + i, icon: '⭐',
+        color: '#22C55E', glow: '#86EFAC', sound: 'ping', players: 1, params: {} });
+    }
+  });
+  await sp.click('.pad-btn[data-id="7"]');
+  await sp.waitForSelector('.pickerTile', { timeout: 5000 });
+  const reach = await sp.evaluate(() => {
+    const g = document.getElementById('pickerGrid');
+    const tiles = [...document.querySelectorAll('.pickerTile')];
+    /* THE TEST IS SIMPLY: AT scrollTop = 0, IS ANY TILE ABOVE THE BOX? scrollTop cannot
+     * go negative, so a tile whose top is above the scroll container's top at the very
+     * top of the scroll range can never be brought into view by any gesture. An earlier
+     * version of this assertion compared rects taken at two different scroll positions
+     * and was simply wrong — it stayed GREEN against the defect it was written for, which
+     * is why it was checked against a planted regression before being believed. */
+    g.scrollTop = 0;
+    const gr = g.getBoundingClientRect();
+    const clipped = tiles.filter((t) => t.getBoundingClientRect().top < gr.top - 1)
+      .map((t) => t.getAttribute('data-game'));
+    return { count: tiles.length, clipped, scrollH: g.scrollHeight, clientH: g.clientHeight };
+  });
+  if (reach.clipped.length === 0) ok(`${w}x${h}: all ${reach.count} tiles reachable (scrollable ${reach.clientH}->${reach.scrollH})`);
+  else bad(`${w}x${h}: ${reach.clipped.length} tile(s) sit above the scroll origin and can NEVER be reached`, `${reach.clipped.join(', ')} — scrollTop cannot go negative. ${JSON.stringify(reach)}`);
+  await small.close();
+}
 
 if (pageErrors.length === 0) ok('no uncaught page error during the whole run');
 else bad(`${pageErrors.length} uncaught page error(s)`, pageErrors.slice(0, 3).join(' | '));

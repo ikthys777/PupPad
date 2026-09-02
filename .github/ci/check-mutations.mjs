@@ -273,19 +273,23 @@ run('A13 the PROMOTED copy reads origin-wide (invariant 7 in its own direction, 
  * a third way for a worker to touch what it does not own — was unobservable. */
 run('A14 the precache reaches into the other deploy path (pass F7)', {
   expect: 'RED', expectFail: "precached OUTSIDE",
-  /* ANCHORED TO THE HEAD OF THE LIST, NOT ITS TAIL, AND THAT IS THE WHOLE POINT.
-   * PUP-WO-0200 first re-anchored this to the LAST urlsToCache entry, which made the
-   * anchor move every time a game was added — so adding a game required editing THIS
-   * FILE, a FOURTH thing, and roadmap P2 gate 2 says adding a game touches exactly
-   * three. The adversarial pass caught it by adding a second game and watching check 7
-   * go red while `git diff --stat` still reported three files, because the fourth edit
-   * would land in a file already counted.
-   * `var urlsToCache = [` and the `'./',` that follows it are the one part of the list
-   * that does not move when games are appended. The mutation's MEANING is unchanged:
-   * inject a precache entry pointing into the other deploy path. */
-  sw: [[`var urlsToCache = [
-  './',`, `var urlsToCache = [
-  './',
+  /* ANCHORED TO A NON-GAME ENTRY, WHICH IS NEITHER END OF THE LIST, AND THAT IS THE
+   * WHOLE POINT.
+   *
+   * PUP-WO-0200 first anchored this to the LAST urlsToCache entry, which made the anchor
+   * move every time a game was added — so adding a game required editing THIS FILE, a
+   * FOURTH thing, and roadmap P2 gate 2 says adding a game touches exactly three. It was
+   * then moved to the HEAD of the list, which is immune to appending.
+   *
+   * PUP-WO-0201's check 18 found that the head is not immune either: it asserts the
+   * invariant for a line added at EITHER end of the list, and a builder inserting at the
+   * top displaces `'./',` and breaks this anchor. Same defect, other end, found the first
+   * time anything asserted both directions.
+   *
+   * `'./manifest.json',` is a NON-GAME entry in the middle of the list. Games are
+   * appended or prepended around it and it does not move. The mutation's MEANING is
+   * unchanged: inject a precache entry pointing into the other deploy path. */
+  sw: [[`  './manifest.json',`, `  './manifest.json',
   './stable/index.html',`]],
 });
 

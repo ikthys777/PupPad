@@ -1757,7 +1757,15 @@ var gameSession = null;
  * the game it launched, which is the correct order. */
 var PICKER_Z = 400;
 
-/* EVERY TOUCH CONTROL IN THIS APP GOES THROUGH HERE, AND THAT IS THE POINT.
+/* EVERY TOUCH CONTROL THIS SHELL OWNS ON THE GAMES PATH GOES THROUGH HERE — the seven
+ * console pad buttons, the picker's tiles, and both exits.
+ *
+ * (An earlier version of this comment said "every touch control in this app", and an
+ * adversarial pass proved it false ON THE ENTRY POINT: the pad buttons were still wired
+ * on bare `click`, so the Games button — the picker's only door — was inert to the very
+ * two gestures this function exists to survive. The claim is now scoped to what it
+ * covers. Draw, Camera, Map, the settings panel and the PIN keypad do NOT go through it;
+ * they are PUP-WO-0106's, and naming that is cheaper than a comment that overreaches.)
  *
  * PUP-WO-0300's pass found #gameBack inert for two ordinary gestures because it was
  * wired on `click`: a browser synthesises no click while a second finger is on the
@@ -1774,17 +1782,31 @@ var PICKER_Z = 400;
  * the screen and released on a tile does not launch it. `used` makes the pair idempotent,
  * so the trailing click — which is also what a keyboard Enter produces, and that is why
  * the click handler stays — is a no-op rather than a second activation. */
-function wireTap(el, fn) {
+function wireTap(el, fn, opts) {
+  /* `repeat` for a control that survives its own press — a console pad button is tapped
+   * all day, and the one-shot latch below would kill it after one use. */
+  var repeat = !!(opts && opts.repeat);
   var used = false, armed = false;
-  function once() {
-    if (used) return;
+  function fire() {
+    if (used && !repeat) return;
     used = true;
     fn();
   }
   el.addEventListener('pointerdown', function() { armed = true; });
-  el.addEventListener('pointerup', function() { if (armed) { armed = false; once(); } });
+  el.addEventListener('pointerup', function() { if (armed) { armed = false; fire(); } });
   el.addEventListener('pointercancel', function() { armed = false; });
-  el.addEventListener('click', once);
+  /* THE CLICK PATH IS FOR THE KEYBOARD AND NOTHING ELSE, and `detail === 0` is what says
+   * so: a keyboard Enter or Space on a <button> produces a click with detail 0, while
+   * every mouse and touch click carries detail >= 1 and has already been handled above.
+   *
+   * The unguarded version had a defect an adversarial pass demonstrated with a stack
+   * trace. The trailing compatibility click is hit-tested against the DOM AS IT EXISTS
+   * AFTER the pointerup handler ran — so a control CREATED during that handler, at those
+   * coordinates, received it and fired itself. The picker's exit and a game's exit share
+   * one rect by design, so a tile tap landing there would launch a game and instantly
+   * close it: the child taps a game and is bounced back to the console with no
+   * explanation. Latent today, closed now, and closed for every control at once. */
+  el.addEventListener('click', function(e) { if (e && e.detail === 0) fire(); });
 }
 
 /* THE WAY BACK, BUILT ONCE FOR EVERY FULL-SCREEN SURFACE THIS SHELL OWNS.
@@ -1852,8 +1874,35 @@ function deepFreezeEntry(entry) {
  * later. This is the enforcement. */
 var GAMES_MODULE_RE = /^\.\/games\/[a-z0-9-]+\.js$/;
 var GAMES_ID_RE = /^[a-z][a-z0-9-]*$/;
+var GAMES_HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+/* NOW ENFORCING THE FIELDS THAT REACH A STYLE STRING, WHICH IT DID NOT BEFORE.
+ *
+ * The comment above has always said "§9.1's shape, ENFORCED rather than documented". It
+ * checked two of the nine constraints. An adversarial pass on PUP-WO-0201 pointed out
+ * that the two it skipped which MATTER are `color` and `glow`, because the picker splices
+ * both straight into a tile's inline `cssText` — and demonstrated a `color` of
+ * `red;position:fixed;inset:0;z-index:9999` terminating the background declaration and
+ * painting a full-bleed tile ABOVE the picker's own exit, so `elementFromPoint` at the
+ * button returned the tile.
+ *
+ * The registry is author-controlled, so this is not an attack surface in the usual sense
+ * — it is a TYPO surface, and the failure mode is a child looking at a coloured rectangle
+ * with the way back underneath it. §9.1 says these are `/^#[0-9a-fA-F]{6}$/`; that is now
+ * what the word ENFORCED means here.
+ *
+ * `sound` and `players` are still not checked: an unknown sound is a silent no-op rather
+ * than a broken surface, `players` is unread until architecture §7 seam 4 exists, and a
+ * validator that refuses a tile over a field with no visible consequence would cost a
+ * whole game for a typo. Stated so the gap is known rather than discovered. */
 function registryEntryIsValid(e) {
-  return !!e && GAMES_ID_RE.test(e.id) && GAMES_MODULE_RE.test(e.module);
+  return !!e
+    && GAMES_ID_RE.test(e.id)
+    && GAMES_MODULE_RE.test(e.module)
+    && GAMES_HEX_RE.test(e.color)
+    && GAMES_HEX_RE.test(e.glow)
+    && typeof e.label === 'string' && e.label.length >= 1 && e.label.length <= 12
+    && typeof e.icon === 'string' && e.icon.length >= 1 && e.icon.length <= 8;
 }
 
 /* OBLIGATION 4 — exactly one close path. This function, and nothing else, calls
@@ -2099,7 +2148,10 @@ function closeGamePicker() {
   if (o && o.parentNode) o.parentNode.removeChild(o);
 }
 
-/* One tile. Reads ONLY the registry fields §9.1 guarantees, so it cannot know a game. */
+/* One tile, built only from registry fields — it cannot know a game. `color` and `glow`
+ * reach an inline style, and `registryEntryIsValid` is what makes them safe to splice;
+ * read the note there before relaxing either. `label` and `icon` go through `textContent`
+ * and cannot carry markup, which an adversarial pass confirmed with an <img onerror>. */
 function pickerTile(entry) {
   var t = document.createElement('button');
   t.className = 'pickerTile';
@@ -2156,7 +2208,21 @@ function renderPickerTiles(host) {
   var grid = document.createElement('div');
   grid.id = 'pickerGrid';
   grid.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;'
-    + 'align-content:center;justify-content:center;gap:24px;padding:100px 20px 24px;'
+    /* `safe center`, NOT `center`. A centred flex container that OVERFLOWS pushes its
+     * first rows ABOVE the scroll origin, and scrollTop cannot go negative — those tiles
+     * can never be brought into view by any gesture. An adversarial pass measured the
+     * floor: on an 800x480 tablet it breaks at the FIFTH registry entry, losing two
+     * games, and at 1024x768 at the tenth. That falsifies invariant 6 outright — adding
+     * the fifth game would silently delete two, and fixing it would be surgery on the
+     * picker rather than a data change. `safe` degrades to flex-start exactly when
+     * centring would push content out of reach.
+     *
+     * The top padding clears the exit's 64px HIT BOX (which ends at y=126), not just its
+     * paint: the transparent margin still hit-tests, so a tile overlapping it lost a
+     * strip of its left edge to the exit — measured in 165 of 440 viewport-by-count
+     * configurations. A mis-hit here teaches a child the toy is broken, which is the same
+     * lesson a dead button teaches. */
+    + 'align-content:safe center;justify-content:safe center;gap:24px;padding:140px 20px 24px;'
     + 'box-sizing:border-box;overflow:auto;touch-action:pan-y';
   /* AN INVALID ENTRY IS NOT A TILE. registryEntryIsValid enforces PUP-WO-0000 §9.1, and a
    * tile the shell would then refuse to load is a control that lies — the same reason
@@ -2169,9 +2235,18 @@ function renderPickerTiles(host) {
 
 function openGamePicker() {
   if (document.getElementById('gamesPicker')) return;
-  /* A game is up: the picker is not reachable from inside one, and opening it under a
-   * live host would put a surface the child cannot see between him and the exit. */
-  if (gameSession) return;
+  /* A GAME IS UP — but "up" has to mean a game WITH DOM, and the first version of this
+   * line did not check. `openGames` carries an explicit defence against exactly this,
+   * with a comment naming it: a module that removes its own host leaves `gameSession`
+   * non-null with no DOM, and the button then refuses FOREVER. Routing the Games button
+   * through here reopened that bug ONE FUNCTION ABOVE where it had been closed — found
+   * by an adversarial pass, which killed the button permanently and noted that a
+   * three-year-old cannot restart an app. Recover instead of latching on a corpse. */
+  if (gameSession) {
+    if (gameSession.chrome && gameSession.chrome.parentNode) return;
+    if (window.console && console.warn) console.warn('[picker] previous session lost its DOM; recovering');
+    endGameSession();
+  }
 
   var overlay = document.createElement('div');
   overlay.id = 'gamesPicker';
@@ -2283,7 +2358,15 @@ function render() {
 /* === Event Binding === */
 function attachEvents() {
   document.querySelectorAll('.pad-btn').forEach(function(el) {
-    el.addEventListener('click', function() {
+    /* THROUGH wireTap, AND THIS IS THE ENTRY POINT THE HARDENING HAD MISSED. PUP-WO-0201
+     * wired the tiles and both exits against a tap with a second finger down and a tap
+     * that slides — and left the seven buttons that REACH them on bare `click`, which a
+     * browser does not synthesise for either gesture. An adversarial pass showed the
+     * Games button doing nothing at all in both cases: the picker's only door, inert to
+     * a two-handed child, behind a surface built entirely for one.
+     * `repeat` because a pad button is pressed all day, unlike an exit or a tile, which
+     * destroy the surface they live on. */
+    wireTap(el, function() {
       var id = parseInt(el.dataset.id);
       var btn = BTNS_LEFT.concat(BTNS_RIGHT).find(function(b){return b.id===id});
       if (!btn) return;
@@ -2313,7 +2396,7 @@ function attachEvents() {
         state.active = null; state.pop = ''; state.pid = -1;
         updateUI();
       }, btn.id === 3 ? 4500 : 2500);
-    });
+    }, { repeat: true });
   });
 
   var radar = document.getElementById('radarArea');

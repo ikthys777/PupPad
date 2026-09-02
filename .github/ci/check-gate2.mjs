@@ -24,14 +24,17 @@
  *      addition leaves `check-assets` or `check-syntax` red, then a fourth edit is
  *      required to finish the job and the invariant is false however the diff counts.
  */
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, cpSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, cpSync, existsSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO = process.argv[2] ? join(process.cwd(), process.argv[2]) : join(HERE, '..', '..');
+/* `resolve`, not `join(cwd, arg)`, which turned an ABSOLUTE path into
+ * /cwd/abs/repo and died inside cpSync rather than reporting a bad argument.
+ * Every sibling check already did it this way. */
+const REPO = resolve(process.argv[2] || join(HERE, '..', '..'));
 
 let COMMIT = process.env.PUPPAD_SUBJECT || '';
 if (!COMMIT) { try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {} }
@@ -53,39 +56,132 @@ const MODULE_SRC = `export default function mount(host, api) {
 }
 `;
 
-/** A throwaway repository holding exactly the files a game addition can touch. */
+/** THE WHOLE TREE, NOT THE FILES A GAME ADDITION IS SUPPOSED TO TOUCH.
+ *
+ * The first version staged only index.html, sw.js, the manifest, the icons and games/.
+ * That made the check STRUCTURALLY BLIND to the one defect it was commissioned to catch:
+ * PUP-WO-0200's fourth thing did not live in any of those files, it lived in
+ * .github/ci/check-mutations.mjs, whose A14 anchor had been pinned to the LAST
+ * urlsToCache entry — so every added game moved the anchor and required editing that
+ * file. A path the staging never copies is a path the count can never name, and an
+ * adversarial pass replayed exactly that: this check printed PASSED, "three,
+ * demonstrated on this tree, on this run", while check 7 was red on the same tree for
+ * the fourth edit that was owed.
+ *
+ * So everything is staged except .git and node_modules, and the checks run below include
+ * the one that holds the anchors. */
 function stage() {
   const dir = mkdtempSync(join(tmpdir(), 'puppad-gate2-'));
-  for (const f of ['index.html', 'sw.js', 'manifest.json', 'icon-192.png', 'icon-512.png']) {
-    if (existsSync(join(REPO, f))) copyFileSync(join(REPO, f), join(dir, f));
-  }
-  cpSync(join(REPO, 'games'), join(dir, 'games'), { recursive: true });
-  git(dir, 'init', '-q', '.');
-  git(dir, 'config', 'user.email', 'gate2@puppad');
-  git(dir, 'config', 'user.name', 'gate2');
-  git(dir, 'add', '-A');
-  git(dir, 'commit', '-qm', 'before');
-  return dir;
+  cpSync(REPO, dir, {
+    recursive: true,
+    filter: (src) => !/(^|[\\/])(\.git|node_modules)([\\/]|$)/.test(src.slice(REPO.length)),
+  });
+  /* An isolated git identity AND an isolated global config: a core.excludesFile on the
+   * runner silently changes what `git add -A` stages, and therefore what the count sees.
+   * An adversarial pass made a four-path addition report as THREE that way. */
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: join(dir, '.gitconfig-none'), GIT_CONFIG_SYSTEM: join(dir, '.gitconfig-none') };
+  writeFileSync(join(dir, '.gitconfig-none'), '');
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env }).trim();
+  g('init', '-q', '.');
+  g('config', 'user.email', 'gate2@puppad');
+  g('config', 'user.name', 'gate2');
+  g('add', '-A');
+  g('commit', '-qm', 'before');
+  return { dir, git: g };
 }
 
-/* THE THREE THINGS, and each is written the way a builder would write it. */
+/** An id that provably collides with nothing, so a repo that one day ships a game called
+ *  `synth` cannot turn a NEGATIVE CONTROL GREEN — which is what a hard-coded id did when
+ *  an adversarial pass added exactly that game: the four-file addition was reported as
+ *  THREE, and the operator was told to escalate an architecture decision over a name. */
+function freeId() {
+  const taken = new Set(readdirSync(join(REPO, 'games')).map((f) => f.replace(/\.js$/, '')));
+  const html = readFileSync(join(REPO, 'index.html'), 'utf8');
+  for (let n = 0; n < 500; n++) {
+    const id = 'gate2probe' + (n || '');
+    if (!taken.has(id) && !html.includes(`'${id}'`)) return id;
+  }
+  throw new Error('check-gate2: could not find a game id that collides with nothing');
+}
+
+/* THE THREE THINGS, each written the way a builder writes it TODAY.
+ *
+ * Both anchors moved after an adversarial pass, and in opposite directions, for reasons
+ * that are not symmetric:
+ *
+ *   THE REGISTRY ENTRY GOES LAST. index.html's own comment says the position in GAMES is
+ *   what the Games button opens — inserting at the head displaced Gyre from slot 0, which
+ *   is not what a builder adding a third game would do and is a change nothing here could
+ *   see. (After the picker it matters less; it still is not the realistic edit.)
+ *
+ *   THE urlsToCache LINE GOES AFTER THE FIRST GAME ENTRY, NOT AFTER THE LAST. Anchoring
+ *   to the tail is the exact pattern PUP-WO-0200 REMOVED from check-mutations for this
+ *   reason: a tail anchor moves every time a game is added, and any future non-game
+ *   precache asset appended after the games — a sprite, a font, the vendored leaflet
+ *   PUP-WO-0600 plans — made the old regex match nothing and killed this file with a raw
+ *   stack trace before a single negative control ran.
+ *
+ * A missing anchor is now an ::error:: that says the anchor moved, not a stack trace that
+ * invites the reader to relax the check. */
+function anchorFail(what) {
+  console.error(`::error::CHECK 18 cannot find ${what}.`);
+  console.error('  This check MUTATES the tree, so it holds anchors into it, and an anchor that');
+  console.error('  no longer matches is a fact about the tree rather than a reason to loosen the');
+  console.error('  anchor. Update it to point at what the file now says.');
+  process.exit(1);
+}
 const addModule = (dir, id) => writeFileSync(join(dir, 'games', id + '.js'), MODULE_SRC);
-const addRegistryEntry = (dir, id, modulePath) => {
+const entryText = (pad, id, modulePath) =>
+  `${pad}{id:'${id}',module:'${modulePath}',label:'Probe',icon:'\\u2B50',\n`
+  + `${pad} color:'#22C55E',glow:'#86EFAC',sound:'ping',players:1,params:{}}`;
+
+const addRegistryEntry = (dir, id, modulePath, where) => {
   const p = join(dir, 'index.html');
-  const s = readFileSync(p, 'utf8');
-  const m = s.match(/var GAMES=\[\n/);
-  if (!m) throw new Error('check-gate2: cannot find `var GAMES=[` in index.html');
-  const entry = `  {id:'${id}',module:'${modulePath}',label:'Synth',icon:'\\u2B50',\n`
-    + `   color:'#22C55E',glow:'#86EFAC',sound:'ping',players:1,params:{}},\n`;
-  writeFileSync(p, s.replace(m[0], m[0] + entry));
+  const src = readFileSync(p, 'utf8');
+  const list = src.match(/(var GAMES\s*=\s*\[\n)([\s\S]*?)(\n\];)/);
+  if (!list) anchorFail('`var GAMES = [ ... ];` in index.html');
+  const pad = (list[2].match(/^(\s*)/) || ['', '  '])[1];
+  const body = where === 'head'
+    ? entryText(pad, id, modulePath) + ',\n' + list[2]
+    : list[2] + ',\n' + entryText(pad, id, modulePath);
+  writeFileSync(p, src.replace(list[0], list[1] + body + list[3]));
 };
-const addCacheLine = (dir, modulePath) => {
+
+const addCacheLine = (dir, modulePath, where) => {
   const p = join(dir, 'sw.js');
-  const s = readFileSync(p, 'utf8');
-  const m = s.match(/(\n)(\s*)'(\.\/games\/[a-z0-9-]+\.js)'(\n\];)/);
-  if (!m) throw new Error('check-gate2: cannot find the last games entry in urlsToCache');
-  writeFileSync(p, s.replace(m[0], `${m[1]}${m[2]}'${m[3]}',\n${m[2]}'${modulePath}'${m[4]}`));
+  const src = readFileSync(p, 'utf8');
+  const list = src.match(/(var urlsToCache = \[\n)([\s\S]*?)(\n\];)/);
+  if (!list) anchorFail('`var urlsToCache = [ ... ];` in sw.js');
+  const pad = (list[2].match(/^(\s*)/) || ['', '  '])[1];
+  const line = `${pad}'${modulePath}'`;
+  const body = where === 'head' ? line + ',\n' + list[2] : list[2] + ',\n' + line;
+  writeFileSync(p, src.replace(list[0], list[1] + body + list[3]));
 };
+
+/* EVERY PATH THE TREE PROMISES MUST EXIST, and this is the assertion that closes the
+ * sharpest hole an adversarial pass found. Three paths changed, one per kind, both other
+ * checks green — and the registry named `./games/synth-v2.js` while the file written was
+ * `./games/synth.js`. `install` does `cache.addAll(urlsToCache)`, one 404 rejects the
+ * whole call, install fails and the new worker goes redundant. The old check called that
+ * tree THREE. check-assets asks whether a referenced asset is CACHED, never whether it
+ * EXISTS, and check-syntax only parses the files that are there. */
+function missingPaths(dir) {
+  const out = [];
+  const html = readFileSync(join(dir, 'index.html'), 'utf8');
+  const sw = readFileSync(join(dir, 'sw.js'), 'utf8');
+  const reg = html.match(/var GAMES\s*=\s*\[([\s\S]*?)\n\];/);
+  for (const m of (reg ? [...reg[1].matchAll(/module\s*:\s*'([^']+)'/g)] : [])) {
+    const rel = m[1].replace(/^\.\//, '');
+    if (!existsSync(join(dir, rel))) out.push(`the registry names a module that does not exist: ${m[1]}`);
+  }
+  const list = sw.match(/var urlsToCache = \[([\s\S]*?)\];/);
+  for (const m of (list ? [...list[1].matchAll(/'([^']+)'/g)] : [])) {
+    const raw = m[1];
+    const rel = raw === './' ? 'index.html' : raw.replace(/^\.\//, '');
+    if (!existsSync(join(dir, rel))) out.push(`urlsToCache names a file that does not exist: ${raw} — install's addAll would reject and the worker would go redundant`);
+  }
+  return out;
+}
 
 function runCheck(script, dir) {
   try {
@@ -94,12 +190,14 @@ function runCheck(script, dir) {
   } catch (e) { return { ok: false, out: ((e.stdout || '') + (e.stderr || '')).trim() }; }
 }
 
-function scenario(label, { mutate, expect, expectReason }) {
-  const dir = stage();
+function scenario(label, { mutate, expect, expectReason, deep = false }) {
+  const staged = stage();
+  const dir = staged.dir;
   try {
     mutate(dir);
-    git(dir, 'add', '-A');
-    const changed = git(dir, 'diff', '--cached', '--name-only').split('\n').filter(Boolean);
+    staged.git('add', '-A');
+    const changed = staged.git('diff', '--cached', '--name-only').split('\n').filter(Boolean)
+      .filter((f) => f !== '.gitconfig-none');
     const kinds = {
       module: changed.filter((f) => /^games\/[a-z0-9-]+\.js$/.test(f)),
       registry: changed.filter((f) => f === 'index.html'),
@@ -114,9 +212,17 @@ function scenario(label, { mutate, expect, expectReason }) {
     if (kinds.cache.length !== 1) reasons.push('the urlsToCache line (sw.js) was not added');
     if (other.length) reasons.push(`something outside the three kinds changed: ${other.join(', ')}`);
 
-    /* THE HALF A COUNT CANNOT DO. A fourth edit hiding inside a file already counted
-     * shows up here and nowhere else: the tree has three changed paths and does not work. */
-    for (const [script, name] of [['check-syntax.mjs', 'check-syntax'], ['check-assets.mjs', 'check-assets']]) {
+    /* THE HALF A COUNT CANNOT DO — a fourth edit hiding inside a file already counted, or
+     * a three-path change that leaves the app broken. Three assertions, and each closes a
+     * hole an adversarial pass drove through the previous version. */
+    for (const m of missingPaths(dir)) reasons.push(m);
+    const scripts = [['check-syntax.mjs', 'check-syntax'], ['check-assets.mjs', 'check-assets']];
+    /* check-mutations HOLDS THE ANCHORS. It is where PUP-WO-0200's real fourth thing
+     * lived — an A14 anchor pinned to the last urlsToCache entry, which every added game
+     * moved. Run only on the positive scenario, because it costs eight seconds and the
+     * negative controls are already decided by cheaper reasons. */
+    if (deep) scripts.push(['check-mutations.mjs', 'check-mutations']);
+    for (const [script, name] of scripts) {
       const r = runCheck(script, dir);
       if (!r.ok) reasons.push(`the resulting tree FAILS ${name}, so a fourth edit is needed to finish the job`);
     }
@@ -132,58 +238,84 @@ function scenario(label, { mutate, expect, expectReason }) {
 }
 
 console.log('=== THE GATE — a game added the way the invariant says, and nothing else ===');
-scenario('module + registry entry + urlsToCache line', {
-  mutate: (d) => { addModule(d, 'synth'); addRegistryEntry(d, 'synth', './games/synth.js'); addCacheLine(d, './games/synth.js'); },
-  expect: 'THREE',
-});
+const ID = freeId();
+const MOD = `./games/${ID}.js`;
+console.log(`    (using the game id '${ID}', derived so it collides with nothing in games/ or GAMES)\n`);
+/* BOTH ENDS OF BOTH LISTS, AND THAT IS NOT THOROUGHNESS FOR ITS OWN SAKE.
+ *
+ * The first version inserted the registry entry at the head and the cache line after the
+ * first game — and an adversarial pass showed that a check which only ever inserts at one
+ * end CANNOT DISTURB AN ANCHOR PINNED TO THE OTHER. It replayed PUP-WO-0200's defect
+ * exactly: A14 re-anchored to the TAIL of urlsToCache, a game added, check 7 red on that
+ * tree, and this check still printing PASSED because its own insertion never moved the
+ * tail. I watched it happen after the first fix and it is why there are two runs here.
+ *
+ * A builder appends. PUP-WO-0300 appended Gyre after the placeholder, so `tail` is the
+ * realistic edit and `head` is the one that catches an anchor pinned the other way. The
+ * invariant has to hold wherever the line is put, so both are asserted. */
+for (const where of ['tail', 'head']) {
+  scenario(`module + registry entry + urlsToCache line, added at the ${where.toUpperCase()} of both lists`, {
+    mutate: (d) => { addModule(d, ID); addRegistryEntry(d, ID, MOD, where); addCacheLine(d, MOD, where); },
+    expect: 'THREE', deep: true,
+  });
+}
 
 console.log('\n=== IT MUST BE ABLE TO FAIL — a gate that cannot go red is not a gate ===');
 scenario('a game needing a FOURTH file (a helper module beside it)', {
   mutate: (d) => {
-    addModule(d, 'synth');
-    writeFileSync(join(d, 'games', 'synth-helper.js'), 'export default 1;\n');
-    addRegistryEntry(d, 'synth', './games/synth.js');
-    addCacheLine(d, './games/synth.js');
+    addModule(d, ID);
+    writeFileSync(join(d, 'games', ID + '-helper.js'), 'export default 1;\n');
+    addRegistryEntry(d, ID, MOD, 'tail'); addCacheLine(d, MOD, 'tail');
   },
   expect: 'FAILS', expectReason: 'paths changed, not three',
 });
-scenario('a game whose asset needs a fourth thing nobody counted', {
-  /* THE SHAPE PUP-WO-0200 ACTUALLY FOUND, generalised: three paths change, the count is
-   * satisfied, and the app is broken until something else is edited too. Here the module
-   * ships an image the worker was never told to cache; a cold offline device shows a
-   * broken picture with the diff still reading three. Only running the repo's own checks
-   * against the result can see it. */
+scenario('a game that also ships an asset file', {
+  /* Four paths, so the COUNT catches this one — and saying so is the point. An earlier
+   * version of this scenario claimed to be "the shape PUP-WO-0200 actually found: three
+   * paths change, the count is satisfied, only the checks can see it", and every clause
+   * was false of what it did. A comment claiming coverage the case does not deliver is
+   * the defect this whole file exists to prevent, so the claim moved to the scenarios
+   * that actually demonstrate it — the two marked ISOLATES below. */
   mutate: (d) => {
-    addModule(d, 'synth');
-    writeFileSync(join(d, 'games', 'synth.png'), 'not really a png\n');
-    addRegistryEntry(d, 'synth', './games/synth.js');
-    addCacheLine(d, './games/synth.js');
+    addModule(d, ID);
+    writeFileSync(join(d, 'games', ID + '.png'), 'not really a png\n');
+    addRegistryEntry(d, ID, MOD, 'tail'); addCacheLine(d, MOD, 'tail');
   },
   expect: 'FAILS', expectReason: 'paths changed, not three',
 });
 scenario('the registry entry names a module that was never written', {
-  mutate: (d) => { addRegistryEntry(d, 'synth', './games/synth.js'); addCacheLine(d, './games/synth.js'); },
-  /* The COUNT catches this one, and it is worth knowing which assertion did: I predicted
-   * check-assets and was wrong. check-assets asks whether every referenced local asset is
-   * CACHED, not whether it EXISTS — a distinction the scenario made visible and no
-   * reasoning about it had. Recorded rather than quietly re-pointed. */
+  mutate: (d) => { addRegistryEntry(d, ID, MOD, 'tail'); addCacheLine(d, MOD, 'tail'); },
   expect: 'FAILS', expectReason: 'paths changed, not three',
 });
-scenario('three paths, all three kinds, and the module does not parse', {
-  /* THE ONE THAT ISOLATES THE SECOND ASSERTION. Exactly three paths change and every
-   * kind is right, so the COUNT is satisfied and says the invariant holds — while the
-   * tree is broken and a fourth edit is owed. Only running the repo's own checks against
-   * the result can see it, which is the whole reason this file does. */
+scenario('ISOLATES the tree assertion — three paths, three kinds, module does not parse', {
   mutate: (d) => {
-    writeFileSync(join(d, 'games', 'synth.js'), 'export default function mount(host, api) {\n');
-    addRegistryEntry(d, 'synth', './games/synth.js');
-    addCacheLine(d, './games/synth.js');
+    writeFileSync(join(d, 'games', ID + '.js'), 'export default function mount(host, api) {\n');
+    addRegistryEntry(d, ID, MOD, 'tail'); addCacheLine(d, MOD, 'tail');
   },
   expect: 'FAILS', expectReason: 'check-syntax',
 });
-scenario('the module and the entry, but the worker was never told about it', {
-  mutate: (d) => { addModule(d, 'synth'); addRegistryEntry(d, 'synth', './games/synth.js'); },
+scenario('ISOLATES check-assets — three paths, three kinds, sw.js edited but no cache line', {
+  /* The control the file did not have. Four of five negative controls were decided by the
+   * COUNT, so the check-assets branch was never exercised on a tree the count would pass —
+   * nothing here would have noticed if it stopped working. §6.1 member 1. */
+  mutate: (d) => {
+    addModule(d, ID); addRegistryEntry(d, ID, MOD, 'tail');
+    writeFileSync(join(d, 'sw.js'), readFileSync(join(d, 'sw.js'), 'utf8') + '\n/* touched, but the game was never added to urlsToCache */\n');
+  },
   expect: 'FAILS', expectReason: 'check-assets',
+});
+scenario('ISOLATES path existence — three paths, three kinds, the module path is WRONG', {
+  /* THE SHARPEST HOLE THE PASS FOUND, and the one that had nothing to catch it. The
+   * registry and urlsToCache name ./games/<id>-v2.js while the file written is
+   * ./games/<id>.js. Three paths, one per kind, check-syntax green, check-assets green —
+   * and install's addAll rejects on the 404, install fails, and the new worker goes
+   * redundant. The old check called this tree THREE. */
+  mutate: (d) => {
+    addModule(d, ID);
+    addRegistryEntry(d, ID, `./games/${ID}-v2.js`, 'tail');
+    addCacheLine(d, `./games/${ID}-v2.js`, 'tail');
+  },
+  expect: 'FAILS', expectReason: 'does not exist',
 });
 
 console.log('\n' + '='.repeat(78));
@@ -197,10 +329,12 @@ if (bad.length) {
   console.error('  That is an architecture decision, not a build step — flag it, do not absorb it.');
   process.exit(1);
 }
+const reds = results.filter((r) => r.expect === 'FAILS').length;
 console.log(`CHECK 18 PASSED at ${COMMIT.slice(0, 12)} — ${results.length} scenarios, all as predicted.`);
 console.log('  Adding a game touches its module, one registry entry and one urlsToCache');
 console.log('  line — demonstrated on this tree, on this run, in a throwaway repository,');
 console.log('  rather than remembered from a commit message about a tree that is gone.');
-console.log('  And it goes red four ways, including the one a COUNT cannot see: three');
-console.log('  paths changed and the resulting tree failing the repo\'s own checks, which');
-console.log('  means a fourth edit is still owed.');
+console.log(`  And it goes red ${reds} ways — a count computed here rather than typed, because`);
+console.log('  a hand-written one next to a list that changes is this repo\'s own recurring');
+console.log('  defect. Three of those are cases a COUNT cannot see: three paths changed and');
+console.log('  the resulting tree broken, which means a fourth edit is still owed.');
