@@ -228,13 +228,51 @@ Drive real touch via CDP `Input.dispatchTouchEvent` with `hasTouch:true`, as
    survives and no green suite sees.
 6. **THE OTHER INVISIBLE ONE.** Clear a line, place another piece **inside 280ms**, and
    the new candies are **visible**. The source strands `clearing` forever here.
-7. **REMOUNT.** Mount `blocks`, play, back, mount `blocks` again — **a fresh board, not a
-   retained one.** The shell imports with a bare specifier and no cache-buster, so one
-   module URL serves every entry.
+7. **REMOUNT.** ~~Mount `blocks`, play, back, mount `blocks` again — **a fresh board, not
+   a retained one.**~~
+
+   > **STRUCK AND REPLACED 2026-09-02. As worded this failed a CORRECT implementation.**
+   > §1.3 mandates save/load through `api.save`, so a second mount **resumes** — that is
+   > the feature, not the defect. The item's rationale was about **module-scope** state,
+   > which is a different thing from **saved** state, and conflating them made the check
+   > assert the opposite of the ruling. **CC-B found it and built the discriminating
+   > version, which is the right one:**
+   >
+   > **7a.** Play, leave, **CLEAR STORAGE**, remount → **the board is empty.** Anything
+   > that survives an empty store came back *through the module*, which is the hazard
+   > §0.4 actually names.
+   > **7b.** §0.4's own case directly: **two entry ids against one module URL, mounted
+   > simultaneously**, asserted to hold independent boards — 6×6/36 cells and 8×8/64
+   > cells, neither overriding the other.
+   >
+   > **AND THE RESUME IS RULED IN, because Scotty asked for it and I failed to write it
+   > down.** His scope: *"we could allow the current board to be durable between app
+   > closes in a way that everything else doesn't — so it can be picked up and put back
+   > down."* It does not cross `PUP-WO-0701` §1.0a, which ruled media in-memory because a
+   > purge **fails open and leaves a child's photos on disk**: a board is ~64 integers and
+   > three shapes, under a kilobyte, carrying nothing sensitive, so that reasoning does
+   > not reach this data class. **I ruled this hours before dispatching and it never
+   > entered the work order** — §1.3 implements it by accident and §3 item 7 contradicted
+   > it. Ratified-and-unwritten, in the document written to stop that.
 8. **TEARDOWN.** No live rAF, timer, observer, listener or **pointer capture** — the source
    takes one on every tray grab (`BlockPopGame.tsx:249`) and `games/gyre.js:1319-1333`'s
    `release()` is the precedent to copy, in its stated order.
-9. **A PLANTED DEFECT PER NEW CHECK.** Each of 1–8 must be shown going **red** against a
+9. **THE TERMINAL STATE — reachable by PLAY, never by calling the seam.** *(Ruled
+   2026-09-02 after CC-B recorded it OPEN rather than faking it, which was the right
+   call.)* The deterministic all-dot deal makes game-over **unreachable by
+   construction**: a 1×1 fits wherever any cell is free, and `pickFittingPiece` hard-
+   filters to shapes that fit, so it can never deal an unfittable piece. **The terminal
+   state is exactly the state where that filter returns EMPTY.**
+
+   **So drive the filter, do not bypass it: exclude the 1×1 from the test pool.** With
+   the smallest shape a domino, a board holding only isolated single gaps has nothing
+   that fits, the filter comes back empty, and the real code path fires — in a handful
+   of placements rather than 36. **Assert: one affordance inside `host`, no text on it,
+   one tap resumes play, and `api.close()` is never called.** *(Northstar invariant 5,
+   §8.5.)* **A terminal state reached by calling the seam proves the affordance renders
+   and proves nothing about whether the game can arrive there.**
+
+10. **A PLANTED DEFECT PER NEW CHECK.** Each of 1–8 must be shown going **red** against a
    deliberately broken build. A check never seen red is not a check.
 
 ---
@@ -252,8 +290,20 @@ Drive real touch via CDP `Input.dispatchTouchEvent` with `hasTouch:true`, as
   not preservation.** Seam 1 (no module state) is delivered here by §1.3 and is the one
   that is free. **Set `players: 1` on the entry** — `PUP-WO-0000.md`'s sample sets
   `players: 2` on `blocks-big` and copying it badges a single-player game as two-player.
-- **`sw.js`, `manifest.json`, the icons, `games/gyre.js`, `games/hello.js`** — diff to
-  empty. **`PUP-WO-0111`'s shell change is not yours either.**
+- **`manifest.json`, the icons, `games/gyre.js`, `games/hello.js`** — diff to empty.
+  **`PUP-WO-0111`'s shell change is not yours either.**
+- **`sw.js` — EXACTLY ONE ADDED LINE, the `urlsToCache` entry for `games/blockpop.js`,
+  and nothing else.** *(AMENDED 2026-09-02, and the amendment is a correction to this
+  work order rather than a concession. **The first draft ordered `sw.js` to diff to empty
+  while §2 invariant 6 required "one `urlsToCache` line" — and `urlsToCache` is
+  `sw.js:317`, occurring nowhere in `index.html`. The fence forbade the only file the
+  required edit can be made in.** Three things agree on the intent and only the location
+  was wrong: invariant 6 demands the line, `check-gate2.mjs:212` fails with the literal
+  string `'the urlsToCache line (sw.js) was not added'`, and
+  `check-cache-name-controls.mjs:154` names the scenario "a NEW GAME: module + registry
+  entry + one `urlsToCache` line". **Found by CC-B, who crossed it and reported rather
+  than stalling — which is the correct handling of a work order that contradicts itself,
+  and this is the fourth of mine to do it.*)*
 
 ---
 
@@ -279,8 +329,9 @@ a gates line, and **what was deliberately not built**.
 - Any design that needs a change to §8.1/§8.2/§8.3/§8.8 — back to CC-A, then to the
   findings document. Never quietly here.
 - Any network call, any `AudioContext`, any `document.head` append, any module-scope state.
-- Any touched file outside `games/blockpop.js`, `index.html`'s registry + `urlsToCache`
-  line, and `.github/ci/demo-blockpop.mjs`.
+- Any touched file outside `games/blockpop.js`, **`index.html`'s registry entry**,
+  **`sw.js`'s single `urlsToCache` line**, and `.github/ci/demo-blockpop.mjs`.
+  *(Corrected: the first draft located `urlsToCache` in `index.html`. It is `sw.js:317`.)*
 - **A check you cannot show going red.**
 - Anything that makes the terminal state reachable without a one-tap way back.
 
