@@ -156,7 +156,26 @@ private temp directory, own browser, no shared state — so they now run in lane
 core count. **21 seconds.** It was the single largest avoidable cost in this work order and
 it would have been paid on every CI run.
 
-### 3.4 Three times I read a defect in the check as a defect in the game
+### 3.4 The local suite was not the gate, and CI proved it
+
+Both new checks passed locally and **CI failed anyway.** The `checks` job carries
+`timeout-minutes: 10`, the pre-existing checks already consume ~9 minutes of it, and the
+red proofs needed several more — so the job was **cancelled mid-step at 10m17s**. It
+reported as a step failure with no failing assertion, which is the least useful shape a
+red run can take: nothing was wrong with either check.
+
+Two causes, both mine. The timeout is now 20 minutes, matching the sibling job. And the
+lane count was `cores - 2`, which on GitHub's **2-core** runner is the floor of 2 — I had
+sized a **browser-bound** workload by CPU count, on the assumption of a 16-core machine
+that is only true of my own. These scenarios spend their lives waiting on Chromium, so the
+floor is now 4 regardless of cores (~1.2GB against the runner's 7GB).
+
+**I would not have found this by looking.** The step that failed was not either of mine —
+the log's `FAIL` lines all belong to check 7's own red proofs, which are supposed to be
+there. Recorded because `local-suite-is-not-the-gate` is a lesson this project has already
+written down once, and it still cost a red run.
+
+### 3.5 Three times I read a defect in the check as a defect in the game
 
 `placeAt` first tapped slot 0 unconditionally; the tray refills only when **all three**
 slots are empty, so two placements in three landed on nothing and section 4 reported "the

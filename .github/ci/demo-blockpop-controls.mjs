@@ -29,7 +29,12 @@ const results = [];
  * that is ten minutes of wall clock to prove twenty-four one-line defects, and every one
  * of them is independent: a private temp directory, its own browser, no shared state.
  * Bounded by cores so a CI runner is not oversubscribed. */
-const LANES = Math.max(2, Math.min(6, (cpus() || { length: 4 }).length - 2));
+/* Lanes, not cores. These scenarios are BROWSER-BOUND, not CPU-bound — each one spends
+ * its life waiting on Chromium to boot, paint and answer, so a 2-core CI runner still
+ * profits from more of them in flight than it has cores. `cores - 2` gave the floor of 2
+ * on GitHub's 2-core runner and the step took long enough to blow the job's timeout.
+ * Four Chromium instances is ~1.2GB against the runner's 7GB. */
+const LANES = Math.max(4, Math.min(8, (cpus() || { length: 4 }).length));
 
 /* Replace exactly once, and fail loudly if the anchor moved — a control that silently
  * plants nothing reports GREEN and reads as "the check cannot catch this". */

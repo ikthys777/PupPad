@@ -91,7 +91,12 @@ jobs:
     # actually runs, permanently, and cannot rot the way the last one did.)
     name: Checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # RAISED FROM 10 BY PUP-WO-0400. The job was cancelled mid-step at 10m17s once
+    # checks 21 and 21-controls were added: the pre-existing checks already take ~9
+    # minutes, and 25 browser-driven red proofs need several more. The cancellation
+    # reported as a step failure with no failing assertion, which is the least useful
+    # shape a red run can take — nothing was wrong with the checks.
+    timeout-minutes: 20
     steps:
       - name: Check out the full history
         uses: actions/checkout@v7
