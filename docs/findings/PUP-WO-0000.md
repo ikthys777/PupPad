@@ -1247,6 +1247,44 @@ corroborated here from geometry alone.
 - **A closed drawer is still reachable** — the handle is unaffected, and §8.2
   obligation 2's exit is outside `host` and untouched either way.
 
+**HOW TO BUILD IT, BECAUSE THE ONE-CHARACTER VERSION IS THE REGRESSION.** *(CC-B
+raised the precedence; CC-A verified it and found the count wrong.)* There is a
+persisted layer the ruling above did not account for. `index.html:2597` defines
+`OPEN_KEY = 'pupctl:' + entry.id + ':open'` — **per entry, verified, so there is no
+cross-game bleed, and `blocks`/`blocks-big` get separate keys even though they share
+one module URL.** The precedence must be:
+
+| stored `'0'` or `'1'` | **the child's choice wins** |
+| absent | `seam.controlsOpen === true`, else **closed** |
+
+**This is the layering `games/gyre.js:956` already states one level down — "defaults <
+entry params < what the child saved" — so cite it there rather than inventing it
+twice.** The naive flip of `!== '0'` to `=== '1'` makes *absent* mean closed for every
+game, **silently discarding `controlsOpen` and handing Gyre a closed drawer on a fresh
+install** — the exact regression this ruling exists to prevent, arriving through the
+one-character change that looks like the ruling.
+
+**AND THERE ARE THREE `true`s, NOT ONE.** The initializer `var startOpen = true`
+(`index.html:2610`), the comparison `!== '0'` (`:2611`), **and `:2611`'s own `catch`,
+which also sets `true`** — so a `localStorage` throw in private mode opens the drawer
+too. A flip that changes only the comparison leaves a fresh install and a throwing
+storage both defaulting open. **All three resolve to the seam's answer, or two of them
+disagree with the ruling in silence.**
+
+**`controlsOpen` IS MODULE-SUPPLIED AND THEREFORE UNTRUSTED, exactly as the seam is.**
+`mountControlPanel`'s four guards already tolerate an absent seam, a wrong type and a
+throwing getter and return `null` for each; reading `controlsOpen` gets the same
+discipline — **absent is not an error, a getter that throws must not take the panel
+down with it, and the test is `=== true` rather than truthiness**, so a module
+returning a string or a number does not accidentally opt in.
+
+**AND THE SPLIT MATTERS, BECAUSE THE FIRST SENTENCE INVITES THE SECOND.** *"The flip
+fixed the fleet"* is **true** — measured closed at 869x412: drawer `display:none`, 0%
+coverage, the full 412 of field, **off-screen controls 8 → 0**, and the dice back
+on-screen at 84,314. *"The flip fixed Gyre"* is **false**: Gyre opts in, so it still
+carries the 321px band, the 406-in-319 mandatory pan, and the dice at y=-7.
+**`PUP-WO-0111` still owns the entire open-state problem.**
+
 **AND THE OPEN-DRAWER FIELD IS 91px, WHICH IS A DIFFERENT ANSWER FOR A BACKGROUND THAN
 FOR A BOARD.** Gyre survives an open drawer because a particle field still reads as a
 particle field in 91px. **A board game does not.** Even with the assists in the drawer,
