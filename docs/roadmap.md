@@ -312,15 +312,52 @@ and P1 themselves to merge. From P2 onward the rule applies without exception.
 
 **Work orders:**
 
-- **`PUP-WO-0400` — Engine port.** Port `engine.ts`, `pieces.ts`, `types.ts` to
-  vanilla. **All board mutation flows through one reducer taking
-  `{playerId, action}`; trays are an array keyed by player** — architecture §7
-  seams 1–3, installed now because retrofitting them later is expensive.
-- **`PUP-WO-0401` — Board and tray UI.** Render in PupPad's theme: dark radar
-  field, paw-and-label header matching the existing panels, pieces recoloured to
-  the console's button glow palette, `doSound()` in place of the source's own audio.
-- **`PUP-WO-0402` — Modes and end state.** Both `easy` 6×6 and `classic` 8×8.
-  Soften game-over to a single play-again affordance.
+> ### ⚠ THE SEAM WAS RE-CUT ON 2026-09-02 AND **AWAITS SCOTTY'S RATIFICATION**
+>
+> **This is CC-A's change to a ratified document and it is not ratified.** It is
+> written here because the work orders already ship under the new cut, so leaving the
+> old text standing meant **the roadmap and the work orders described different things
+> under the same three numbers** — which is what asking "what do you mean by P4 re-cut"
+> exposed, three merges after I claimed it was recorded.
+>
+> **What changed:** the count is still three; **the seam moved to the playable
+> minimum.** The original first work order — a bare engine port — is **unreachable**
+> (§8.1 allows one default export and `openGames` is the only mount path, so an engine
+> alone cannot be exercised) and **unprovable** (`.github/ci/package.json` carries
+> playwright only; there is no unit runner). Two independent analyses rejected it for
+> that reason, neither having read this document.
+>
+> **What makes the split safe** is mechanical: **the registry entry goes last**
+> (`check-gate2.mjs:112`), the picker loops `GAMES` only, and check 2 requires a
+> `urlsToCache` line only for paths referenced from `index.html`. **A module can land,
+> be scanned by CI, and be invisible to the child** — which matters because a merge is
+> a deploy.
+
+- **`PUP-WO-0400` — Playable, easy 6×6, end to end.** ✅ **MERGED `e1509f4`.** The
+  engine, board, tray, drag and tap, line clear, and a terminal state that resumes in
+  one tap. *(`{playerId, action}` and per-player trays are architecture §7 seams 2–3,
+  and §7's own cost correction says they are **net new construction, not preservation**
+  — deferred to P5, where they are actually needed. Seam 1, no module state, is
+  delivered here and is the one that was free. Entries carry `players: 1`.)*
+- **`PUP-WO-0401` — Classic 8×8 and the four assists.** The second registry entry, and
+  Undo / Hint / Help / Mix as `action` descriptors on the §8.8 panel seam. **Blocked on
+  `PUP-WO-0111`**: a panel that mounts before the `controlsOpen` flip covers 321px of a
+  412px screen. **This is also where losing becomes reachable** — see gate 2's
+  correction below.
+- **`PUP-WO-0402` — The look and the voice.** *(Dispatched.)* The drag-ghost desync,
+  the tray piece sizing, **`api.sound` in place of the source's own audio**, and the
+  console's own vocabulary: **the paw, the radar rings and sweep, the button-glow
+  palette.**
+
+  > **THOSE LAST FOUR WERE ALREADY IN THIS DOCUMENT, RATIFIED, AND I RE-CUT THE PHASE
+  > WITHOUT CARRYING THEM.** The original `PUP-WO-0401` read *"dark radar field,
+  > paw-and-label header matching the existing panels, pieces recoloured to the
+  > console's button glow palette, `doSound()` in place of the source's own audio."*
+  > **All four.** `PUP-WO-0400` shipped without them because my re-cut work order did
+  > not ask for them, and I then wrote them into `PUP-WO-0402` as **fresh scope from
+  > Scotty's device feedback** — when he was asking for something this roadmap had
+  > already promised him. **A re-cut inherits the old cut's content or it silently drops
+  > it**, and nothing in the process reads the phase it is re-cutting.
 
 **Exit gate.**
 1. Both board sizes playable start to finish.
