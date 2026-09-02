@@ -93,9 +93,40 @@ by the same `ResizeObserver` the board already uses, **capped so a 1x1 does not 
 absurd** — and **never smaller than the board cell**, because a target you drag *from*
 must not be smaller than the target you drag *to*.
 
-**Acceptance:** at all three fleet viewports, for every shape in the pool, the drawn
-piece's bounding box occupies **at least half** the slot's shorter axis, and **no piece
-cell is smaller than the board cell.**
+**ACCEPTANCE, AMENDED — MY SECOND CLAUSE WAS GEOMETRICALLY IMPOSSIBLE AND IS STRUCK.**
+*(CC-B measured the whole pool before building and showed it cannot be met; I verified
+the impossibility independently before accepting.)*
+
+> ~~no piece cell is smaller than the board cell~~ — **a 4-long piece at a 64px board
+> cell needs 256px on its long axis, and a slot that holds both a 4-wide and a 4-tall
+> piece is square at 256px. Three of those is 768px against a 357 x 396 tray column.**
+> No arrangement works: stacked gives 357x132 (fails 4-tall), side-by-side gives 119x396
+> (fails 4-wide), a 2x2 grid with one cell empty gives 178x198 and **fails both** — it
+> only halves the shortfall. **I wrote the clause as a principle and never checked
+> whether the geometry admits it.** That is the same error as the terminal-state ruling,
+> two work orders running.
+
+**What holds instead, all four asserted:**
+1. **Every shape fills at least half the slot's shorter axis** — true for all twelve,
+   including the two the formula cannot improve.
+2. **The cell is maximal for the slot on both axes** — per-axis, not `max(w,h,3)`. The
+   source divides by the LARGER axis and floors the divisor at 3, which is why a **1x1
+   dot is drawn at a third of the room it has**: 35px today, 107 available.
+3. **No shape is ever smaller than it is today.**
+4. **ONE SHARED CAP, at 1.35x the board cell (~86px).** *(CC-B's, and it is the right
+   instinct.)* Without it a dot reaches 107 while a `quad-v` sits at 26 and the tray
+   stops reading as one set of objects.
+
+**THE TRADEOFF, NAMED RATHER THAN HIDDEN: the drawn size no longer encodes the piece's
+cell count.** A dot at 86px is larger than the 64px hole it fills. That is accepted
+because a three-year-old matches **shape**, not scale, and a bigger grab target is worth
+more than a size cue he is probably not reading.
+
+**AND ONE ASSERTION THAT MAKES THE TRADEOFF SAFE, which §1 is the reason for: the drag
+ghost must render at the BOARD cell size, never the tray cell size.** It already does —
+`moveDragEl` uses the board's `cellPx` — so this is a check to hold it, not a change. The
+piece therefore *resizes on pickup*, which is the standard idiom and is honest: what
+follows the finger is the size it will be when it lands.
 
 ---
 

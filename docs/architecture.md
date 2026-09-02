@@ -196,6 +196,27 @@ sw.js          asset manifest + cache identity
 a controlled target. PupPad publishes to GitHub Pages from a branch. §6 records how
 the firebreak is reconstructed rather than assumed.
 
+**A NUMBER IS ONLY EVER CORRECT AT THE VIEWPORT IT WAS MEASURED AT.** *(Ruled
+2026-09-02. **CC-B's, and they stated the uncomfortable half themselves:** the drawer
+cap they shipped and replaced was this defect, and *"the reason the column rule survived
+is not that I was careful, it is that a column rule has no height term to get wrong."*)*
+
+**Every height-derived constant in this project was measured on a device that is not in
+the fleet.** Three landed in one day, all correct at 768-820 and all wrong at 411:
+
+| the number | what it was for | at 411 |
+|---|---|---|
+| the drawer's old `max-height` cap | keep the drawer below the exit's band | replaced by the **column** rule, which held |
+| the picker's `padding:140px` top | clear `#gameBack`'s 64px hit box | **140 + 240 + 24 = 404 of 411** — one row clips, two are impossible |
+| `pickerTile`'s `min(42vw,240px)` | size a square tile | **no `vh` term at all** — sized off the plentiful axis, never the binding one |
+
+**The rule is not "prefer constraints" as taste.** A constraint expressed as a *relation*
+— stay right of the exit's column, take the available height — carries no viewport in it
+and cannot be invalidated by one. A constraint expressed as a *number* is a measurement,
+and a measurement is only true where it was taken. **When a layout value must be a
+number, say which viewport it was measured at, at the line, so the next reader can tell
+whether it still holds.**
+
 ## 6. Runtime and deployment
 
 **Runtime.** Static assets over HTTPS. No server, no backend for games. Supabase is
