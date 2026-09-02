@@ -244,6 +244,19 @@ that catches it and simply never sampled at that moment**; it does now.
   lift; kept across a mechanism change they clamped the base and **silently disabled the
   new mechanism**, and the taper's own red proof passed against a build with no taper.
   "Keep the existing guard" is an instruction that needs the question *derived under what?*
+- **CI went red at 15m19s and it was not a check failing.** Check 21 outgrew the job's
+  budget. Two fixes, both real engineering rather than another raise: the monotonicity walk
+  did **one page round-trip per 2px step** — 204 per viewport on top of the touch
+  dispatches — and now records in-page for one round-trip total; and the three fleet
+  viewports, which are independent contexts, now run concurrently with buffered output.
+  **2m30s → 1m36s**, same assertions.
+- **THE HARNESS WENT FLAKY AND THAT IS WORSE THAN SLOW.** With the lanes at eight and each
+  scenario now spawning three viewports, a lane became three browsers and up to
+  twenty-four ran at once. **Two consecutive control runs failed on different scenarios** —
+  the signature of contention, not a defect — because the sections with real time in them
+  (§6 lands a piece *inside* 280ms, §13 samples a 620ms sweep at 90ms) slipped. Lanes are
+  four, and stability was confirmed by running the whole set twice rather than declaring
+  it fixed. **A gate that is red at random is one people learn to ignore.**
 - **`elementFromPoint` cannot see a decorative overlay**, because `pointer-events:none`
   removes it from hit testing. A green haze laid over the board as a `::after` was green.
   §13 now asks for pseudo-layers by name as well.

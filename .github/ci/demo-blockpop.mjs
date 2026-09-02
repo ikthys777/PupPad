@@ -38,6 +38,21 @@ const failures = [];
 const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m, d) => { failures.push({ m, d }); console.log(`  FAIL  ${m}`); if (d) console.log(`        ${d}`); };
 const info = (m) => console.log(`  ....  ${m}`);
+
+/* THE THREE FLEET VIEWPORTS ARE INDEPENDENT — separate browser contexts, separate pages,
+ * no shared state — and running them one after another was the largest single cost in this
+ * file, which is what pushed the CI job past its budget. They run concurrently now, with
+ * each viewport's lines buffered and flushed in fleet order so a green log still reads
+ * top to bottom. */
+function buffered() {
+  const lines = [];
+  return {
+    ok: (m) => lines.push(['ok', m]),
+    bad: (m, d) => lines.push(['bad', m, d]),
+    info: (m) => lines.push(['info', m]),
+    flush: () => { for (const [k, m, d] of lines) (k === 'ok' ? ok : k === 'bad' ? (x) => bad(x, d) : info)(m); },
+  };
+}
 /* A section that throws used to abort every section after it and exit with a stack
  * trace, which is a crash, not a verdict — and a planted-defect run could not tell
  * "the check caught it" from "the check fell over". Contain each section. */
@@ -308,7 +323,9 @@ try {
   /* ------------------------------------------------------------------ */
   await section(1, async () => {
   console.log('--- 1. every game-owned control is on the screen, and none of it is in the exit\'s column ---');
-  for (const vp of FLEET) {
+  const reports1 = await Promise.all(FLEET.map(async (vp) => {
+    const R = buffered();
+    const ok = R.ok, bad = R.bad;
     const s = await shape(vp);
     await s.openBlocks({ clearStorage: true });
     const geo = await s.page.evaluate(() => {
@@ -387,7 +404,9 @@ try {
       bad(`${vp.name}: the smallest tray piece cell is ${play.minPieceCell.toFixed(1)}px — the tray reads as empty`);
     else ok(`${vp.name} ${vp.width}x${vp.height}: all ${geo.out.length} controls on screen, none in the exit's column; board ${Math.round(geo.board.w)}x${Math.round(geo.board.h)} square at x=${Math.round(geo.board.x)}, cell ${play.cell.toFixed(1)}px (>= ${MIN_TOUCH}), ${play.pieceCells} tray piece cells, smallest ${play.minPieceCell.toFixed(1)}px, and no painted word anywhere inside host`);
     await s.ctx.close();
-  }
+    return R;
+  }));
+  for (const R of reports1) R.flush();
   });
 
   /* ------------------------------------------------------------------ */
@@ -1048,7 +1067,9 @@ try {
      * THE LIFT IS MEASURED, NOT ASSUMED. Writing `cellPx * 0.9` here would recreate the
      * exact defect being fixed — two expressions that must agree, one of them in the
      * test. It is derived from the picture: lift = fingerY - paintedCentreY. */
-    for (const vp of FLEET) {
+    const reports11 = await Promise.all(FLEET.map(async (vp) => {
+      const R = buffered();
+      const ok = R.ok, bad = R.bad, info = R.info;
       const s = await shape(vp, PIN_DOT);
       await s.openBlocks({ clearStorage: true });
       const geom = await s.page.evaluate(() => {
@@ -1110,11 +1131,11 @@ try {
 
       /* 1. Derive the lift from the picture itself. */
       const probe = await dragTo((await s.rect('.bp-well[data-row="3"][data-col="3"]')).cx, geom.top + geom.cell * 3.5, true);
-      if (!probe.painted) { bad(`${vp.name}: nothing was painted under the finger — .bp-drag was hidden mid-drag`); await s.ctx.close(); continue; }
+      if (!probe.painted) { bad(`${vp.name}: nothing was painted under the finger — .bp-drag was hidden mid-drag`); await s.ctx.close(); return R; }
       if (!probe.painted.drawn) { bad(`${vp.name}: the dragged piece draws no cells at all — an empty box follows the finger`,
-        'every measurement here reads that box\'s rect, and a rect comes from style, not from ink'); await s.ctx.close(); continue; }
+        'every measurement here reads that box\'s rect, and a rect comes from style, not from ink'); await s.ctx.close(); return R; }
       if (probe.painted.minCell < geom.cell * 0.5) { bad(`${vp.name}: the dragged piece renders at ${probe.painted.minCell.toFixed(1)}px against a ${geom.cell.toFixed(1)}px board cell`,
-        'what follows the finger must be the size it will land at'); await s.ctx.close(); continue; }
+        'what follows the finger must be the size it will land at'); await s.ctx.close(); return R; }
       if (Math.abs(probe.painted.inkW - probe.painted.w) > geom.cell * 0.35 || Math.abs(probe.painted.inkH - probe.painted.h) > geom.cell * 0.35)
         bad(`${vp.name}: the drag proxy's box (${probe.painted.w.toFixed(0)}x${probe.painted.h.toFixed(0)}) is not the size of what it draws (${probe.painted.inkW.toFixed(0)}x${probe.painted.inkH.toFixed(0)})`,
           'the rect this section measures is not the picture the child sees');
@@ -1291,20 +1312,33 @@ try {
         const gm = await grabPoint();
         await s.touch('touchStart', [{ x: gm.x, y: gm.y, id: 1 }]);
         const colX = (await s.rect('.bp-well[data-row="0"][data-col="2"]')).cx;
-        const seen = [];
-        for (let y = 4; y <= geom.vh - 2; y += 2) {
-          await s.touch('touchMove', [{ x: colX, y, id: 1 }]);
-          const sample = await s.page.evaluate(() => {
-            const g = [...document.querySelectorAll('.bp-ghost')].filter((e) => !e.hidden);
+        /* RECORD IN THE PAGE, DO NOT POLL IT. The first version did one page.evaluate per
+         * 2px step — 204 CDP round trips per viewport on top of the 204 touch dispatches,
+         * and it was the single largest contributor to check 21 blowing CI's job budget.
+         * A pointermove listener samples the same state at the same instants for one
+         * round trip total. Same measurement, same resolution. */
+        await s.page.evaluate(() => {
+          window.__walk = [];
+          window.__walkOn = (e) => {
+            const g = [...document.querySelectorAll('.bp-ghost')].filter((x) => !x.hidden);
             const d = document.querySelector('.bp-drag');
             const dr = d && !d.hidden ? d.getBoundingClientRect() : null;
-            return {
-              row: g.length ? Math.min(...g.map((e) => +e.closest('.bp-well').getAttribute('data-row'))) : null,
+            window.__walk.push({
+              y: e.clientY,
+              row: g.length ? Math.min(...g.map((x) => +x.closest('.bp-well').getAttribute('data-row'))) : null,
               cy: dr ? dr.y + dr.height / 2 : null,
-            };
-          });
-          seen.push({ y, row: sample.row, cy: sample.cy });
+            });
+          };
+          window.addEventListener('pointermove', window.__walkOn);
+        });
+        for (let y = 4; y <= geom.vh - 2; y += 2) {
+          await s.touch('touchMove', [{ x: colX, y, id: 1 }]);
         }
+        await s.wait(60);
+        const seen = await s.page.evaluate(() => {
+          window.removeEventListener('pointermove', window.__walkOn);
+          return window.__walk.slice();
+        });
         /* Leave the grid before lifting so this measurement places nothing. */
         const awayM = await s.page.evaluate(() => {
           const t = document.querySelector('.bp-tray').getBoundingClientRect();
@@ -1382,7 +1416,9 @@ try {
         `the lift is ${LIFT.toFixed(1)}px on a ${geom.cell.toFixed(1)}px cell and the finger cannot leave the glass`);
       else ok(`${vp.name}: every one of the 6 rows is reachable and answers within at least ${MIN_TOUCH}px; bands ${bands.map((b) => b.toFixed(0)).join('/')}px, lift ${LIFT.toFixed(1)}px`);
       await s.ctx.close();
-    }
+      return R;
+    }));
+    for (const R of reports11) R.flush();
   }
   });
 
@@ -1699,7 +1735,9 @@ try {
       { name: 'quad-h', cells: [[0, 0], [0, 1], [0, 2], [0, 3]] },
       { name: 'tri-v', cells: [[0, 0], [1, 0], [2, 0]] },
     ];
-    for (const vp of FLEET) {
+    const reports14 = await Promise.all(FLEET.map(async (vp) => {
+      const R = buffered();
+      const ok = R.ok, bad = R.bad, info = R.info;
       const s = await shape(vp, PIN_DOT);
       const rows = [];
       for (let g = 0; g < SHAPES.length; g += 3) {
@@ -1754,7 +1792,9 @@ try {
         info(`${vp.name}: smallest tray cell is ${minCell.name} at ${minCell.cell.toFixed(0)}px against a ${minCell.boardCell.toFixed(0)}px board cell — a 4-long piece cannot reach it in a ${minCell.slotW.toFixed(0)}x${minCell.slotH.toFixed(0)} slot`);
       }
       await s.ctx.close();
-    }
+      return R;
+    }));
+    for (const R of reports14) R.flush();
   }
   });
 

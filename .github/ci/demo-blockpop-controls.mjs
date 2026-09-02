@@ -34,7 +34,14 @@ const results = [];
  * profits from more of them in flight than it has cores. `cores - 2` gave the floor of 2
  * on GitHub's 2-core runner and the step took long enough to blow the job's timeout.
  * Four Chromium instances is ~1.2GB against the runner's 7GB. */
-const LANES = Math.max(4, Math.min(8, (cpus() || { length: 4 }).length));
+/* FOUR, NOT EIGHT, AND THE REASON IS THE CHECK ITSELF. Each scenario now runs its own
+ * fleet viewports concurrently, so a lane is up to three browsers rather than one — at
+ * eight lanes that is twenty-four, and the sections with real time in them (§6 places a
+ * piece INSIDE a 280ms window, §13 samples a 620ms sweep at 90ms) started slipping under
+ * the contention. TWO CONSECUTIVE RUNS FAILED ON DIFFERENT SCENARIOS, which is the
+ * signature of a flaky harness rather than a defect — and a gate that is red at random is
+ * one people learn to ignore. */
+const LANES = 4;
 
 /* Replace exactly once, and fail loudly if the anchor moved — a control that silently
  * plants nothing reports GREEN and reads as "the check cannot catch this". */
