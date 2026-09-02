@@ -119,6 +119,31 @@ export default function mount(host, api) {
   var CLEAR_MS = reduced ? 40 : 280;
   var POP_MS = reduced ? 60 : 320;
 
+  /* THE VOICE. §8.3: the shell holds exactly one AudioContext, lazily made and never
+   * handed out, so every cue goes through api.sound and THIS MODULE CONSTRUCTS NONE.
+   * The source's audio.ts builds its own and never closes it; it does not come across.
+   *
+   * Every name here is one of doSound's twelve banks (index.html:174-186). An unknown
+   * name is a silent no-op that nothing reports, so inventing one ships a feature that
+   * does nothing — PUP-WO-0400 shipped `api.sound('pop')` for exactly one commit.
+   *
+   * THE ILLEGAL CUE IS `lock`, WHICH IS TWO SOFT DESCENDING SINE NOTES, AND THAT IS THE
+   * point: `error` and `alert` are square waves and they BITE. A buzz for "I changed my
+   * mind" teaches a three-year-old that the controls punish him for exploring. The
+   * loudest thing in the game should be the reward, not the refusal. */
+  var CUE = Object.freeze({
+    lift: 'keyTap',    /* a piece leaves the tray — 1800Hz for 30ms, barely there */
+    drop: 'tap',       /* it lands */
+    refuse: 'lock',    /* it cannot go there. Quiet, on purpose. */
+    clear: 'twinkle',  /* a line goes. The reward, and the loudest cue. */
+    deal: 'blip'       /* the tray refills */
+  });
+
+  function cue(name) {
+    if (dead) return;
+    try { api.sound(name); } catch (e) {}
+  }
+
   /* TAP SLOP — WIDENED FROM THE SOURCE'S 14, DELIBERATELY, AND THE NUMBER IS ASSERTED.
    * BlockPopGame.tsx:142/:153 gates tap-to-select on `dist < 14` and drops anything
    * longer into playInvalid() plus a shake. A three-year-old's tap slides further than
@@ -127,6 +152,11 @@ export default function mount(host, api) {
    * a little under half a 66px cell: wide enough that a wobbling finger still selects,
    * narrow enough that a deliberate drag across a cell boundary is still a drag. */
   var TAP_SLOP = 32;
+
+  /* §1a. The padding inside a tray slot, and the shared ceiling on a tray cell as a
+   * multiple of the BOARD cell. One name each, measured at no viewport. */
+  var TRAY_INSET = 8;
+  var TRAY_CELL_CAP = 1.35;
 
   /* --- engine (engine.ts), pure, no DOM --------------------------------- */
 
@@ -415,8 +445,19 @@ export default function mount(host, api) {
    * document.body.children (index.html:2743-2744), so a head <style> would survive
    * teardown UNREPORTED — a silent §8.1 violation that no check would see. */
   style.textContent = [
+    /* THE RADAR AS GROUND, NOT AS FOREGROUND. PupPad's console draws four concentric
+     * rings and a crosshair at rgba(0,255,136,0.12) (index.html:3120-3132). These are the
+     * same rings as repeating gradients — no elements, no image file, painted once — so
+     * the game sits on the console's own surface rather than on a blank rectangle. They
+     * are BEHIND the board, whose wells are opaque, so they cost invariant 1 nothing:
+     * the filled-vs-empty contrast is candy against well, and neither changes. */
     '.bp-root{position:absolute;inset:0;display:flex;flex-direction:row;align-items:center;',
     'gap:10px;padding:8px;box-sizing:border-box;',
+    'background-image:repeating-radial-gradient(circle at 78% 50%,',
+    'rgba(0,255,136,.055) 0 1px,rgba(0,0,0,0) 1px 52px),',
+    'linear-gradient(rgba(0,255,136,.035),rgba(0,255,136,.035));',
+    'background-size:auto,100% 1px;background-position:0 0,0 50%;',
+    'background-repeat:no-repeat,no-repeat;',
     /* THE LEFT INSET IS THE EXIT'S COLUMN, NOT PADDING. #gameBack is position:fixed at
      * x 10-74, 64px square, forever. Copied from the control panel's own gutter rather
      * than written as a bare 84: landscape phones put punch-holes and curved edges into
@@ -445,6 +486,35 @@ export default function mount(host, api) {
     'border-radius:999px;background:rgb(255 255 255 / .32);pointer-events:none}',
     '.bp-candy[hidden]{display:none}',
 
+    /* THE PAW, STAMPED INTO A CLEARED CELL AS IT GOES. pawSVG(size, colour) is the
+     * console's own five-ellipse mark (index.html:41) and it takes its colour as an
+     * argument, so the stamp is the candy's own colour rather than new art. Called, never
+     * edited — §7.
+     *
+     * IT MUST BE RELEASED ON EVERY PATH OUT OF THE DYING STATE, and there are two: the
+     * cell empties, or a piece lands on it inside the clear window and it goes straight
+     * back to live. The second was missed, so a stamp stayed over a live candy — harmless
+     * only because this keyframe ends at opacity 0 with `forwards`. Do not rely on that:
+     * end it visible and the paw masks the cell. */
+    '.bp-stamp{position:absolute;inset:12%;display:block;background-repeat:no-repeat;',
+    'background-position:center;background-size:contain;pointer-events:none;opacity:0}',
+    '.bp-stamp[hidden]{display:none}',
+    '.bp-stamped{animation:bp-stamp ' + CLEAR_MS + 'ms ease-out forwards}',
+    '@keyframes bp-stamp{0%{opacity:0;transform:scale(.35)}',
+    '35%{opacity:.95;transform:scale(1.05)}100%{opacity:0;transform:scale(1.6)}}',
+
+    /* THE SWEEP ARM, ONCE, ON A LINE CLEAR — the console's @keyframes sweep is 5s linear
+     * INFINITE (index.html:18) and an infinite rotation under a drag is exactly the sort
+     * of thing that stutters an S10+. This is one turn, one element, only on the reward,
+     * and it is not created at all under prefersReducedMotion. */
+    '.bp-sweeparm{position:absolute;inset:0;pointer-events:none;z-index:3;',
+    'animation:bp-sweep 620ms linear 1 forwards}',
+    '.bp-sweeparm i{position:absolute;top:50%;left:50%;width:52%;height:2px;margin-top:-1px;',
+    'transform-origin:left center;background:rgba(0,255,136,.55);',
+    'box-shadow:0 0 12px rgba(0,255,136,.85);display:block}',
+    '@keyframes bp-sweep{from{transform:rotate(0deg);opacity:.9}',
+    '80%{opacity:.5}to{transform:rotate(360deg);opacity:0}}',
+
     '.bp-pop{animation:bp-pop ' + POP_MS + 'ms cubic-bezier(.34,1.36,.64,1) both}',
     '.bp-clear{animation:bp-clear ' + CLEAR_MS + 'ms ease-in forwards}',
     '@keyframes bp-pop{from{transform:scale(.6);opacity:.4}to{transform:scale(1);opacity:1}}',
@@ -472,7 +542,19 @@ export default function mount(host, api) {
     'background:linear-gradient(165deg,var(--bp-l) 0%,var(--bp-b) 46%,var(--bp-d) 100%);',
     'box-shadow:inset 0 2px 0 rgb(255 255 255 / .42),0 2px 0 var(--bp-d)}',
 
-    '.bp-drag{position:absolute;left:0;top:0;pointer-events:none;z-index:5;',
+    /* `display:grid` IS LOAD-BEARING AND ITS ABSENCE MADE THE DRAGGED PIECE INVISIBLE.
+     * fillPieceBox sets grid-template-columns/rows on whatever box it is handed, and the
+     * tray's `.bp-piece` carries `display:grid`. This one did not, so the template was
+     * inert, the piece cell had no intrinsic size, and it laid out at 0x0 inside a 64x64
+     * box. THE BOX WAS THE RIGHT SIZE AND IN THE RIGHT PLACE AND CONTAINED NOTHING.
+     *
+     * Scotty's words were "the piece should be visible under your finger when you drag so
+     * it's visually coherent" — TWO requirements, and the first one was literal. This work
+     * order read it as the coherence defect alone and fixed that; the piece was never
+     * drawn at all. Every check measured `.bp-drag`'s bounding rect, and a rect comes from
+     * style, not from ink, so nothing saw it. Check 21 §11 now asserts the proxy actually
+     * contains drawn cells and that their union is the box it measures. */
+    '.bp-drag{position:absolute;left:0;top:0;display:grid;pointer-events:none;z-index:5;',
     'will-change:transform;filter:drop-shadow(0 6px 10px rgb(0 0 0 / .35))}',
 
     /* THE TERMINAL STATE'S ONE WAY BACK. §8.5 and invariant 5: a single affordance
@@ -533,8 +615,12 @@ export default function mount(host, api) {
     ghost.className = 'bp-ghost';
     ghost.hidden = true;
     well.appendChild(ghost);
+    var stamp = document.createElement('span');
+    stamp.className = 'bp-stamp';
+    stamp.hidden = true;
+    well.appendChild(stamp);
     grid.appendChild(well);
-    cells.push({ well: well, candy: candy, ghost: ghost, shown: 0, dying: false, ghostState: '' });
+    cells.push({ well: well, candy: candy, ghost: ghost, stamp: stamp, shown: 0, dying: false, ghostState: '' });
   }
 
   var slots = [];
@@ -552,6 +638,43 @@ export default function mount(host, api) {
   }
 
   var overlay = null;
+
+  /* The console's paw as a data URI, one per colour, built on demand and kept. No
+   * innerHTML, no image file, no urlsToCache line — invariant 3 is untouched. pawSVG is
+   * the shell's and is CALLED, not copied; if it is ever absent the stamp simply does
+   * not appear and the game is unchanged. */
+  var pawURL = Object.create(null);
+  function pawFor(color) {
+    var key = String(color);
+    if (pawURL[key]) return pawURL[key];
+    if (typeof pawSVG !== 'function') return '';
+    var ramp = CANDY[(color - 1) % CANDY.length];
+    var url = '';
+    try { url = 'url("data:image/svg+xml,' + encodeURIComponent(pawSVG(100, ramp.light)) + '")'; }
+    catch (e) { url = ''; }
+    pawURL[key] = url;
+    return url;
+  }
+
+  var sweepEl = null;
+  var sweepTimer = 0;
+  /* ONE TURN, ON THE REWARD ONLY, AND NOT AT ALL UNDER REDUCED MOTION. Re-entrant: a
+   * second clear inside the first sweep replaces it rather than stacking arms. */
+  function sweep() {
+    if (dead || reduced) return;
+    clearSweep();
+    sweepEl = document.createElement('div');
+    sweepEl.className = 'bp-sweeparm';
+    var arm = document.createElement('i');
+    sweepEl.appendChild(arm);
+    boardWrap.appendChild(sweepEl);
+    sweepTimer = setTimeout(function () { sweepTimer = 0; clearSweep(); }, 700);
+  }
+  function clearSweep() {
+    if (sweepTimer) { clearTimeout(sweepTimer); sweepTimer = 0; }
+    if (sweepEl && sweepEl.parentNode) sweepEl.parentNode.removeChild(sweepEl);
+    sweepEl = null;
+  }
 
   function paintCandyVars(el, color) {
     var ramp = CANDY[(color - 1) % CANDY.length];
@@ -610,6 +733,7 @@ export default function mount(host, api) {
     }
     var toPop = [];
     var toClear = [];
+    var toStamp = [];
     for (var i = 0; i < cells.length; i++) {
       var r = Math.floor(i / N);
       var c = i % N;
@@ -623,6 +747,8 @@ export default function mount(host, api) {
         if (st.shown !== 0) {
           st.candy.hidden = true;
           st.candy.classList.remove('bp-pop', 'bp-clear');
+          st.stamp.classList.remove('bp-stamped');
+          st.stamp.hidden = true;
           st.shown = 0;
           st.dying = false;
         }
@@ -631,20 +757,42 @@ export default function mount(host, api) {
       if (st.shown !== show || st.dying !== isDying) {
         if (st.shown !== show) paintCandyVars(st.candy, show);
         st.candy.hidden = false;
-        if (isDying) toClear.push(st.candy);
+        if (isDying) {
+          toClear.push(st.candy);
+          var url = pawFor(show);
+          if (url) {
+            st.stamp.style.backgroundImage = url;
+            st.stamp.hidden = false;
+            toStamp.push(st.stamp);
+          }
+        }
         else if (st.shown === 0) toPop.push(st.candy);
-        else st.candy.classList.remove('bp-clear');
+        else {
+          st.candy.classList.remove('bp-clear');
+          /* AND RELEASE THE STAMP. This is the one branch that reaches a cell which was
+           * dying and is now live again — a piece landed on it inside the 280ms window,
+           * which is exactly the move check 21 §6 exercises. It stripped the candy's
+           * clear class and left the paw's, so the stamp stayed parented over a LIVE
+           * candy. Invisible today only because @keyframes bp-stamp ends at opacity 0
+           * with `forwards`; anyone who ends it visible ships a paw masking a filled
+           * cell. It also made the comment above ("it cannot mask a filled cell") false
+           * as written, which is a comment claiming coverage that does not exist. */
+          st.stamp.classList.remove('bp-stamped');
+          st.stamp.hidden = true;
+        }
         st.shown = show;
         st.dying = isDying;
       }
     }
-    if (toPop.length || toClear.length) {
+    if (toPop.length || toClear.length || toStamp.length) {
       var m;
       for (m = 0; m < toPop.length; m++) toPop[m].classList.remove('bp-pop', 'bp-clear');
       for (m = 0; m < toClear.length; m++) toClear[m].classList.remove('bp-pop', 'bp-clear');
+      for (m = 0; m < toStamp.length; m++) toStamp[m].classList.remove('bp-stamped');
       void grid.offsetWidth;
       for (m = 0; m < toPop.length; m++) toPop[m].classList.add('bp-pop');
       for (m = 0; m < toClear.length; m++) toClear[m].classList.add('bp-clear');
+      for (m = 0; m < toStamp.length; m++) toStamp[m].classList.add('bp-stamped');
     }
     renderGhost();
   }
@@ -719,10 +867,34 @@ export default function mount(host, api) {
         s.box.style.height = '0px';
         continue;
       }
+      /* THE THING HE GRABS MUST NOT BE SMALLER THAN THE THING HE AIMS AT — and it was,
+       * by a factor of nearly two. The source's PieceTray divides by `max(w, h, 3)`: one
+       * divisor for both axes, floored at 3, against a hardcoded 88px that assumed its
+       * own 128px slot. In this port's 357x123 landscape slot a 1x1 dot was drawn at 35px
+       * beside a 64px board cell — the biggest, emptiest panel on the screen holding the
+       * smallest graphic. Scotty saw it on the device.
+       *
+       * PER AXIS, AGAINST THE MEASURED SLOT. The ResizeObserver already drives relayout,
+       * which calls renderTray(true), so this is measured on resize and not per render.
+       *
+       * THE CAP IS SHARED ON PURPOSE. Uncapped, a dot reaches 107px while a 4-tall piece
+       * sits at 26px and the tray stops reading as one set of objects; 1.35x the board
+       * cell keeps a dot a big friendly target without that.
+       *
+       * WHAT THIS CANNOT DO, measured and ruled rather than assumed: a piece cell can NOT
+       * always reach the board cell. A 4-long piece at 64px needs 256px on its long axis;
+       * a slot holding both a 4-wide and a 4-tall piece is square at 256px; three of those
+       * is 768px against a 357x396 tray column. CC-A verified the arrangement space
+       * independently and struck that clause. What holds instead is that every shape fills
+       * at least half the slot's shorter axis, and the GHOST resizes to the board cell on
+       * pickup — so drawn size in the tray never has to encode cell count. */
       var rect = s.slot.getBoundingClientRect();
-      var span = Math.max(p.w, p.h, 3);
-      var room = Math.min(rect.width || 120, rect.height || 120) - 16;
-      var cell = Math.max(8, Math.floor((room > 0 ? room : 88) / span));
+      var innerW = (rect.width || 120) - TRAY_INSET * 2;
+      var innerH = (rect.height || 120) - TRAY_INSET * 2;
+      var cap = cellPx > 0 ? cellPx * TRAY_CELL_CAP : 96;
+      var cell = Math.floor(Math.min(innerW / p.w, innerH / p.h));
+      if (cell > cap) cell = Math.floor(cap);
+      if (cell < 8) cell = 8;
       fillPieceBox(s.box, p, cell, 3);
     }
   }
@@ -773,13 +945,25 @@ export default function mount(host, api) {
 
     var t = [];
     for (var i = 0; i < tray.length; i++) t.push(i === index ? null : tray[i]);
-    if (trayEmpty(t)) t = dealTray(board, mode);
+    var refilled = false;
+    if (trayEmpty(t)) { t = dealTray(board, mode); refilled = true; }
     else t = rescueUnplaceable(board, t, mode);
     tray = t;
 
     selected = null;
     beginClear(cleared.cells);
     over = !anyTrayFits(board, tray);
+
+    /* THE CLEAR IS THE ONE EVENT WORTH A BUZZ, and it speaks over the drop rather than
+     * after it — a child who cleared a line should hear that, not the placement. */
+    if (lines > 0) {
+      cue(CUE.clear);
+      try { api.vibrate(18); } catch (e) {}
+      sweep();
+    } else {
+      cue(CUE.drop);
+    }
+    if (refilled) cue(CUE.deal);
 
     render();
     renderTray(true);
@@ -859,12 +1043,118 @@ export default function mount(host, api) {
     return { r: best[0], c: best[1] };
   }
 
+  /* THE LIFT IS ONE NUMBER AND BOTH HALVES OF THE DRAG READ IT.
+   *
+   * The piece is drawn above the finger so a three-year-old's palm is not covering the
+   * thing he is aiming. The first build lifted the PICTURE and resolved the DROP at the
+   * raw finger, so the piece was painted ~58px above the hole it fell into — very nearly
+   * a whole 64px cell of lie, in the interaction the entire game is made of. Scotty found
+   * it in minutes with a hand on the glass; twenty-five red-proven checks did not, because
+   * every drag assertion dispatched a touch at (x,y) and then asserted the cell at (x,y)
+   * filled. BOTH HALVES READ THE SAME NUMBER, so the ghost could have been painted
+   * anywhere on the screen and they would still have agreed — architecture §6.1 member 7.
+   *
+   * The layout reconnaissance had already ruled it: lift the ghost AND the hit point by
+   * the same amount, BOTH OR NEITHER. Not "neither" — that puts the piece back under his
+   * palm. So: one constant, and the only two expressions that consume it are moveDragEl
+   * and hitCell. Two expressions that must agree is the family this project has been
+   * bitten by four times; this is that family reduced to ONE NAME AND ONE DERIVATION.
+   * Precisely: `DRAG_LIFT_CELLS` has one consumer, `dragLiftPx()`, which has two —
+   * moveDragEl and hitCell. Neither of those two can drift from the other without
+   * changing the derivation both read.
+   *
+   * THE AMOUNT IS SCOTTY'S AND HE RULED IT ON 2026-09-02, given the measured trade.
+   * A lift silently costs REACH: the picture sits a lift above the finger, so to put it
+   * on the BOTTOM row the finger must go a lift below it, and the finger cannot leave the
+   * glass. band = viewportHeight - gridBottom + cell - lift, which at 412px of height and
+   * a 64px cell is 78 - lift. At 0.9 (57.6px, capped to 46) the bottom row answered inside
+   * 32px against 62-64px everywhere else — under the 44px minimum touch target check 21
+   * enforces on the board cells themselves, i.e. the game contradicting its own floor.
+   *
+   * ASKED TWICE, BY TWO SESSIONS, AND ANSWERED DIFFERENTLY BOTH TIMES — see FEEDBACK.md
+   * §1.4a. Offered keep-the-lift / cap-at-34 / decide-on-the-glass he chose the even board
+   * at 34px; offered a fourth option minutes later he chose THE TAPER, which refuses both
+   * horns. The taper is what shipped, so the constant stays at a full 0.9. */
+  var DRAG_LIFT_CELLS = 0.9;
+
+  /* The same 44px minimum touch target check 21 §1 applies to a board cell. */
+  var MIN_TOUCH_BAND = 44;
+
+  /* §1b. THE LIFT TAPERS TO NOTHING OVER THE LAST 1.5 CELLS OF GLASS. Full clearance
+   * where the child spends the game, easing away at the bottom edge where the finger runs
+   * out of screen — so the palm is kept off the piece in the middle of the board AND the
+   * bottom row still answers across a full band.
+   *
+   * 1.5 CELLS, NOT 1. The taper's steepness is base/span, and the drop resolves at
+   * y - lift(y), so the mapping's slope is 1 + base/span. A span equal to one cell is the
+   * obvious reading of "ease across the last row" and leaves no margin at all against a
+   * change in cell size — and cellPx is DERIVED FROM A MEASURED RECT, so it will change.
+   * §11 walks the glass in 2px steps and requires the resolved row to be non-decreasing,
+   * which is the assertion a bounding-rect check cannot fake — and it measures every
+   * row's band from that same walk rather than deriving it, because a band derived from
+   * one constant lift is a band for a mapping this game no longer has.
+   *
+   * THE SPAN IS 2.25 CELLS BECAUSE OF ARITHMETIC, NOT TASTE. Inside the taper the mapping
+   * compresses: slope = 1 + base/span, so a row answers across cell/slope of glass. For
+   * the bottom row to keep the 44px floor at a 64px cell and a 0.9-cell base,
+   * span >= base / (cell/MIN - 1) = 57.6 / 0.4545 = 127px, i.e. just under 2 cells. At 2.25
+   * the bottom row measured EXACTLY 44 — the floor with no margin — so 2.6. The measured bands are the guard; this is only how the number was
+   * chosen. */
+  var TAPER_CELLS = 2.6;
+
+  /* AND IT IS CAPPED BY GEOMETRY, BECAUSE A LIFT SILENTLY COSTS REACH.
+   * The picture sits a lift above the finger, so to put it on the BOTTOM row the finger
+   * must go a lift BELOW that row — and the finger cannot leave the glass. At 412px of
+   * height with a 64px cell, an uncapped 0.9-cell lift left the bottom row with a 15px
+   * touch band against 62px for every other row; measured, not reasoned. The cap is the
+   * distance from the last row's centre to the bottom of the screen, so no row is ever
+   * unreachable on any device, whatever DRAG_LIFT_CELLS is set to.
+   *
+   * The residual trade is real and is NOT ours to settle: every pixel of lift is a pixel
+   * off the bottom row's band. See FEEDBACK.md — the amount is Scotty's, on the glass. */
+  /* ONE DERIVATION, TWO CONSUMERS, CALLED WITH THE SAME y. moveDragEl and hitCell are the
+   * only callers and both hand it the raw client y of the same event. If they ever pass
+   * different arguments this is the original defect again wearing a taper. */
+  function dragLiftPx(y) {
+    var want = cellPx * DRAG_LIFT_CELLS;
+    var rect = gridRect();
+    var vh = window.innerHeight || 0;
+    /* Two ceilings, both geometric, both derived from the glass rather than chosen.
+     * First: the last row's centre must be reachable at all. Second, and stricter: no
+     * row's touch band may fall under the project's minimum touch target. Kept alongside
+     * the taper rather than replaced by it — they guard different devices. */
+    var span = cellPx * TAPER_CELLS;
+    /* THE CAPS ASSUME A CONSTANT LIFT AND THE TAPER IS NOT ONE. Both were derived for a
+     * lift that is the same everywhere: the reach cap holds the last row's centre
+     * touchable, the floor cap holds its band at the minimum. A taper that reaches zero
+     * at the bottom edge guarantees BOTH by construction — and leaving them in place
+     * clamped the base to 34px, so the taper did no work and its own red proofs passed
+     * against a build with no taper at all. They stay as the guard for the degenerate
+     * case where the taper is switched off. */
+    if (!(span > 0)) {
+      var reach = vh - (rect.bottom - cellPx * 0.5);
+      var floor = vh - rect.bottom + cellPx - MIN_TOUCH_BAND;
+      var cap = Math.min(reach, floor);
+      if (cap > 0 && want > cap) want = cap;
+      return want > 0 ? want : 0;
+    }
+    if (want < 0) want = 0;
+    if (typeof y !== 'number' || !isFinite(y)) return want;
+    var f = (vh - y) / span;
+    if (f > 1) f = 1;
+    if (f < 0) f = 0;
+    return want * f;
+  }
+
   function hitCell(x, y, d) {
     var rect = gridRect();
     var pad = 10;
-    if (x < rect.left - pad || x > rect.right + pad || y < rect.top - pad || y > rect.bottom + pad) return null;
+    /* Resolved at the point the PICTURE occupies, not at the finger — and the off-grid
+     * tolerance is measured against that same lifted point, or it drifts by the lift. */
+    var ly = y - dragLiftPx(y);
+    if (x < rect.left - pad || x > rect.right + pad || ly < rect.top - pad || ly > rect.bottom + pad) return null;
     var col = Math.floor(((x - rect.left) / rect.width) * N) - d.grabC;
-    var row = Math.floor(((y - rect.top) / rect.height) * N) - d.grabR;
+    var row = Math.floor(((ly - rect.top) / rect.height) * N) - d.grabR;
     return { row: row, col: col, valid: canPlace(board, d.piece.cells, row, col) };
   }
 
@@ -873,7 +1163,7 @@ export default function mount(host, api) {
     var w = drag.piece.w * cellPx;
     var h = drag.piece.h * cellPx;
     var ox = x - rr.left - (drag.grabC + 0.5) * cellPx;
-    var oy = y - rr.top - (drag.grabR + 0.5) * cellPx - cellPx * 0.9;
+    var oy = y - rr.top - (drag.grabR + 0.5) * cellPx - dragLiftPx(y);
     dragEl.style.width = w + 'px';
     dragEl.style.height = h + 'px';
     dragEl.style.transform = 'translate(' + ox + 'px,' + oy + 'px)';
@@ -919,6 +1209,7 @@ export default function mount(host, api) {
       index: index, piece: piece, grabR: g.r, grabC: g.c,
       startX: ev.clientX, startY: ev.clientY, hover: null, pointerId: pid
     };
+    cue(CUE.lift);
     fillPieceBox(dragEl, piece, Math.max(8, Math.floor(cellPx) - 3), 3);
     dragEl.hidden = false;
     moveDragEl(ev.clientX, ev.clientY);
@@ -947,12 +1238,16 @@ export default function mount(host, api) {
     var dist = Math.hypot(x - d.startX, y - d.startY);
     var hover = hitCell(x, y, d);
     if (hover && hover.valid && place(d.index, hover.row, hover.col)) {
+      /* place() has already spoken — the clear, or the drop. */
       /* No sound here. Audio is PUP-WO-0402's (§4), and the shell owns the only
        * AudioContext (§8.3) — a call to api.sound with a name outside doSound's twelve
        * banks is a silent no-op that reads like a feature. */
     } else if (dist < TAP_SLOP) {
       /* A TAP, NOT A FAILED DRAG. See TAP_SLOP. */
       selected = selected === d.index ? null : d.index;
+      cue(CUE.lift);
+    } else {
+      cue(CUE.refuse);
     }
     renderGhost();
     renderTray(false);
@@ -965,6 +1260,7 @@ export default function mount(host, api) {
     if (!piece) return;
     if (ev.cancelable) ev.preventDefault();
     if (canPlace(board, piece.cells, row, col)) place(selected, row, col);
+    else cue(CUE.refuse);
   }
 
   for (var wi = 0; wi < cells.length; wi++) {
@@ -1028,6 +1324,7 @@ export default function mount(host, api) {
     dead = true;
     if (clearTimer) { clearTimeout(clearTimer); clearTimer = 0; }
     clearingCells = null;
+    clearSweep();
     if (ro) { try { ro.disconnect(); } catch (e) {} ro = null; }
     for (var i = 0; i < listeners.length; i++) {
       try { listeners[i][0].removeEventListener(listeners[i][1], listeners[i][2], listeners[i][3]); } catch (e) {}

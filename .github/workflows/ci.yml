@@ -107,7 +107,15 @@ jobs:
     # Second trap: the comment at the `publish` job says `needs: checks` means "every
     # check in this file", which is true today and false the moment a check moves out.
     # Two expressions that must agree, created by the split. Correctness over wall clock.
-    timeout-minutes: 15
+    # 15 -> 20. The job reached 14m37s with check 21 alone at ~3 minutes, and every
+    # remaining lever inside this file has been pulled: the monotonicity walk records
+    # in-page instead of polling per step, the fleet viewports run concurrently, and the
+    # red proofs run in lanes. THE SPLIT CC-A REJECTED IS NOW THE RIGHT ANSWER and its two
+    # traps are named above — a fourth job is not in publish's `needs`, and the publish
+    # job's comment asserting "every check in this file" goes stale the moment one moves.
+    # Doing it is careful work, not forbidden work; this raise buys the room to do it
+    # deliberately rather than under a red run.
+    timeout-minutes: 20
     steps:
       - name: Check out the full history
         uses: actions/checkout@v7

@@ -34,7 +34,14 @@ const results = [];
  * profits from more of them in flight than it has cores. `cores - 2` gave the floor of 2
  * on GitHub's 2-core runner and the step took long enough to blow the job's timeout.
  * Four Chromium instances is ~1.2GB against the runner's 7GB. */
-const LANES = Math.max(4, Math.min(8, (cpus() || { length: 4 }).length));
+/* FOUR, NOT EIGHT, AND THE REASON IS THE CHECK ITSELF. Each scenario now runs its own
+ * fleet viewports concurrently, so a lane is up to three browsers rather than one — at
+ * eight lanes that is twenty-four, and the sections with real time in them (§6 places a
+ * piece INSIDE a 280ms window, §13 samples a 620ms sweep at 90ms) started slipping under
+ * the contention. TWO CONSECUTIVE RUNS FAILED ON DIFFERENT SCENARIOS, which is the
+ * signature of a flaky harness rather than a defect — and a gate that is red at random is
+ * one people learn to ignore. */
+const LANES = 4;
 
 /* Replace exactly once, and fail loudly if the anchor moved — a control that silently
  * plants nothing reports GREEN and reads as "the check cannot catch this". */
@@ -79,8 +86,11 @@ async function scenario(section, label, { mutate, expectText }) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-  const pass = observed === 'RED';
-  results.push({ section, label, observed, pass, detail });
+  /* RETURNED, NOT PUSHED. The lanes run concurrently and the first version read
+   * `results.length` to find where its own record landed — a shared counter two lanes
+   * can read the same value of, which duplicated one scenario's row five times and lost
+   * four others. A race in the harness that reports on races. */
+  return { section, label, observed, pass: observed === 'RED', detail };
 }
 
 /* Collected first, run in lanes, reported in declaration order so the output is stable
@@ -99,7 +109,7 @@ plan(1, 'the left gutter is a bare 8px, so the board runs under #gameBack', {
 plan(2, 'hitCell never reports a legal drop', {
   mutate: (s) => sub(s, 'return { row: row, col: col, valid: canPlace(board, d.piece.cells, row, col) };',
     'return { row: row, col: col, valid: false };'),
-  expectText: 'a legal drop did not fill exactly one cell',
+  expectText: 'not the cells the ghost previewed',
 });
 
 /* 3 — the source's own gate, restored. */
@@ -123,10 +133,7 @@ plan(5, 'every pointermove repaints the board and re-pops every candy', {
      * the trailing `else`, and the module then fails to parse — which the control
      * harness correctly refused to score as "the check caught the defect". */
     let out = sub(s, '      if (st.shown !== show || st.dying !== isDying) {', '      if (show !== 0) {');
-    out = sub(out, `        if (isDying) toClear.push(st.candy);
-        else if (st.shown === 0) toPop.push(st.candy);
-        else st.candy.classList.remove('bp-clear');`, `        if (isDying) toClear.push(st.candy);
-        else toPop.push(st.candy);`);
+    out = sub(out, '        else if (st.shown === 0) toPop.push(st.candy);', '        else if (true) toPop.push(st.candy);');
     out = sub(out, `    moveDragEl(ev.clientX, ev.clientY);
     drag.hover = hitCell(ev.clientX, ev.clientY, drag);
     renderGhost();`, `    moveDragEl(ev.clientX, ev.clientY);
@@ -200,16 +207,19 @@ plan(1, 'a word is painted inside host', {
 });
 
 plan(1, 'the tray renders 1px pieces — three empty boxes', {
-  mutate: (s) => sub(s, '      var cell = Math.max(8, Math.floor((room > 0 ? room : 88) / span));',
-    '      var cell = 1;'),
+  mutate: (s) => sub(s, '      if (cell < 8) cell = 8;', '      cell = 1;'),
   expectText: 'tray piece cell',
 });
 
-plan(2, 'grabCell divides the SLOT, not the piece — a 3-wide piece is unaimable', {
-  mutate: (s) => sub(s, `    var pbox = target.querySelector('.bp-piece');
-    var rect = (pbox || target).getBoundingClientRect();
-    if (!rect.width || !rect.height) rect = target.getBoundingClientRect();`,
-    '    var rect = target.getBoundingClientRect();'),
+/* The original plant here reverted grabCell to dividing the SLOT rather than the piece.
+ * IT NO LONGER MANIFESTS, and that is a result rather than a problem: §1a's tray sizing
+ * grew the piece box from ~114px to ~264px of a 371px slot, so the slot's own column
+ * boundaries now fall inside the piece and the grab lands in the right column either way.
+ * The §1a fix incidentally cured it. Planted instead is the defect the assertion is
+ * actually written against — a grab offset that ignores where the finger went. */
+plan(2, 'the grab always takes the piece\'s first cell, wherever the finger landed', {
+  mutate: (s) => sub(s, '    var g = grabCell(rect, piece, ev.clientX, ev.clientY);',
+    '    var g = { r: piece.cells[0][0], c: piece.cells[0][1] };'),
   expectText: 'the ghost did not move with the grab point',
 });
 
@@ -298,21 +308,206 @@ plan(10, 'the terminal state paints a word', {
   expectText: 'paints a word',
 });
 
-console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time.\n`);
+/* ------------------------------------------------------------------------
+ * PUP-WO-0402 §1 — the defect a human found and no check could see.
+ * §5 requires the plant to BE a defect: a plant that changes whether the file
+ * parses is testing the loader, not the check.
+ * ---------------------------------------------------------------------- */
+
+plan(11, 'the drop resolves at the finger while the piece is painted above it', {
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx(y);', '    var ly = y;'),
+  expectText: 'lands in',
+});
+
+plan(11, 'the picture is lifted and the hit point is lifted by a DIFFERENT amount', {
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx(y);', '    var ly = y - dragLiftPx(y) * 0.5;'),
+  expectText: 'lands in',
+});
+
+plan(11, 'the lift does not taper, so the bottom row loses its touch band', {
+  mutate: (s) => sub(s, '    var f = (vh - y) / span;', '    var f = 1;'),
+  expectText: 'answer within only',
+});
+
+/* THE INVERSION THE MONOTONICITY WALK EXISTS FOR — and note the SIGN, because the work
+ * order had it the other way. A taper that SHEDS lift as the finger descends gives the
+ * mapping slope 1 + base/span, which can never invert however steep it is. It only runs
+ * backwards when the lift GROWS toward the bottom faster than the finger travels: slope
+ * 1 - base/span, negative once span < base. That is what is planted — growth over the
+ * last half-cell, base 57.6 against span 32. Confined inside one row, so the row-level
+ * clause cannot see it; the picture's own y can. */
+plan(11, 'the lift grows toward the bottom faster than the finger travels', {
+  mutate: (s) => {
+    let out = sub(s, '  var TAPER_CELLS = 2.6;', '  var TAPER_CELLS = 0.5;');
+    out = sub(out, '    var f = (vh - y) / span;', '    var f = (y - (vh - span)) / span;');
+    return out;
+  },
+  expectText: 'moves UP the board as the finger moves DOWN',
+});
+
+plan(11, 'moveDragEl and hitCell pass different y to the one derivation', {
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx(y);', '    var ly = y - dragLiftPx(y - 40);'),
+  expectText: 'lands in',
+});
+
+/* ------------------------------------------------------------------------
+ * PUP-WO-0402 §2 (the voice) and §3 (the flair).
+ * ---------------------------------------------------------------------- */
+
+plan(12, 'a cue names a bank that does not exist, so it never plays', {
+  mutate: (s) => sub(s, "    clear: 'twinkle',", "    clear: 'sparkle',"),
+  expectText: 'name a bank that does not exist',
+});
+
+plan(12, 'the line clear is silent', {
+  mutate: (s) => sub(s, '      cue(CUE.clear);', '      void CUE;'),
+  expectText: 'does not play the reward cue',
+});
+
+plan(12, 'the line clear does not buzz', {
+  mutate: (s) => sub(s, '      try { api.vibrate(18); } catch (e) {}', '      /* no buzz */'),
+  expectText: 'did not buzz',
+});
+
+plan(12, 'the refusal bites — a square-wave error cue', {
+  mutate: (s) => sub(s, "    refuse: 'lock',", "    refuse: 'error',"),
+  expectText: 'harsh cue',
+});
+
+plan(12, 'the refused drop is silent, so nothing tells him it was refused', {
+  mutate: (s) => sub(s, '    else cue(CUE.refuse);', '    else void CUE;'),
+  expectText: 'no refusal cue at all',
+});
+
+plan(12, 'the module builds its own AudioContext', {
+  mutate: (s) => sub(s, '  function cue(name) {\n    if (dead) return;',
+    '  var ownCtx = null;\n  function cue(name) {\n    if (dead) return;\n    try { if (!ownCtx) ownCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}'),
+  expectText: 'constructed 1 AudioContext',
+});
+
+plan(13, 'the paw stamp is never drawn', {
+  mutate: (s) => sub(s, '    if (typeof pawSVG !== \'function\') return \'\';', '    return \'\';'),
+  expectText: 'stamped no paw',
+});
+
+plan(13, 'the sweep never runs on a clear', {
+  mutate: (s) => sub(s, '      sweep();', '      void 0;'),
+  expectText: 'ran no sweep',
+});
+
+plan(13, 'the sweep is left on the board instead of being cleaned up', {
+  mutate: (s) => sub(s, '    sweepTimer = setTimeout(function () { sweepTimer = 0; clearSweep(); }, 700);', '    sweepTimer = 0;'),
+  expectText: 'outlived the clear',
+});
+
+plan(13, 'reduced motion is ignored and the sweep runs anyway', {
+  mutate: (s) => sub(s, '    if (dead || reduced) return;', '    if (dead) return;'),
+  expectText: 'ran with prefers-reduced-motion set',
+});
+
+plan(13, 'the ground texture bleeds through the empty cells', {
+  mutate: (s) => sub(s, "    '-webkit-appearance:none;background:#e3cfa8;border-radius:22%;',",
+    "    '-webkit-appearance:none;background:rgba(227,207,168,.55);border-radius:22%;',"),
+  expectText: 'translucent',
+});
+
+/* ------------------------------------------------------------------------
+ * THE THIRD WAVE. A three-lens pass planted nine more defects against the 0402
+ * sections and check 21 went GREEN on every one — including an INVISIBLE DRAGGED
+ * PIECE, which turned out not to be a plant at all but the shipped state.
+ * ---------------------------------------------------------------------- */
+
+plan(11, 'the dragged piece draws nothing — an empty box follows the finger', {
+  mutate: (s) => sub(s, "    '.bp-drag{position:absolute;left:0;top:0;display:grid;pointer-events:none;z-index:5;',",
+    "    '.bp-drag{position:absolute;left:0;top:0;pointer-events:none;z-index:5;',"),
+  expectText: 'draws no cells at all',
+});
+
+plan(11, 'the picture is desynced from the drop HORIZONTALLY only', {
+  mutate: (s) => sub(s, '    var ox = x - rr.left - (drag.grabC + 0.5) * cellPx;',
+    '    var ox = x - rr.left - (drag.grabC + 0.5) * cellPx - 20;'),
+  expectText: 'the picture lands',
+});
+
+plan(11, 'the drag proxy is always one cell, whatever the piece', {
+  mutate: (s) => sub(s, '    var w = drag.piece.w * cellPx;\n    var h = drag.piece.h * cellPx;',
+    '    var w = cellPx;\n    var h = cellPx;'),
+  expectText: 'box against a',
+});
+
+plan(11, 'the ghost is painted a cell away from the well it marks', {
+  mutate: (s) => sub(s, "    '.bp-ghost{position:absolute;inset:8%;border-radius:22%;pointer-events:none}',",
+    "    '.bp-ghost{position:absolute;inset:8%;border-radius:22%;pointer-events:none;transform:translateY(-72%)}',"),
+  expectText: 'from the centre of the cell it marks',
+});
+
+plan(11, 'the last column is unreachable by drag', {
+  mutate: (s) => sub(s, '    var col = Math.floor(((x - rect.left) / rect.width) * N) - d.grabC;',
+    '    var col = Math.floor(((x - rect.left) / rect.width) * N) - d.grabC;\n    if (col >= N - 1) col = N - 2;'),
+  expectText: 'cannot be reached with the piece visible',
+});
+
+plan(12, 'the piece landing makes no sound of its own', {
+  mutate: (s) => sub(s, '    } else {\n      cue(CUE.drop);\n    }', '    }'),
+  expectText: 'makes no sound of its own',
+});
+
+plan(12, 'a cue is scheduled 2.5s out and speaks after the child has gone', {
+  mutate: (s) => sub(s, '    else cue(CUE.refuse);',
+    "    else { cue(CUE.refuse); setTimeout(function () { try { api.sound('chime'); } catch (e) {} }, 2500); }"),
+  expectText: 'after teardown',
+});
+
+plan(13, 'the stamp is a blank SVG rather than the paw', {
+  mutate: (s) => sub(s, 'encodeURIComponent(pawSVG(100, ramp.light))', "encodeURIComponent('<svg/>')"),
+  expectText: 'do not carry a paw',
+});
+
+plan(13, 'the radar ground is painted ON TOP of the board as a green haze', {
+  mutate: (s) => sub(s, "    '.bp-grid{display:grid;width:100%;height:100%;gap:3px}',",
+    "    '.bp-grid{display:grid;width:100%;height:100%;gap:3px}',\n" +
+    "    '.bp-boardwrap::after{content:\"\";position:absolute;inset:0;z-index:9;pointer-events:none;' +\n" +
+    "      'background:repeating-radial-gradient(circle at 50% 50%,rgba(0,255,136,.55) 0 2px,rgba(0,255,136,.42) 2px 40px)}',"),
+  expectText: 'decorative layer is drawn over the board',
+});
+
+plan(13, 'a paw is left stranded over a cell that came back to life', {
+  mutate: (s) => sub(s, `          st.stamp.classList.remove('bp-stamped');
+          st.stamp.hidden = true;
+        }`, '        }'),
+  expectText: 'stranded over it',
+});
+
+plan(14, 'the tray divides both axes by one span, as the source did', {
+  mutate: (s) => sub(s, '      var cell = Math.floor(Math.min(innerW / p.w, innerH / p.h));',
+    '      var cell = Math.floor(Math.min(innerW, innerH) / Math.max(p.w, p.h, 3));'),
+  expectText: 'half the slot',
+});
+
+console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time (the timing-sensitive ones alone, afterwards).\n`);
 {
-  let next = 0;
+  /* SECTIONS WITH REAL TIME IN THEM DO NOT SHARE THE MACHINE.
+   * §6 lands a piece INSIDE a 280ms window and §13 samples a 620ms sweep — both are wall
+   * clock, and under lane contention on a 2-core CI runner the CDP round trips alone
+   * outlast the window. They went red at random: two local runs failed on different
+   * scenarios, and CI failed on a third combination while CHECK 21 ITSELF PASSED. That is
+   * a harness defect, not a build one, and a gate that is red at random is one people
+   * learn to ignore. Everything else runs in lanes; these run alone, afterwards. */
+  const TIMED = new Set([6, 13]);
+  const parallel = QUEUE.map((q, i) => ({ q, i })).filter((x) => !TIMED.has(x.q.section));
+  const serial = QUEUE.map((q, i) => ({ q, i })).filter((x) => TIMED.has(x.q.section));
   const ordered = new Array(QUEUE.length);
+  let next = 0;
   const lane = async () => {
     for (;;) {
-      const i = next++;
-      if (i >= QUEUE.length) return;
-      const before = results.length;
-      await scenario(QUEUE[i].section, QUEUE[i].label, QUEUE[i].spec);
-      ordered[i] = results[before];
+      const k = next++;
+      if (k >= parallel.length) return;
+      const { q, i } = parallel[k];
+      ordered[i] = await scenario(q.section, q.label, q.spec);
     }
   };
   await Promise.all(Array.from({ length: LANES }, lane));
-  results.length = 0;
+  for (const { q, i } of serial) ordered[i] = await scenario(q.section, q.label, q.spec);
   for (const r of ordered) if (r) results.push(r);
 }
 
