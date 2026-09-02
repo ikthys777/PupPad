@@ -63,6 +63,50 @@ which is the shape that missed this.
 
 ---
 
+## 1b. THE LIFT TAPERS NEAR THE BOTTOM — Scotty's ruling, 2026-09-02
+
+**CC-B escalated a real trade rather than settling it, and was right to.** The lift costs
+reach: `band = 78 − lift`, so at `0.9` of a 64px cell the bottom row keeps a **32px touch
+band** against 62–64px for every other row — **under the 44px minimum `check 21 §1`
+enforces on board cells**, i.e. the check contradicting itself across two clauses.
+Measured with a finger walking the glass in 2px steps, not reasoned.
+
+**Both properties cannot hold at a fixed lift**: clearing a toddler's fingertip wants
+~58px; the 44px floor wants ≤34px.
+
+**RULED (Scotty): TAPER IT.** Full lift across rows 0–4, easing toward zero on the last
+row — palm clearance kept where it matters, the 44px floor held on every row.
+
+**The single-derivation property is preserved and is not negotiable.** `dragLiftPx()`
+becomes `dragLiftPx(y)`; it remains the **one** derivation, and `moveDragEl` and
+`hitCell` remain its **only two** consumers, called with the **same `y`**. If those two
+ever pass different arguments, this is the original defect again wearing a taper.
+
+### THE TRAP, AND IT IS A CORRECTNESS BUG RATHER THAN A TUNING ONE
+
+The drop resolves at `target = y − lift(y)`, so `d(target)/dy = 1 − lift′(y)`.
+**A taper that sheds lift faster than 1px per 1px of finger travel makes the mapping
+NON-MONOTONIC — the piece moves UP the board as the finger moves DOWN.**
+
+| taper span | slope | |
+|---|---|---|
+| 0.5 cell (32px) | **1.80** | **INVERTS** |
+| 1.0 cell (64px) | 0.90 | ok, thin margin |
+| **1.5 cell (96px)** | **0.60** | **use this or wider** |
+| 2.0 cell (128px) | 0.45 | ok |
+
+**Taper over at least 1.5 cells.** The obvious implementation — ease to zero across the
+last row — is a 1.0-cell span at slope 0.90, which works and leaves almost no margin
+against a future cell-size change.
+
+**Assert monotonicity directly, at all three fleet viewports:** walk `y` from the top of
+the board to the bottom of the screen in 2px steps and require the resolved row to be
+**non-decreasing** throughout. That is the assertion the taper needs and it is cheap.
+**And keep the existing cap** — it is what guarantees no row is unreachable on any
+device, whatever the constant is.
+
+---
+
 ## 1a. THE TRAY PIECE IS SMALLER THAN THE CELL IT AIMS AT
 
 **Scotty, with a screenshot:** *"the tray size for pieces needs a little adjustment."*
