@@ -63,6 +63,42 @@ which is the shape that missed this.
 
 ---
 
+## 1a. THE TRAY PIECE IS SMALLER THAN THE CELL IT AIMS AT
+
+**Scotty, with a screenshot:** *"the tray size for pieces needs a little adjustment."*
+**Measured off that screenshot** (S25 Ultra, 2340x1080 physical, DPR 2.625, so an
+**891 x 411 CSS** viewport):
+
+| | measured |
+|---|---|
+| tray slot | **357 x 123 CSS px** |
+| piece cell drawn inside it | **~36 CSS px** |
+| board cell it will land on | **64 CSS px** |
+
+**THE THING HE GRABS IS SMALLER THAN THE THING HE AIMS AT**, inside a slot with room for
+three times the drawing. The biggest, emptiest panel on the screen holds the smallest
+graphic.
+
+**This was predicted and it did not reach the work order.** The layout pass flagged it
+verbatim: *"`PieceTray.tsx:53-54` is `Math.floor(88 / span)` — a hardcoded 88px that
+assumes the source's 128px slot. In a wider slot the piece paints at a fraction of it and
+the biggest target in the app looks empty. It must become a function of the measured
+slot, read from a `ResizeObserver`, never per-render."* **It went into the reconnaissance
+and never into `PUP-WO-0400`** — the same failure as the retention ruling: a finding that
+reached a document and not the directive.
+
+**RULED: the tray cell is derived from the MEASURED SLOT, never from a constant.**
+`cell = floor(min((slotW - 2*inset) / piece.w, (slotH - 2*inset) / piece.h))`, measured
+by the same `ResizeObserver` the board already uses, **capped so a 1x1 does not become
+absurd** — and **never smaller than the board cell**, because a target you drag *from*
+must not be smaller than the target you drag *to*.
+
+**Acceptance:** at all three fleet viewports, for every shape in the pool, the drawn
+piece's bounding box occupies **at least half** the slot's shorter axis, and **no piece
+cell is smaller than the board cell.**
+
+---
+
 ## 2. SOUND — the first thing a human noticed was its absence
 
 **Scotty:** *"there is no pop or animation sounds when the line fill and 'pop'."*
@@ -125,7 +161,13 @@ cell from an empty one.**
 - **The 8×8 `blocks-big` entry and the four assists** — `PUP-WO-0401`, and that WO is
   **blocked on `PUP-WO-0111`** because a panel that mounts before the `controlsOpen` flip
   covers 321px of a 412px screen.
-- **The score's presentation.** Still Scotty's call, still open.
+- **The score.** **RULED 2026-09-02: NO SCORE IS SHOWN ANYWHERE.** *(Scotty, asked
+  directly: "no, there is no score shown at all. anywhere.")* The engine accrues one and
+  nothing renders it — which is what the build already does, so this ruling **closes an
+  open question rather than changing code.** It is also the northstar §5 non-goal
+  honoured rather than argued with: *"Scores, leaderboards, streaks, or progression.
+  Every one of them imports a fail state."* **Adding a visible score later is a change to
+  a non-goal and goes to the northstar first, never into a feature work order.**
 - **`sw.js`, `manifest.json`, the icons, `games/gyre.js`, `games/hello.js`,
   `index.html`'s registry** — diff to empty. **No new asset file of any kind:** if flair
   needs an image, that is a flag-and-stop, not a quiet `urlsToCache` line.
