@@ -433,6 +433,47 @@ jobs:
         # a second finger already on the glass — never page.click.
         run: node .github/ci/demo-sticker-share.mjs .
 
+      - name: "Check 21 — Block Pop, played with a finger"
+        # PUP-WO-0400 §3. The first game in this project a child can lose and start
+        # again, so the questions are whether it fits, whether a finger works it, and
+        # whether it leaves anything behind.
+        #
+        # AT THE FLEET VIEWPORTS AND NOWHERE ELSE — 869x412, 915x412, 883x412
+        # (architecture §3). Checks 19 and 20 carry a tablet list describing a device
+        # nobody owns; PUP-WO-0111 owns correcting them and this file does not copy them.
+        #
+        # Two of its eight sections measure defects NO GREEN SUITE SEES, both inherited
+        # from the source and both invisible to any check that does not watch animation
+        # start times. `popping={!!color && !dying}` (Board.tsx:68) is permanently true
+        # for every filled cell and only looks right because React's keyed reconciler
+        # preserves the node — rebuild the grid per update and all 36 candies re-pop at
+        # pointer rate. And `clearing` (BlockPopGame.tsx:118-135) is never bounded: the
+        # cleanup cancels the 280ms timeout and the empty-burst branch never nulls the
+        # state, so a placement inside the window strands it and `.candy-clear` is
+        # `forwards` to opacity 0 — cells permanently invisible over a board that still
+        # holds candies. A state the toy can enter and cannot leave.
+        #
+        # Determinism comes from pinning Math.random to 0 before the module loads, which
+        # makes every deal a single dot; that is what lets the check FILL A ROW WITH A
+        # FINGER and watch it clear rather than assert about it.
+        run: node .github/ci/demo-blockpop.mjs .
+
+      - name: "Check 21 controls — every section of check 21, shown red"
+        # PUP-WO-0400 §3 item 9: "A check never seen red is not a check." Eight
+        # scenarios, one planted defect each, each asserting the check goes red AND says
+        # the thing it was supposed to say — a check that fails for an unrelated reason
+        # has not been shown to catch anything.
+        #
+        # It earned its place twice while being written. It caught the section-5 plant
+        # producing a SYNTAX ERROR rather than the defect, so the module never loaded and
+        # "red" meant nothing. And it caught section 6 going GREEN against the source's
+        # stranded-clearing bug replanted verbatim: that section asserted "placed inside
+        # the clear window" while fingerTap's own 40ms + 120ms waits put the second
+        # placement over 320ms out — past the 280ms timer, outside the window it claimed
+        # to be testing. Both were defects in the CHECK, and nothing else would have
+        # found either.
+        run: node .github/ci/demo-blockpop-controls.mjs .
+
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
   #

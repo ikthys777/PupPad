@@ -321,6 +321,7 @@ var urlsToCache = [
   './icon-192.png',
   './icon-512.png',
   './games/hello.js',
+  './games/blockpop.js',
   './games/gyre.js'
 ];
 
