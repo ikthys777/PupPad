@@ -310,6 +310,41 @@ was written.** Each measured on a near-empty canvas where it is the only thing o
 | **shape** | 1600 particles cover **2.4%** of the screen as dots and **3.8%** as ribbons (×1.58), corroborated by the sweep at 3.0× its own noise |
 | **spin** | the mean hue turns **70° in two seconds** with it on and **1°** with it off |
 
+### 7.4 — the coverage, in one place, so a reader can see there is no hole
+
+*Added at CC-A's ruling on the split. **A split gate is two expressions that must agree**,
+and two expressions that must agree is this project's most expensive shape — so the two
+halves are listed together, with the count reconciled.*
+
+**Thirteen parameters. Nine answered by check 16 §2, four by check 19 §2b. Nine plus four
+is thirteen, and nothing is answered twice.**
+
+| parameter | who asserts the FIELD changes | the metric it uses |
+|---|---|---|
+| `count` | check 16 §2 | ink fraction — more particles put more ink on the canvas |
+| `size` | check 16 §2 | ink fraction — a thicker stroke covers more pixels |
+| `linger` | check 16 §2 | ink fraction — a slower fade leaves more of the last frames behind |
+| `tail` | check 16 §2 | ink fraction — a longer trail is a longer line |
+| `force` | check 16 §2 | ink fraction — a faster particle draws a longer stroke |
+| `burst` | check 16 §2 | ink **under the finger**, before and after a tap |
+| `polarity` | check 16 §2 | ink in a 120px disc under a held finger — a knot becomes a hole |
+| `palette` | check 16 §2 | mean **hue** of the inked pixels |
+| `background` | check 16 §2 | the **ground** colour itself |
+| `ripple` | check 19 §2b | ink in the ring around the finger, 320ms after a tap, on a wiped canvas |
+| `glow` | check 19 §2b | mean **luminance** of the halo while a finger is held |
+| `shape` | check 19 §2b | whether the `tail` slider is **inert** — `dot` multiplies the tail by zero |
+| `spin` | check 19 §2b | the **angle** the mean hue turns through in two seconds |
+
+**And one claim that covers all thirteen at once, in check 19 §2**: every control puts the
+value it is painted for into the seam when pressed with a finger. That half is
+deterministic — no pixels, no threshold, no noise — and it is the half this work order is
+actually about. The table above is about the *engine* answering, which is `PUP-WO-0300`'s
+subject and mostly `PUP-WO-0300`'s check.
+
+**Why `polarity` appears above and also has its own section 5 in check 19:** §2's entry is
+the engine's inversion; §5 is *the control* driving it, in one tap, **with a second finger
+already on the glass**. Different claims, deliberately both.
+
 For reference, the sweep's whole-frame readings — printed on every run as information,
 not as the assertion:
 
