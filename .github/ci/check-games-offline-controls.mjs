@@ -26,8 +26,22 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHECK = join(HERE, 'check-games-offline.mjs');
-let COMMIT = 'unknown';
-try { COMMIT = execFileSync('git', ['-C', join(HERE, '..', '..'), 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+/* FAILS CLOSED. This used to initialise to 'unknown' and pass — architecture §5 says
+ * every demonstration asserts the commit it ran against, and a green with no
+ * identifiable subject is a claim about a tree nobody can name. PUP-WO-0300 fixed it in
+ * one check and recorded the rest; PUP-WO-0201 is the next work order to open this
+ * directory, which is where CC-A ruled the sweep belongs. PUPPAD_SUBJECT lets a tree
+ * with no .git — a `git archive` export, which the freeze protocol hands a read-only
+ * adversarial pass — state its own subject instead. */
+let COMMIT = process.env.PUPPAD_SUBJECT || '';
+if (!COMMIT) {
+  try { COMMIT = execFileSync('git', ['-C', join(HERE, '..', '..'), 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+}
+if (!/^[0-9a-f]{7,40}$/.test(COMMIT)) {
+  console.error('::error::CHECK 12 cannot identify the commit it is testing.');
+  console.error('  Run it inside the repository, or set PUPPAD_SUBJECT=<sha>.');
+  process.exit(1);
+}
 
 const results = [];
 /* `noteText`/`noNoteText` are checked WHATEVER the colour. Check 11's notes are a
@@ -48,8 +62,13 @@ function run(label, { files, expect, expectText, noteText, noNoteText }) {
     }
     let out = '', code = 0;
     try {
+      /* PUPPAD_SUBJECT because check 11 now FAILS CLOSED on a tree whose commit it
+       * cannot name, and every fixture here is a throwaway directory with no .git. That
+       * is the sweep's cost, paid where it belongs: a control harness knows what it is
+       * testing and can say so, which is exactly the case the escape hatch is for. */
       out = execFileSync(process.execPath, ['--experimental-vm-modules', CHECK, dir],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, PUPPAD_SUBJECT: COMMIT } });
     } catch (e) { code = e.status ?? 1; out = (e.stdout || '') + (e.stderr || ''); }
     const observed = code === 0 ? 'GREEN' : 'RED';
     /* THE EXIT CODE IS NOT THE VERDICT (PUP-WO-0103 finding B). A RED for the wrong
@@ -161,7 +180,7 @@ for (let skip = 0; skip < FOUR.length; skip++) {
   mkdirSync(join(dir, 'games'), { recursive: true });
   writeFileSync(join(dir, 'games', 'x.js'), wrap(body));
   let out = '';
-  try { out = execFileSync(process.execPath, ['--experimental-vm-modules', CHECK, dir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+  try { out = execFileSync(process.execPath, ['--experimental-vm-modules', CHECK, dir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PUPPAD_SUBJECT: COMMIT } }); }
   catch (e) { out = (e.stdout || '') + (e.stderr || ''); }
   rmSync(dir, { recursive: true, force: true });
   const gone = !out.includes(`— ${FOUR[skip][1]}`);

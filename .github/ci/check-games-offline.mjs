@@ -66,8 +66,22 @@ const GAMES_DIR = join(REPO, 'games');
 /* Architecture §5: a demonstration asserts the COMMIT it ran against. A green with no
  * subject is a claim about a tree nobody can identify. The pass found this rule was
  * obeyed by one of four new checks; it is obeyed by all of them now. */
-let COMMIT = 'unknown';
-try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+/* FAILS CLOSED. This used to initialise to 'unknown' and pass — architecture §5 says
+ * every demonstration asserts the commit it ran against, and a green with no
+ * identifiable subject is a claim about a tree nobody can name. PUP-WO-0300 fixed it in
+ * one check and recorded the rest; PUP-WO-0201 is the next work order to open this
+ * directory, which is where CC-A ruled the sweep belongs. PUPPAD_SUBJECT lets a tree
+ * with no .git — a `git archive` export, which the freeze protocol hands a read-only
+ * adversarial pass — state its own subject instead. */
+let COMMIT = process.env.PUPPAD_SUBJECT || '';
+if (!COMMIT) {
+  try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+}
+if (!/^[0-9a-f]{7,40}$/.test(COMMIT)) {
+  console.error('::error::CHECK 11 cannot identify the commit it is testing.');
+  console.error('  Run it inside the repository, or set PUPPAD_SUBJECT=<sha>.');
+  process.exit(1);
+}
 
 const failures = [];
 const notes = [];

@@ -71,17 +71,37 @@ const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m, d) => { failures.push({ m, d }); console.log(`  FAIL  ${m}`); if (d) console.log(`        ${d}`); };
 
 /* Architecture §5: a demonstration asserts the COMMIT it ran against. */
-let COMMIT = 'unknown';
-try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+/* FAILS CLOSED. This used to initialise to 'unknown' and pass — architecture §5 says
+ * every demonstration asserts the commit it ran against, and a green with no
+ * identifiable subject is a claim about a tree nobody can name. PUP-WO-0300 fixed it in
+ * one check and recorded the rest; PUP-WO-0201 is the next work order to open this
+ * directory, which is where CC-A ruled the sweep belongs. PUPPAD_SUBJECT lets a tree
+ * with no .git — a `git archive` export, which the freeze protocol hands a read-only
+ * adversarial pass — state its own subject instead. */
+let COMMIT = process.env.PUPPAD_SUBJECT || '';
+if (!COMMIT) {
+  try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+}
+if (!/^[0-9a-f]{7,40}$/.test(COMMIT)) {
+  console.error('::error::CHECK 13 cannot identify the commit it is testing.');
+  console.error('  Run it inside the repository, or set PUPPAD_SUBJECT=<sha>.');
+  process.exit(1);
+}
 console.log(`  subject ${COMMIT.slice(0, 12)}\n`);
 
 const browser = await chromium.launch({ channel: 'chromium' });
 
 /** Open the console, press the Games button, and report what the DOM looks like. */
+/* PUP-WO-0201 PUT A PICKER BETWEEN THE BUTTON AND THE GAME. The Games button now opens a
+ * chooser; a TILE opens a game. This walks the whole path rather than reaching past it,
+ * because the path is what the child walks — and the tile is selected by the first
+ * registry entry's id, read from the registry, for the same reason the module path is. */
 async function openGamesAndProbe(page, origin, { waitForHost = true } = {}) {
   await page.goto(origin + '/index.html', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
   await page.click('.pad-btn[data-id="7"]');
+  await page.waitForSelector(`.pickerTile[data-game="${FIRST.id}"]`, { timeout: 5000 });
+  await page.click(`.pickerTile[data-game="${FIRST.id}"]`);
   if (waitForHost) await page.waitForSelector('#gameHost', { timeout: 5000 }).catch(() => {});
   return page;
 }
@@ -175,19 +195,22 @@ async function runCase(label, { override = {}, delay = {}, expect }) {
  *
  * FAILS CLOSED. If the registry cannot be read, this check does not fall back to a
  * guess — a guess is how it would silently test nothing. */
-function firstRegistryModule() {
+function firstRegistryEntry() {
   const html = readFileSync(join(REPO, 'index.html'), 'utf8');
   const reg = html.match(/var GAMES\s*=\s*\[([\s\S]*?)\n\];/);
   if (!reg) throw new Error('demo-games-back: cannot find `var GAMES = [ ... ];` in index.html');
   const m = reg[1].match(/module\s*:\s*'([^']+)'/);
   if (!m) throw new Error('demo-games-back: the first registry entry has no `module` field');
-  return m[1].replace(/^\./, '');   /* './games/x.js' -> '/games/x.js' */
+  const idm = reg[1].match(/id\s*:\s*'([^']+)'/);
+  if (!idm) throw new Error('demo-games-back: the first registry entry has no `id` field');
+  return { module: m[1].replace(/^\./, ''), id: idm[1] };
 }
-const MODULE = firstRegistryModule();
+const FIRST = firstRegistryEntry();
+const MODULE = FIRST.module;
 const GOOD = await readFile(join(REPO, MODULE.replace(/^\//, '')), 'utf8');
 
 console.log('CHECK 13 — the way back, in a browser, against the cases that produce §1.6\n');
-console.log(`  the Games button loads ${MODULE} — read from the registry, not assumed\n`);
+console.log(`  the picker's first tile is '${FIRST.id}' and loads ${MODULE} — read from the registry, not assumed\n`);
 
 console.log('--- 1. the ordinary path ---');
 await runCase('the registry\'s first module, unmodified', { expect: 'back-works' });

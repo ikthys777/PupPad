@@ -44,6 +44,15 @@ function pawSVG(size, color) {
 function xSVG(size, color) {
   return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 100 100" fill="none" stroke="'+color+'" stroke-linecap="round" stroke-linejoin="round"><line x1="15" y1="15" x2="85" y2="85" stroke-width="10"/><line x1="85" y1="15" x2="15" y2="85" stroke-width="10"/></svg>';
 }
+/* THE ARROW AS GEOMETRY, NOT AS A GLYPH. `back.textContent = '\u2190'` centres the text
+ * BOX and leaves the arrow visibly off-centre inside it, because a glyph's ink does not
+ * sit in the middle of its em square and the left-arrow's side bearings are asymmetric
+ * in the fallback fonts an Android tablet actually has. Scotty saw it on the device. No
+ * amount of flex centring fixes a font metric; a path is centred by construction, and
+ * this one is symmetric about (12,12) in its own viewBox. */
+function backArrowSVG(size, color) {
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="'+color+'" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 5 L8.5 12 L15.5 19"/></svg>';
+}
 function lockSVG(size, color, locked) {
   var body = locked ? '<rect x="3" y="11" width="18" height="11" rx="2" fill="'+color+'"/><path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round"/>' : '<rect x="3" y="11" width="18" height="11" rx="2" fill="none" stroke="'+color+'" stroke-width="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round"/>';
   return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24">'+body+'</svg>';
@@ -1741,6 +1750,107 @@ var GAMES_Z = 500;
 /* The live session, or null. Also the "one at a time" latch of obligation 6. */
 var gameSession = null;
 
+/* THE PICKER'S BAND. Below the game host, above every console surface: the shell's own
+ * overlays sit at 200 (remote photo, gallery), 100 (settings, PIN), 90 (alertFlash) and
+ * 80 (the three panels), and #portraitBlock at 9999 must stay on top of everything. A
+ * picker ABOVE the game host would paint over a running game; one below it is covered by
+ * the game it launched, which is the correct order. */
+var PICKER_Z = 400;
+
+/* EVERY TOUCH CONTROL THIS SHELL OWNS ON THE GAMES PATH GOES THROUGH HERE — the seven
+ * console pad buttons, the picker's tiles, and both exits.
+ *
+ * (An earlier version of this comment said "every touch control in this app", and an
+ * adversarial pass proved it false ON THE ENTRY POINT: the pad buttons were still wired
+ * on bare `click`, so the Games button — the picker's only door — was inert to the very
+ * two gestures this function exists to survive. The claim is now scoped to what it
+ * covers. Draw, Camera, Map, the settings panel and the PIN keypad do NOT go through it;
+ * they are PUP-WO-0106's, and naming that is cheaper than a comment that overreaches.)
+ *
+ * PUP-WO-0300's pass found #gameBack inert for two ordinary gestures because it was
+ * wired on `click`: a browser synthesises no click while a second finger is on the
+ * glass, and none for a tap that slides more than ~15px. Both are a three-year-old's
+ * normal gesture — he plays with both hands and his tap is a smudge. That is
+ * architecture §6.1 member 6's founding case.
+ *
+ * The fix belonged to one button then. This work order adds tiles, which are the same
+ * kind of control with the same audience, so the fix becomes a FUNCTION rather than a
+ * second copy of itself — two copies of a rule is how this project's fences drifted four
+ * times in a week.
+ *
+ * `armed` requires the press to have STARTED on the element, so a finger dragged across
+ * the screen and released on a tile does not launch it. `used` makes the pair idempotent,
+ * so the trailing click — which is also what a keyboard Enter produces, and that is why
+ * the click handler stays — is a no-op rather than a second activation. */
+function wireTap(el, fn, opts) {
+  /* `repeat` for a control that survives its own press — a console pad button is tapped
+   * all day, and the one-shot latch below would kill it after one use. */
+  var repeat = !!(opts && opts.repeat);
+  var used = false, armed = false;
+  function fire() {
+    if (used && !repeat) return;
+    used = true;
+    fn();
+  }
+  el.addEventListener('pointerdown', function() { armed = true; });
+  el.addEventListener('pointerup', function() { if (armed) { armed = false; fire(); } });
+  el.addEventListener('pointercancel', function() { armed = false; });
+  /* THE CLICK PATH IS FOR THE KEYBOARD AND NOTHING ELSE, and `detail === 0` is what says
+   * so: a keyboard Enter or Space on a <button> produces a click with detail 0, while
+   * every mouse and touch click carries detail >= 1 and has already been handled above.
+   *
+   * The unguarded version had a defect an adversarial pass demonstrated with a stack
+   * trace. The trailing compatibility click is hit-tested against the DOM AS IT EXISTS
+   * AFTER the pointerup handler ran — so a control CREATED during that handler, at those
+   * coordinates, received it and fired itself. The picker's exit and a game's exit share
+   * one rect by design, so a tile tap landing there would launch a game and instantly
+   * close it: the child taps a game and is bounced back to the console with no
+   * explanation. Latent today, closed now, and closed for every control at once. */
+  el.addEventListener('click', function(e) { if (e && e.detail === 0) fire(); });
+}
+
+/* THE WAY BACK, BUILT ONCE FOR EVERY FULL-SCREEN SURFACE THIS SHELL OWNS.
+ *
+ * §1a.1 — REACHABILITY AND DOMINANCE ARE TWO PROPERTIES AND THEY WERE BEING TRADED.
+ * The button was a 64px red disc with a 3px ring and a 4px halo: 78px of paint on a toy
+ * whose entire point is watching a particle field. Scotty's finding, from touch. The
+ * original reasoning for the size was sound — big, high-contrast, in the corner a thumb
+ * reaches, because the person using it cannot read the label — and shrinking the control
+ * would have traded away the thing that reasoning bought.
+ *
+ * So the two properties are separated instead. The HIT BOX stays 64x64 and transparent;
+ * the PAINT shrinks to a 40px disc, about 50px including its ring and halo — 41% of the
+ * former painted area — and sits centred inside it. Reachability is a property of the hit
+ * box; dominance is a property of the paint. `pointer-events:none` on the disc so a
+ * hit-test at the centre returns the BUTTON, which is what every check asks about.
+ *
+ * DO NOT SHRINK THE HIT BOX. This is the one control in the app that must never be hard
+ * to hit, and the checks that assert 44px are asserting the box, not the paint. */
+function makeBackButton(z, onExit) {
+  var btn = document.createElement('button');
+  btn.setAttribute('aria-label', 'Back to the console');
+  /* Kept 52px clear of #settingsBtn, which this used to sit on top of: tap one closed the
+   * surface and tap two — what a child does when the first tap appears not to work —
+   * landed on the console and opened the adult Supabase panel, which has two text inputs
+   * and two exits labelled with WORDS. A non-reader cannot leave it. */
+  btn.style.cssText = 'position:fixed;top:calc(max(10px,env(safe-area-inset-top)) + 52px);'
+    + 'left:max(10px,env(safe-area-inset-left));z-index:' + z + ';width:64px;height:64px;'
+    + 'border:0;background:transparent;padding:0;margin:0;cursor:pointer;touch-action:manipulation;'
+    + 'display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent';
+  var disc = document.createElement('span');
+  /* The halo is outside the white ring so the exit's visibility is a property of the
+   * button rather than a promise about what a game paints behind it: on the two light
+   * backgrounds Gyre ships, the white ring alone measured 1.47:1 against the ground. */
+  disc.style.cssText = 'width:40px;height:40px;border-radius:50%;border:2px solid rgba(255,255,255,0.92);'
+    + 'background:linear-gradient(145deg,#EF4444,#b91c1c);'
+    + 'box-shadow:0 0 0 3px rgba(0,0,0,0.45),0 3px 10px rgba(0,0,0,0.5);'
+    + 'display:flex;align-items:center;justify-content:center;pointer-events:none';
+  disc.innerHTML = backArrowSVG(22, '#ffffff');
+  btn.appendChild(disc);
+  wireTap(btn, onExit);
+  return btn;
+}
+
 /* Genuinely recursive: the first version froze two levels and was named for a depth it
  * did not have, so a `params:{grid:{w:3}}` entry would hand the game a mutable `grid`. */
 function deepFreezeEntry(entry) {
@@ -1764,8 +1874,35 @@ function deepFreezeEntry(entry) {
  * later. This is the enforcement. */
 var GAMES_MODULE_RE = /^\.\/games\/[a-z0-9-]+\.js$/;
 var GAMES_ID_RE = /^[a-z][a-z0-9-]*$/;
+var GAMES_HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+/* NOW ENFORCING THE FIELDS THAT REACH A STYLE STRING, WHICH IT DID NOT BEFORE.
+ *
+ * The comment above has always said "§9.1's shape, ENFORCED rather than documented". It
+ * checked two of the nine constraints. An adversarial pass on PUP-WO-0201 pointed out
+ * that the two it skipped which MATTER are `color` and `glow`, because the picker splices
+ * both straight into a tile's inline `cssText` — and demonstrated a `color` of
+ * `red;position:fixed;inset:0;z-index:9999` terminating the background declaration and
+ * painting a full-bleed tile ABOVE the picker's own exit, so `elementFromPoint` at the
+ * button returned the tile.
+ *
+ * The registry is author-controlled, so this is not an attack surface in the usual sense
+ * — it is a TYPO surface, and the failure mode is a child looking at a coloured rectangle
+ * with the way back underneath it. §9.1 says these are `/^#[0-9a-fA-F]{6}$/`; that is now
+ * what the word ENFORCED means here.
+ *
+ * `sound` and `players` are still not checked: an unknown sound is a silent no-op rather
+ * than a broken surface, `players` is unread until architecture §7 seam 4 exists, and a
+ * validator that refuses a tile over a field with no visible consequence would cost a
+ * whole game for a typo. Stated so the gap is known rather than discovered. */
 function registryEntryIsValid(e) {
-  return !!e && GAMES_ID_RE.test(e.id) && GAMES_MODULE_RE.test(e.module);
+  return !!e
+    && GAMES_ID_RE.test(e.id)
+    && GAMES_MODULE_RE.test(e.module)
+    && GAMES_HEX_RE.test(e.color)
+    && GAMES_HEX_RE.test(e.glow)
+    && typeof e.label === 'string' && e.label.length >= 1 && e.label.length <= 12
+    && typeof e.icon === 'string' && e.icon.length >= 1 && e.icon.length <= 8;
 }
 
 /* OBLIGATION 4 — exactly one close path. This function, and nothing else, calls
@@ -1887,79 +2024,22 @@ function openGames(entry) {
    *
    * So the shell guarantees the exit is THERE. It does not guarantee that a hostile
    * module cannot bury it, and this comment must not be read as though it does. */
-  var back = document.createElement('button');
-  back.id = 'gameBack';
-  back.setAttribute('aria-label', 'Back to the console');
-  /* PUSHED 52px CLEAR OF #settingsBtn, WHICH IT WAS SITTING ON TOP OF. The console's
-   * settings button occupies (10,6)-(48,34); this button was (10,10)-(74,74). Tap one
-   * closed the game and tap two — a double-tap, which is what a child does when the
-   * first tap appears not to work — landed on the console and opened "Pup Pad Sync
-   * Settings": two text inputs holding the Supabase URL and key, and two exits labelled
-   * with WORDS. A non-reader cannot leave it and a mis-tap on Save writes config.
-   * Reproduced, and closed by moving this rather than by hoping the child taps once. */
-  back.style.cssText = 'position:fixed;top:calc(max(10px,env(safe-area-inset-top)) + 52px);left:max(10px,env(safe-area-inset-left));'
-    + 'z-index:' + (GAMES_Z + 1) + ';width:64px;height:64px;border-radius:50%;border:3px solid rgba(255,255,255,0.9);'
-    + 'background:linear-gradient(145deg,#EF4444,#b91c1c);color:#fff;font-size:30px;line-height:1;cursor:pointer;'
-    /* A DARK HALO OUTSIDE THE WHITE RING, so the exit's visibility is a property of the
-     * button rather than a promise about what a game draws behind it. Measured on the
-     * two light backgrounds Gyre ships: the white border fell to a 1.47:1 contrast ratio
-     * against `shell` and 1.53:1 against `fog` — gone — and the red fill to 2.84:1,
-     * under the 3:1 floor for a control. The shell cannot know what a game will paint,
-     * so the button carries its own contrast against both ends of the range. */
-    + 'box-shadow:0 0 0 4px rgba(0,0,0,0.45),0 4px 14px rgba(0,0,0,0.5);touch-action:manipulation;'
-    + 'display:flex;align-items:center;justify-content:center;padding:0';
-  back.textContent = '←';
   /* EARLY-BOUND, AND THE EXIT RUNS FIRST. This was `doSound('tap'); endGameSession();`
    * with both resolved by name at click time, so a module assigning
    * window.endGameSession = function(){} disabled the only way out, and a non-essential
    * side effect sat AHEAD of the exit on the exit path. Same-realm code can still defeat
-   * this; the accidental version is gone. */
+   * this; the accidental version is gone.
+   *
+   * THE BUTTON AND ITS POINTER WIRING NOW LIVE IN makeBackButton/wireTap, shared with the
+   * picker. The notes there are not repeated here: why it is wired on pointer events
+   * rather than `click`, why the hit box is 64px while the paint is 40px, and why it sits
+   * 52px clear of the console's settings button. A rule written twice drifts, and this
+   * project has four fences that proved it. */
   var exit = endGameSession;
-
-  /* WIRED ON POINTER EVENTS, NOT ON `click`, AND THIS IS A LIVE TRAP BEING CLOSED.
-   * Found by PUP-WO-0300's adversarial pass and reproduced independently, in Chromium,
-   * with real touch points. `click` was the only wiring, and a browser does not
-   * synthesise a click from a tap in two very ordinary situations:
-   *
-   *   ANOTHER FINGER IS ALREADY ON THE GLASS. With a thumb resting anywhere — on the
-   *   field, on the bezel, forgotten — a tap on this button fires pointerdown,
-   *   touchstart, pointerup and touchend, and NO CLICK. The button is inert for as long
-   *   as that finger stays down, and `touch-action:none` on a game's canvas means the
-   *   resting touch is never converted to a scroll and cancelled, so it stays down.
-   *
-   *   THE TAP SLIDES MORE THAN ~15px. Chromium's touch slop turns it into a pan and
-   *   emits no click, even when the finger goes down and comes up well inside a 64px
-   *   circle. Measured: 8px closes the game, 20px does not.
-   *
-   * A THREE-YEAR-OLD'S TAP IS A SMUDGE, AND HE PLAYS WITH BOTH HANDS. Both are his
-   * normal gesture, not an edge case, and the failure teaches the wrong lesson: the
-   * button visibly does nothing, so he presses harder, with more fingers, and holds it
-   * down — every one of which keeps it dead. There is no keydown, popstate or Escape
-   * handler anywhere in this file, and manifest.json is display:fullscreen, so Android's
-   * system back leaves the app rather than the game. This was the only way out.
-   *
-   * AND THE PROJECT'S OWN REACHABILITY TEST PASSED THROUGHOUT. `elementFromPoint` at the
-   * button's centre returned #gameBack, 64x64, in every failing case — check 13 asks
-   * "is the button under the finger", which is the right question at the wrong layer.
-   * It has never once been pressed with a finger; both games checks use a synthetic
-   * MOUSE click, which is subject to neither rule.
-   *
-   * `pointerup` fires in every one of those cases. `armed` requires the press to have
-   * STARTED on the button, so a finger dragged off the field and released here does not
-   * exit mid-play; `used` makes the pair idempotent, so the trailing click — which is
-   * also what a keyboard Enter produces, and that is why the click handler stays — is a
-   * no-op rather than a second sound. */
-  var used = false;
-  function exitOnce() {
-    if (used) return;
-    used = true;
+  var back = makeBackButton(GAMES_Z + 1, function() {
     try { exit(); } finally { try { doSound('tap'); } catch (e) {} }
-  }
-  var armed = false;
-  back.addEventListener('pointerdown', function() { armed = true; });
-  back.addEventListener('pointerup', function() { if (armed) { armed = false; exitOnce(); } });
-  back.addEventListener('pointercancel', function() { armed = false; });
-  back.addEventListener('click', exitOnce);
+  });
+  back.id = 'gameBack';
 
   /* Snapshot body level BEFORE the chrome goes in, so the sweep in endGameSession can
    * tell what the module added from what was already there. WITHOUT THIS THE SWEEP
@@ -2042,6 +2122,153 @@ function openGames(entry) {
     if (window.console && console.error) console.error('[games] could not load ' + entry.module, e);
     endGameSession();
   });
+}
+
+/* ============================ THE PICKER — PUP-WO-0201 =====================
+ * A full-screen surface of large tiles, one per registry entry, that knows NOTHING about
+ * any specific game. Architecture §4 calls that a contract, and its test is that adding a
+ * registry entry changes what the child sees with no edit here.
+ *
+ * IT OPENS EVEN WITH ONE GAME (§2.2), and the shortcut is tempting and wrong. A
+ * non-reader learns this app by CONSISTENCY OF GESTURE. If Games sometimes shows a
+ * chooser and sometimes launches a thing, the button means two things — and invariant 1
+ * stops holding not because the control is unlabelled but because it is unpredictable.
+ * Same taps, same result, every time.
+ *
+ * §1.6 APPLIES TO THIS SURFACE, NOT JUST TO GAMES. All three existing openers append a
+ * full-bleed overlay early and wire CLOSE last — Draw 152 lines later, Camera 287, Map
+ * 189 — and Map is a confirmed live trap whose recovery is killing the app. This is a
+ * full-bleed overlay too, so the way back is appended and LIVE before a single tile
+ * exists, and rendering them is wrapped: a throw inside tile rendering leaves a child
+ * looking at an empty blue screen WITH A WORKING EXIT, rather than a trap. Check 17
+ * demonstrates that by making the renderer throw on purpose.
+ */
+function closeGamePicker() {
+  var o = document.getElementById('gamesPicker');
+  if (o && o.parentNode) o.parentNode.removeChild(o);
+}
+
+/* One tile, built only from registry fields — it cannot know a game. `color` and `glow`
+ * reach an inline style, and `registryEntryIsValid` is what makes them safe to splice;
+ * read the note there before relaxing either. `label` and `icon` go through `textContent`
+ * and cannot carry markup, which an adversarial pass confirmed with an <img onerror>. */
+function pickerTile(entry) {
+  var t = document.createElement('button');
+  t.className = 'pickerTile';
+  t.setAttribute('data-game', entry.id);
+  t.setAttribute('aria-label', entry.label);
+  /* BIG, because a three-year-old's aim is not an adult's, and the work order prefers
+   * fewer bigger tiles to a grid that fits more. The floor is absolute so a narrow
+   * viewport cannot shrink a tile below a thumb. */
+  t.style.cssText = 'width:min(42vw,240px);height:min(42vw,240px);min-width:150px;min-height:150px;'
+    + 'border-radius:28px;border:3px solid ' + entry.glow + ';'
+    + 'background:linear-gradient(160deg,rgba(255,255,255,0.12),rgba(0,0,0,0.30)),' + entry.color + ';'
+    + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;'
+    /* `touch-action:none`, NOT `manipulation`, AND THE DIFFERENCE IS A THIRD INSTANCE OF
+     * THE SAME DEFECT. With `manipulation` the browser is still allowed to treat a drag
+     * as a pan, and the grid below is scrollable — so a tap that slid 25px produced
+     * pointerdown, pointermove, POINTERCANCEL, touchend, and no pointerup at all. The
+     * tile did nothing. Measured, not reasoned: the event list came off the element.
+     *
+     * That is the same shape as the exit being dead to a sliding tap, one surface later,
+     * and it is why the fix became `wireTap` rather than a second copy — the wiring was
+     * already right here; what was missing was forbidding the gesture that cancels it.
+     * The grid keeps `pan-y`, so a drag in the GAPS still scrolls a long list. The trade
+     * is that a child cannot scroll by dragging a tile itself, which is the right way
+     * round: launching is the gesture he needs and scrolling is the one he does not. */
+    + 'cursor:pointer;box-shadow:0 8px 22px rgba(0,0,0,0.45);touch-action:none;'
+    + 'padding:0;-webkit-tap-highlight-color:transparent';
+  var icon = document.createElement('div');
+  icon.textContent = entry.icon;
+  icon.style.cssText = 'font-size:min(18vw,92px);line-height:1;pointer-events:none';
+  /* THE WORD IS FOR THE ADULT AND FOR THE CHILD WHO WILL ONE DAY READ IT. The ICON is
+   * what has to work today — roadmap P2 gate 3 covers all the text and asks a stranger to
+   * name the tile, so anything the word is carrying alone is a gate 3 failure. */
+  var word = document.createElement('div');
+  word.textContent = entry.label;
+  word.style.cssText = 'font-size:22px;font-weight:700;letter-spacing:1px;color:#fff;'
+    + 'text-shadow:0 2px 4px rgba(0,0,0,0.65);pointer-events:none';
+  t.appendChild(icon);
+  t.appendChild(word);
+  /* Wired the same way as the exit, for the same reason: a tap with a second finger down,
+   * or a tap that slides, emits no click. A tile that ignores a child's tap teaches him
+   * the toy is broken just as effectively as an exit that does. */
+  wireTap(t, function() {
+    closeGamePicker();
+    try { doSound(entry.sound); } catch (e) {}
+    openGames(entry);
+  });
+  return t;
+}
+
+/* Called BY NAME from openGamePicker, deliberately: check 17 replaces it with one that
+ * throws, to demonstrate that the way back survives a renderer that fails. The exit is
+ * early-bound and cannot be reached that way, which is the asymmetry §2.3 asks for. */
+function renderPickerTiles(host) {
+  var grid = document.createElement('div');
+  grid.id = 'pickerGrid';
+  grid.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;'
+    /* `safe center`, NOT `center`. A centred flex container that OVERFLOWS pushes its
+     * first rows ABOVE the scroll origin, and scrollTop cannot go negative — those tiles
+     * can never be brought into view by any gesture. An adversarial pass measured the
+     * floor: on an 800x480 tablet it breaks at the FIFTH registry entry, losing two
+     * games, and at 1024x768 at the tenth. That falsifies invariant 6 outright — adding
+     * the fifth game would silently delete two, and fixing it would be surgery on the
+     * picker rather than a data change. `safe` degrades to flex-start exactly when
+     * centring would push content out of reach.
+     *
+     * The top padding clears the exit's 64px HIT BOX (which ends at y=126), not just its
+     * paint: the transparent margin still hit-tests, so a tile overlapping it lost a
+     * strip of its left edge to the exit — measured in 165 of 440 viewport-by-count
+     * configurations. A mis-hit here teaches a child the toy is broken, which is the same
+     * lesson a dead button teaches. */
+    + 'align-content:safe center;justify-content:safe center;gap:24px;padding:140px 20px 24px;'
+    + 'box-sizing:border-box;overflow:auto;touch-action:pan-y';
+  /* AN INVALID ENTRY IS NOT A TILE. registryEntryIsValid enforces PUP-WO-0000 §9.1, and a
+   * tile the shell would then refuse to load is a control that lies — the same reason
+   * PUP-WO-0200's throwaway placeholder did not ship. */
+  for (var i = 0; i < GAMES.length; i++) {
+    if (registryEntryIsValid(GAMES[i])) grid.appendChild(pickerTile(GAMES[i]));
+  }
+  host.appendChild(grid);
+}
+
+function openGamePicker() {
+  if (document.getElementById('gamesPicker')) return;
+  /* A GAME IS UP — but "up" has to mean a game WITH DOM, and the first version of this
+   * line did not check. `openGames` carries an explicit defence against exactly this,
+   * with a comment naming it: a module that removes its own host leaves `gameSession`
+   * non-null with no DOM, and the button then refuses FOREVER. Routing the Games button
+   * through here reopened that bug ONE FUNCTION ABOVE where it had been closed — found
+   * by an adversarial pass, which killed the button permanently and noted that a
+   * three-year-old cannot restart an app. Recover instead of latching on a corpse. */
+  if (gameSession) {
+    if (gameSession.chrome && gameSession.chrome.parentNode) return;
+    if (window.console && console.warn) console.warn('[picker] previous session lost its DOM; recovering');
+    endGameSession();
+  }
+
+  var overlay = document.createElement('div');
+  overlay.id = 'gamesPicker';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:' + PICKER_Z + ';'
+    + 'background:linear-gradient(180deg,#1E3A5F,#172554 50%,#0F1D3A);overflow:hidden;'
+    + 'font-family:Trebuchet MS,sans-serif';
+
+  /* THE WAY BACK FIRST. Not after the tiles, not in the same statement as the tiles.
+   * Everything below this line can fail; nothing below it can strand anyone. */
+  var back = makeBackButton(PICKER_Z + 1, function() {
+    closeGamePicker();
+    try { doSound('tap'); } catch (e) {}
+  });
+  back.id = 'pickerBack';
+  overlay.appendChild(back);
+  document.body.appendChild(overlay);
+
+  try {
+    renderPickerTiles(overlay);
+  } catch (e) {
+    if (window.console && console.error) console.error('[picker] tiles failed to render; the way back still works', e);
+  }
 }
 
 /* === Main Render === */
@@ -2131,7 +2358,15 @@ function render() {
 /* === Event Binding === */
 function attachEvents() {
   document.querySelectorAll('.pad-btn').forEach(function(el) {
-    el.addEventListener('click', function() {
+    /* THROUGH wireTap, AND THIS IS THE ENTRY POINT THE HARDENING HAD MISSED. PUP-WO-0201
+     * wired the tiles and both exits against a tap with a second finger down and a tap
+     * that slides — and left the seven buttons that REACH them on bare `click`, which a
+     * browser does not synthesise for either gesture. An adversarial pass showed the
+     * Games button doing nothing at all in both cases: the picker's only door, inert to
+     * a two-handed child, behind a surface built entirely for one.
+     * `repeat` because a pad button is pressed all day, unlike an exit or a tile, which
+     * destroy the surface they live on. */
+    wireTap(el, function() {
       var id = parseInt(el.dataset.id);
       var btn = BTNS_LEFT.concat(BTNS_RIGHT).find(function(b){return b.id===id});
       if (!btn) return;
@@ -2146,7 +2381,12 @@ function attachEvents() {
        * WHICH entry opens is PUP-WO-0201's question, not this one's: the picker
        * overlay is explicitly out of scope here (§4), so this mounts the first
        * registry entry. That is a wire-up, not a chooser. */
-      if (btn.id === 7) { openGames(); return; }
+      /* PUP-WO-0201. This was `openGames()` — a wire-up rather than a chooser, correct
+       * under PUP-WO-0200's fence, which named the picker as the next work order's. It
+       * is that work order now, so the button opens the CHOOSER and a tile opens a game.
+       * Returns early exactly as Map, Draw and Camera do; the console's state machine is
+       * untouched, because the picker is a separate layer and not a console mode. */
+      if (btn.id === 7) { openGamePicker(); return; }
       state.pid = btn.id;
       state.active = btn;
       state.pop = btn.msg;
@@ -2156,7 +2396,7 @@ function attachEvents() {
         state.active = null; state.pop = ''; state.pid = -1;
         updateUI();
       }, btn.id === 3 ? 4500 : 2500);
-    });
+    }, { repeat: true });
   });
 
   var radar = document.getElementById('radarArea');
