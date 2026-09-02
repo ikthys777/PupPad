@@ -70,6 +70,33 @@ Both mechanisms exist; this work order gives them their affordance.
   joy-per-tap control available to a non-reader: no reading, no aiming, a different
   world every press.* **Make it the most obvious thing on the surface.**
 
+### 2.2a LIVE FINDING — the tap ripple, and it becomes a toggle
+
+*Scotty, on a real device, 2026-09-02.* **Gyre's tap ripple reads as a HARSH FLASH
+rather than a ripple** — a visible concentric ring that snaps rather than spreads.
+
+Two things, and the second is the more important:
+
+1. **Smooth it.** Softer edge, longer falloff, lower peak.
+2. **Make it one of the TOGGLEABLE effects rather than always-on.** *This is the
+   general shape of what is wanted, not a one-off.*
+
+### 2.2b THE STANDING DIRECTION, RESTATED BECAUSE IT GOVERNS EVERY CHOICE HERE
+
+**"Buddy's engagement is the controls. He likes moving a slider and SEEING what
+changed, and he likes colour options on anything that can take one."** — Scotty,
+after watching him.
+
+**So: every effect you can reasonably expose as a toggle or a slider, expose.** The
+ripple is the first example, not the exception. Trails, glow, ring behaviour, wrap,
+particle shape — if it changes what the field looks like and a child could notice the
+difference, **it gets a control.** **Do not trim for tidiness.** A control that turns
+out to be uninteresting costs one row; an effect a child never discovers costs the
+whole point of the toy.
+
+**The only filter is invariant 1**: if it cannot be made operable by a non-reader, it
+does not ship (§7).
+
 ### 2.3 Colour is the label
 
 **`.palettes` and `.backgrounds` carry `hex`, so a tile can BE the colour it

@@ -48,6 +48,54 @@ before designing anything:
 - **`GAMES_Z` is 500/501.** The picker needs its own band and must sit *below* the
   game host, not above it.
 
+## 1a. DISPATCHED 2026-09-02 on live findings — and the picker is NOT a regression
+
+**Scotty ran Gyre on a real device. Tapping Games opened Gyre directly, with no menu
+and no way to reach anything else.** The question put to CC-A was whether that is a
+`PUP-WO-0200` regression. **It is not, and saying so plainly matters more than being
+diplomatic about it: it is UNBUILT WORK — this work order, never dispatched.**
+
+Three independent confirmations, taken at the **live root build** rather than the
+source, because the source is what one already believes:
+
+- **The live code says so itself**, in a comment CC-B shipped: *"The picker is
+  `PUP-WO-0201`'s and is not built here, so `openGames()` mounts `GAMES[0]`."*
+- **`PUP-WO-0200` §4 fences it out** by name: *"The picker overlay — `PUP-WO-0201`.
+  This work order makes the button and the registry exist; rendering tiles from it is
+  the next one."* Its opening blockquote says the same.
+- **No `build/wo-0201` ref has ever existed.** Only `author/wo-0201`, the branch that
+  wrote this document.
+
+**The mechanism, exactly:** `if (btn.id === 7) { openGames(); return; }` calls with no
+argument, and `openGames(entry)` does `entry = entry || GAMES[0]`. **That is a
+wire-up, not a chooser** — CC-B's own words, and it was the correct call under its
+fence.
+
+**What this changes is what to do, which is the point of naming it correctly:**
+dispatch the work order that already exists and is specified, rather than hunting a
+bug in a merged one. *(And §2.2's "opens even with one game" ruling was pre-empting a
+design mistake nobody had made — the registry has two entries; nothing was skipped.)*
+
+### 1a.1 SECOND LIVE FINDING, ADDED HERE: the back button
+
+**`#gameBack` is far too large and its arrow is not centred.** From touch, not code.
+
+**This is a real trade and not a mistake to correct.** CC-B made it big deliberately —
+*"big, high-contrast and in the corner a thumb reaches, because the person using it
+cannot read the label"* — and that reasoning is sound. **But on a toy whose entire
+point is watching the field, a control that dominates the play surface is its own
+invariant 1 failure:** the child's attention goes to the exit rather than the thing
+the exit is for.
+
+**Resolve it by separating the two properties rather than trading them:** shrink the
+**visible** control and keep the **touch target** generous — a smaller glyph and ring
+inside a larger transparent hit area. Reachability is a property of the hit box;
+dominance is a property of the paint. **Centre the glyph.**
+
+**Do not shrink the hit target.** `#gameBack` was inert for two ordinary gestures
+until `PUP-WO-0300` fixed it (architecture §6.1 member 6), and it is the one control
+in the app that must never be hard to hit.
+
 ## 2. Scope
 
 ### 2.1 The picker
