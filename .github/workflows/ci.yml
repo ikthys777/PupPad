@@ -91,12 +91,23 @@ jobs:
     # actually runs, permanently, and cannot rot the way the last one did.)
     name: Checks
     runs-on: ubuntu-latest
-    # RAISED FROM 10 BY PUP-WO-0400. The job was cancelled mid-step at 10m17s once
-    # checks 21 and 21-controls were added: the pre-existing checks already take ~9
-    # minutes, and 25 browser-driven red proofs need several more. The cancellation
-    # reported as a step failure with no failing assertion, which is the least useful
-    # shape a red run can take — nothing was wrong with the checks.
-    timeout-minutes: 20
+    # RAISED FROM 10 TO 15 BY PUP-WO-0400 (CC-A's ruling). The job was cancelled
+    # mid-step at 10m17s once checks 21 and 21-controls were added: the pre-existing
+    # checks already take ~9 minutes and the 25 browser-driven red proofs need more.
+    # The cancellation reported as a step failure with NO FAILING ASSERTION — §6.1
+    # member 3, red for the wrong reason, and the least useful shape a red run takes.
+    #
+    # THE REJECTED OPTION, RECORDED BECAUSE IT IS THE BETTER ENGINEERING ANSWER AND HAS
+    # TWO TRAPS. Splitting the controls into their own job keeps the wall clock at ~10
+    # minutes instead of growing it. It was rejected because the job graph is
+    # `publish: needs: checks` and `deploy: needs: publish` — THERE ARE ONLY THREE JOBS,
+    # so a fourth job is not in publish's `needs` and A RED CONTROLS JOB WOULD NOT BLOCK
+    # PUBLICATION, which is deployment. The split must add it to `needs` in the same
+    # change, and getting that wrong silently removes a gate rather than loudly failing.
+    # Second trap: the comment at the `publish` job says `needs: checks` means "every
+    # check in this file", which is true today and false the moment a check moves out.
+    # Two expressions that must agree, created by the split. Correctness over wall clock.
+    timeout-minutes: 15
     steps:
       - name: Check out the full history
         uses: actions/checkout@v7

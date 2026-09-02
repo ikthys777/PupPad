@@ -135,8 +135,14 @@ which:
   cleared** — one clearing placement at combo 1 cannot distinguish a multiplier of 1 from
   a multiplier that is stuck;
 - the **`removeEventListener` loop was deleted** — section 8's baseline was taken *after*
-  the game mounted, so it already contained the module's listeners and the comparison
-  could never fire. **Structurally unfalsifiable**;
+  the game mounted, so it already contained the module's listeners and `post > baseline`
+  could never fire. **Structurally unfalsifiable.** This is the one to take away:
+  **a teardown check that cannot see a leak is worse than no teardown check, because it
+  converts an untested property into a tested one in the reader's head.** The general
+  move, and the fix here, is that **an instrument which cannot demonstrate it would have
+  seen the thing must assert that it can** — the clause now fails if its own wrapper never
+  observed listeners appear at all, and prints the transition (2 → 4 with the game up → 2
+  after) as the evidence that it was watching;
 - a **`setInterval` leaked** past teardown while section 8 printed "0 armed timers" — the
   wrapper covered `setTimeout` only;
 - the **stylesheet moved to `document.head`** and was never removed — the exact hazard the
@@ -164,11 +170,24 @@ red proofs needed several more — so the job was **cancelled mid-step at 10m17s
 reported as a step failure with no failing assertion, which is the least useful shape a
 red run can take: nothing was wrong with either check.
 
-Two causes, both mine. The timeout is now 20 minutes, matching the sibling job. And the
+Two causes, both mine. The timeout is now 15 minutes. And the
 lane count was `cores - 2`, which on GitHub's **2-core** runner is the floor of 2 — I had
 sized a **browser-bound** workload by CPU count, on the assumption of a 16-core machine
 that is only true of my own. These scenarios spend their lives waiting on Chromium, so the
 floor is now 4 regardless of cores (~1.2GB against the runner's 7GB).
+
+**CC-A ruled 15 minutes, and rejected the better engineering answer for a stated reason
+worth inheriting.** Splitting the red proofs into their own job keeps the wall clock flat
+instead of growing it — they are independent and they are 21 seconds. It was rejected
+because the job graph is `publish: needs: checks` and `deploy: needs: publish`, and **there
+are only three jobs**: a fourth job is not in `publish`'s `needs`, so **a red controls job
+would not block publication — and publication is deployment.** The split must add it to
+`needs` in the same change, and getting that wrong *silently removes a gate* rather than
+loudly failing. Its second trap is a comment on the `publish` job asserting that
+`needs: checks` covers "every check in this file", which is true today and false the moment
+a check moves out — two expressions that must agree, created by the split. Both are
+recorded at `ci.yml:94` so whoever does it later inherits them instead of rediscovering one
+in production.
 
 **I would not have found this by looking.** The step that failed was not either of mine —
 the log's `FAIL` lines all belong to check 7's own red proofs, which are supposed to be
