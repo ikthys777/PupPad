@@ -1096,6 +1096,13 @@ against that.
 
 ### 8.8 The control-panel seam — the fifth channel, documented after it shipped
 
+> **On the citations in this subsection.** Every line number below is paired with the
+> **symbol** it sits in, and the symbol is the anchor. `index.html` is a mutable file
+> and roadmap §4a records 108 `index.html:NNNN` citations across `docs/` of which
+> seven already land on blank lines — architecture §6.1 member 4 at scale. This
+> section adds to that count and says so rather than pretending otherwise;
+> `PUP-WO-0106`'s symbol-first form is the precedent, and it is followed here.
+
 **This subsection is a correction to this document, not a new design.** §8.1 names
 four channels between a module and the shell — `mount`, `host`, `api`, and the
 returned `teardown` — and says nothing about a fifth. But `PUP-WO-0300` built one
@@ -1106,8 +1113,8 @@ a pointer that resolves in the author's head and not in the reader's tree** — 
 it is worse here than usual, because the next game to be ported has four assist
 buttons and two board sizes and its work order cannot say where they go.
 
-**The seam.** After `mount` returns, the shell reads `host[api.entry.id]`
-(`index.html:1932`). For Gyre, whose registry id is `gyre`, that reads `host.gyre`.
+**The seam.** After `mount` returns, the shell reads `host[api.entry.id]` in
+**`mountControlPanel`** (`index.html:1932`). For Gyre, whose registry id is `gyre`, that reads `host.gyre`.
 **The property name is not a name the shell knows** — it is the mounting entry's
 own registry id, so a second game publishing `host.blockpop` gets a control panel
 with no edit to the shell at all. That generality is why the name stays: a fixed
@@ -1117,8 +1124,9 @@ already having distinct ids.
 
 **Publishing is optional and failing to publish is not an error.** The shell
 requires an object carrying `get`, `set` and a non-empty `controls`; anything else
-— absent, wrong type, throwing getter — yields **no panel and no error**
-(`index.html:1933-1936`, each guarded). `games/hello.js` is the live proof of that
+— absent, wrong type, throwing getter — yields **no panel and no error** —
+four guards at the top of **`mountControlPanel`**, each returning `null`
+(`index.html:1933-1936`). `games/hello.js` is the live proof of that
 path. **A game that wants no control surface does nothing.**
 
 | Member | Shape | Contract |
@@ -1128,28 +1136,34 @@ path. **A game that wants no control surface does nothing.**
 | `controls` | array of descriptors | The declarative manifest. Order is render order. Empty or absent means no panel. |
 | `ranges` | `{[key]: [lo, hi, step?]}` | **Slider bounds live here and only here** — a range specified twice is `PUP-WO-0300` §9's first warning. A slider whose key has no valid range is skipped, not rendered broken. |
 
-**Three descriptor kinds, and the vocabulary is closed** (`index.html:2266-2268`):
+**Three descriptor kinds, and the vocabulary is closed** (the `desc.kind` dispatch in **`mountControlPanel`**, `index.html:2266-2268`):
 
 - **`slider`** — `{kind, key, icon, label?}`, bounds from `ranges[key]`. The whole
   50px bar is the target, not a thumb: a three-year-old's aim is not an adult's.
 - **`choice`** — `{kind, key, icon?, label?, single?, options:[{id, icon|hex}]}`,
   **or `from:'<property>'`** naming a property on the seam that holds the options
-  instead of inlining them (`index.html:2138-2140`). Fewer than two options and the
+  instead of inlining them (**`buildChoice`**, `index.html:2138-2140`). Fewer than two options and the
   control is skipped. **`single:true` renders ONE cycle button that flips**, which
   is `PUP-WO-0301` §2.2's ruling that attract/repel is one two-state affordance —
   "a row of two would make the child choose between two things he cannot read";
   otherwise one button per option. Whether the row renders as swatches is decided
-  by **`options[0].hex` alone, for the whole set** (`:2143`), and a swatch row spans
+  by **`options[0].hex` alone, for the whole set** (**`buildChoice`**'s `isSwatch`,
+  `index.html:2143`), and a swatch row spans
   the grid. **A hex swatch IS the colour it selects** — invariant 1 with no text.
 
   **`hex` is validated, and dropping that validation is a flag-and-stop.** It is
   concatenated into an inline `style`, so an unvalidated `"red;position:fixed;
   inset:0;z-index:2147483647"` builds a button covering the entire screen and every
-  other control (`index.html:2182-2196`). The picker learned this exact lesson on
-  the registry's `color` four hundred lines above, and `PUP-WO-0301` **reused that
-  same validator, `GAMES_HEX_RE`, rather than writing a second one.** It fails
-  closed twice over: a hex that does not match falls back to the neutral gradient
-  (`:2188`), and a swatch whose hex does not match is dropped entirely (`:2196`).
+  other control (**`buildChoice`**'s option loop, `index.html:2182-2196`).
+
+  **The picker learned this exact lesson first**, on the registry's `color`, and
+  `PUP-WO-0301` **reused its validator rather than writing a second one**:
+  `GAMES_HEX_RE` (declared `index.html:2370`) is the single constant the picker
+  tests `color` and `glow` against (`index.html:2395-2396`) and the panel tests
+  `hex` against. **One typo surface, one validator.** It fails closed twice over —
+  a hex that does not match falls back to the neutral gradient
+  (`index.html:2188`), and a swatch whose hex does not match is dropped entirely
+  (`index.html:2196`).
 - **`action`** — `{kind, method, icon, label?, prominent?}`. `method` is a method
   name on the seam; the shell calls it and knows nothing else. `prominent` lifts it
   into the bar above the drawer.
