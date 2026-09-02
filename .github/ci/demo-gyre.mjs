@@ -422,7 +422,12 @@ const bulk = await page.evaluate(() => {
   let prev = g.get();
   for (let i = 0; i < 2000; i++) {
     const s = g.randomize();
-    if (s.count < 800 || s.count > 2600) bad.push(['count', s.count]);
+    if (s.count < 800 || s.count > 1800) bad.push(['count', s.count]);
+    /* THE DRAW BUDGET, ASSERTED. Before it existed randomize could draw count 2600 with
+     * size 86 and tail 88, which measured 17.9 fps on a throttled runner — a stutter
+     * nobody chose, produced by the one control a child presses for a surprise. §3
+     * lists performance among the things the latitude does not relax. */
+    if (s.count * (1 + s.size / 100 + s.tail / 100) > 3400 * 1.05) bad.push(['over the draw budget', [s.count, s.size, s.tail]]);
     if (s.force < 0.35 || s.force > 1.35) bad.push(['force', s.force]);
     if (s.burst < 35 || s.burst > 100) bad.push(['burst', s.burst]);
     if (s.tail < 18 || s.tail > 88) bad.push(['tail', s.tail]);
@@ -497,7 +502,7 @@ const restartWith = async (raw) => {
 };
 
 let r = await restartWith(null);
-const DEF = { count: 1600, force: 0.68, burst: 50, tail: 32, size: 40, linger: 60, palette: 'ice', background: 'void', polarity: 1 };
+const DEF = { count: 1200, force: 0.68, burst: 50, tail: 32, size: 40, linger: 60, palette: 'ice', background: 'void', polarity: 1 };
 const defOff = Object.keys(DEF).filter((k) => r.params[k] !== DEF[k]);
 if (defOff.length === 0) ok('api.load() returning null: the field came up on its defaults and ran');
 else bad('a null api.load() did not produce the defaults', `differs on ${defOff.join(', ')}: ${JSON.stringify(r.params)}`);
@@ -541,6 +546,34 @@ else bad(`the defaults have fallen to ${fpsDefault.toFixed(1)} fps on this runne
   'a field that stutters is not delightful (PUP-WO-0300 §3). Either the defaults or the draw loop got more expensive.');
 if (fpsMax >= 24) ok(`even every slider at its top holds ${fpsMax.toFixed(1)} fps — the extremes are reachable, not traps`);
 else bad(`the top of the sliders drops to ${fpsMax.toFixed(1)} fps`, 'a child who drags a slider to the end must not land on a frozen toy');
+
+/* AND THE SAME NUMBERS ON A SLOW MACHINE, WHICH IS THE ONE THAT MATTERS. Unthrottled,
+ * this runner sits at the vsync cap for every setting up to 5000 particles — a number
+ * that says the runner is fast, not that the field is cheap, and a regression could
+ * hide entirely underneath it. A 6x CPU throttle is a crude, arbitrary, REPEATABLE
+ * stand-in for a cheap tablet: it is not the device and it is not claimed to be, but
+ * it is the only place on this runner where the cost of a change is visible at all.
+ *
+ * The randomize case is the one that found a real defect. Before the draw budget
+ * existed the randomizer could land on count 2600 with size 86 and tail 88 — 17.9 fps,
+ * a stutter nobody chose, from the one control a child presses precisely because he is
+ * not choosing. */
+const cdp = await page.context().newCDPSession(page);
+await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 });
+const slowDefault = await fps(DEF, 2500);
+/* THE HEAVIEST FIELD RANDOMIZE CAN ACTUALLY PRODUCE, which is a point ON the budget
+ * line and not the corner of the bounds. count 1800 with size 86 and tail 88 costs
+ * 4932 against a budget of 3400 — randomize cannot draw it, so testing it would be
+ * measuring a state the code refuses and calling the number a fact about the game. */
+const slowWorst = await fps(Object.assign({}, DEF, { count: 1250, size: 86, tail: 88, linger: 92 }), 2500);
+await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+console.log(`  ....  6x throttled, defaults: ${slowDefault.toFixed(1)} fps`);
+console.log(`  ....  6x throttled, the heaviest field randomize can draw: ${slowWorst.toFixed(1)} fps`);
+notes.push(`6x throttled — defaults ${slowDefault.toFixed(1)} fps, randomize's heaviest ${slowWorst.toFixed(1)} fps`);
+if (slowDefault >= 40) ok(`throttled 6x the defaults still hold ${slowDefault.toFixed(1)} fps`);
+else bad(`throttled 6x the defaults fall to ${slowDefault.toFixed(1)} fps`, 'the default count is too high for a slow device, or the draw loop got more expensive');
+if (slowWorst >= 30) ok(`throttled 6x, the heaviest field randomize can produce still holds ${slowWorst.toFixed(1)} fps — the draw budget is doing its job`);
+else bad(`throttled 6x, randomize can produce a ${slowWorst.toFixed(1)} fps field`, 'DRAW_BUDGET in games/gyre.js is too generous, or the draw loop got more expensive');
 
 /* ============================================== 7. teardown leaves nothing running
  * PUP-WO-0300 acceptance 7: "measured, not asserted." Both halves are counted by

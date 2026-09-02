@@ -99,7 +99,31 @@ const POLARITY_ATTRACT = 1, POLARITY_REPEL = -1;
  * viewport and 1800 otherwise; the tablet this runs on is neither a phone nor a
  * desktop, and the trade is stated there rather than implied here. */
 const DEFAULT_COUNT_NARROW = 900;
-const DEFAULT_COUNT_WIDE = 1600;
+const DEFAULT_COUNT_WIDE = 1200;
+
+/* THE DRAW BUDGET, AND IT IS MEASURED. §3 lists performance among the things the
+ * latitude does NOT relax — "a field that stutters is not delightful" — and the
+ * randomizer is the one control that can walk into a stutter with nobody choosing it.
+ *
+ * Cost is dominated by three parameters together, not by `count` alone: every particle
+ * is a stroke, `size` is how wide that stroke is and `tail` is how long, so what the
+ * GPU pays tracks `count * (1 + size/100 + tail/100)` closely. Measured on a CI runner
+ * throttled 6x, which is a crude but repeatable stand-in for a cheap tablet:
+ *
+ *     count 1200  size 86  tail 88   ->  37.8 fps      product 3288
+ *     count 1600  size 60  tail 55   ->  33.7 fps      product 3440
+ *     count 1500  size 70  tail 70   ->  31.6 fps      product 3600
+ *     count 1800  size 50  tail 40   ->  31.5 fps      product 3420
+ *     count 1300  size 86  tail 88   ->  29.2 fps      product 3562
+ *     count 2600  size 86  tail 88   ->  17.9 fps      product 7124   <- unusable
+ *
+ * The last line is what randomize could produce before this existed. So the count it
+ * draws is bounded by the budget rather than by a fixed ceiling, and a randomize that
+ * picks a fat, long-tailed field gets fewer particles to draw it with. THE SLIDERS ARE
+ * NOT BOUNDED BY THIS: a child dragging count to 5000 is exploring and gets to. The
+ * difference is that he chose it and can drag it back. */
+const DRAW_BUDGET = 3400;
+const drawCost = (count, size, tail) => count * (1 + size / 100 + tail / 100);
 
 const clampNum = (n, lo, hi, fallback) => {
   const v = typeof n === 'number' && isFinite(n) ? n : fallback;
@@ -158,7 +182,7 @@ function sanitise(raw, width) {
  * pressing the dice is asking for a surprise, and a surprise that shows nothing is a
  * broken toy. The two are different promises. */
 const RANDOM_BOUNDS = {
-  count: [800, 2600],
+  count: [800, 1800],
   force: [0.35, 1.35],
   burst: [35, 100],
   tail: [18, 88],
@@ -184,12 +208,19 @@ const BACKGROUND_IDS = BACKGROUNDS.map((b) => b.id);
  * 2) holds by construction rather than by luck. Polarity is drawn freely: it changes
  * how the field answers a finger, which is visible the moment one lands. */
 function randomSettings(current) {
+  const size = clampRange(randIn(RANDOM_BOUNDS.size), 40);
+  const tail = clampRange(randIn(RANDOM_BOUNDS.tail), 32);
+  /* count is drawn LAST because its ceiling depends on how expensive the stroke it
+   * has to draw already is — see DRAW_BUDGET. The floor is the bounds' own floor: a
+   * budget that could starve the field down to nothing would be trading one unusable
+   * result for another. */
+  const countHi = Math.max(RANDOM_BOUNDS.count[0], Math.min(RANDOM_BOUNDS.count[1], DRAW_BUDGET / (1 + size / 100 + tail / 100)));
   return {
-    count: clampCount(randIn(RANDOM_BOUNDS.count)),
+    count: clampCount(randIn([RANDOM_BOUNDS.count[0], countHi])),
     force: clampForce(randIn(RANDOM_BOUNDS.force)),
     burst: clampRange(randIn(RANDOM_BOUNDS.burst), 50),
-    tail: clampRange(randIn(RANDOM_BOUNDS.tail), 32),
-    size: clampRange(randIn(RANDOM_BOUNDS.size), 40),
+    tail: tail,
+    size: size,
     linger: clampRange(randIn(RANDOM_BOUNDS.linger), 60),
     palette: pickOther(PALETTE_IDS, current.palette),
     background: pickOther(BACKGROUND_IDS, current.background),
