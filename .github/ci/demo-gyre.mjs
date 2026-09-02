@@ -34,12 +34,24 @@ import { chromium } from 'playwright';
 
 const REPO = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
 
-/* PUP-WO-0300 acceptance 10: every demonstration asserts the COMMIT it ran against.
- * FAILS CLOSED, which the sibling checks do not — they initialise COMMIT to 'unknown'
- * and pass, so a green with no identifiable subject is a claim about a tree nobody can
+/* PUP-WO-0300 acceptance 10: every demonstration asserts the COMMIT it ran against, and
+ * FAILS CLOSED — a green with no identifiable subject is a claim about a tree nobody can
  * name, which is architecture §6.1 member 1 wearing a provenance line. A tree with no
  * .git (a `git archive` export, which is what §6's freeze protocol hands a read-only
- * pass) can state its subject explicitly instead. */
+ * pass) can state its subject explicitly through PUPPAD_SUBJECT instead.
+ *
+ * THIS COMMENT USED TO SAY "which the sibling checks do not — they initialise COMMIT to
+ * 'unknown' and pass". That stopped being true when PUP-WO-0201 swept them, and no check
+ * in this directory has initialised COMMIT to 'unknown' since. PUP-WO-0301's feedback
+ * then claimed the stale sentence had been corrected while leaving it byte-identical —
+ * a false claim about a false claim, caught by an adversarial pass running `git diff`
+ * rather than reading the paragraph that said it was fixed. Corrected here, for real, and
+ * verifiable with `git diff eeadf46 -- .github/ci/demo-gyre.mjs`.
+ *
+ * The rule this file implements inline now also exists once in ./lib/subject.mjs. This
+ * copy is NOT converted, deliberately and visibly: nine files still carry it, and
+ * converting four of them while writing "the rule lives here, once" is how a fence drifts.
+ * The remaining nine are named in docs/feedback/PUP-WO-0301.md §5.1 as owed work. */
 let COMMIT = process.env.PUPPAD_SUBJECT || '';
 if (!COMMIT) {
   try { COMMIT = execFileSync('git', ['-C', REPO, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}

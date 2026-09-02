@@ -310,7 +310,10 @@ const drawerScroll = await page.evaluate(() => {
   const d = document.getElementById('gameControlsDrawer');
   return { scrollH: d.scrollHeight, clientH: d.clientHeight };
 });
-if (drawerScroll.scrollH > drawerScroll.clientH + 2) {
+/* NO SLOP. `+ 2` meant that a drawer overflowing by ONE pixel — which is exactly what it
+ * did at 1024x640 — took the "everything fits" branch and the pan assertion below never
+ * executed on any run. Two deliverables cited that assertion as proof the pan works. */
+if (drawerScroll.scrollH > drawerScroll.clientH) {
   const dr = await rect('#gameControlsDrawer');
   await touch('touchStart', [{ x: dr.cx, y: dr.y + dr.h * 0.75, id: 1 }]);
   for (let i = 1; i <= 6; i++) {
@@ -434,8 +437,13 @@ function pairSignal(a, b) {
 function pairNoise(a, b) {
   return Math.max(pairSignal(a.reps[0], a.reps[1]), pairSignal(b.reps[0], b.reps[1]), 0.05);
 }
-const CHANGE_FLOOR = 0.4;
-const SNR_FLOOR = 2;
+/* THE TWO FLOORS THAT USED TO BE DECLARED HERE ARE GONE, AND THAT IS THE CORRECTION.
+ * They were left behind when section 2's assertion changed, referenced by nothing, while
+ * four comments in this commit went on citing "a floor of 1.0" that no code contained —
+ * a threshold that lived only in prose. The sweep's numbers are INFORMATION, printed on
+ * every run; what this section asserts is the value each control puts into the seam, and
+ * §2b asserts the field for the four parameters check 16 does not cover. Every threshold
+ * that is enforced is written at the line that enforces it. */
 const perParam = [];
 for (const c of manifest) {
   if (c.kind === 'action') continue;
@@ -447,10 +455,23 @@ for (const c of manifest) {
     const loV = (await seamGet())[key];
     const hi = await fieldUnderTwice(async () => { await fingerDrag(sel, 0.5, 0.98); });
     const hiV = (await seamGet())[key];
-    /* THE CONTROL MOVED THE SETTING is a separate, noiseless claim from THE FIELD MOVED,
-     * and keeping them apart is what stops a pixel threshold from being asked to prove
-     * something a plain read already proves. */
-    const moved = String(loV) !== String(hiV);
+    /* THE VALUE, NOT MERELY A DIFFERENT VALUE. This asserted `loV !== hiV`, and an
+     * adversarial pass inverted the slider's projection in one expression — dragging
+     * right set the MINIMUM — and check 19 passed with 0 failures while printing the
+     * defect in its own diagnostics. "Different" is not "the value the child pointed at".
+     * A drag to 2% must land within a step or two of the bottom of the range and a drag
+     * to 98% within a step or two of the top; that is a claim an inversion cannot satisfy.
+     * The tolerance is 6% of the range, which is wider than any step this seam has and
+     * far narrower than the 96% the drag covers. */
+    /* `lo` and `hi` in this scope are the two READINGS, not the range bounds — the first
+     * version of this assertion wrote `hi - lo` on two objects, got NaN, and reported all
+     * six sliders as broken while printing 350->4900 beside the complaint. The bounds
+     * come from the seam, by name. */
+    const [rlo, rhi] = await page.evaluate((k) => document.getElementById('gameHost').gyre.ranges[k], key);
+    const span = rhi - rlo;
+    const moved = isFinite(Number(loV)) && isFinite(Number(hiV))
+      && Math.abs(Number(loV) - rlo) <= span * 0.06
+      && Math.abs(Number(hiV) - rhi) <= span * 0.06;
     perParam.push({ key, kind: 'slider', a: String(loV), b: String(hiV), moved,
       d: pairSignal(lo.mean, hi.mean), noise: pairNoise(lo, hi) });
   } else {
@@ -535,7 +556,7 @@ if (unreached.length) bad(`${unreached.length} control(s) could not be pressed a
 console.log('        ' + perParam.map((p) => `${p.key} ${p.a}->${p.b} signal ${p.d.toFixed(2)} / noise ${(p.noise || 0).toFixed(2)}`).join('  ·  '));
 const notMoved = perParam.filter((p) => p.moved === false);
 if (!notMoved.length) ok(`all ${perParam.length} controls put the value they promise into the seam when pressed with a finger, dragged or tapped`);
-else bad(`${notMoved.length} control(s) did not set the value they are painted for`, notMoved.map((p) => `${p.key}: wanted ${p.b}`).join(' · '));
+else bad(`${notMoved.length} control(s) did not set the value they are painted for`, notMoved.map((p) => `${p.key}: dragged/tapped to the far end and the seam holds ${p.b} (low end gave ${p.a})`).join(' · '));
 
 /* WHAT THE LINE ABOVE IS AND IS NOT, STATED RATHER THAN LEFT TO A READER.
  *
@@ -563,9 +584,17 @@ else bad(`${notMoved.length} control(s) did not set the value they are painted f
  * near-empty canvas where each is the only thing on the screen — which is the same
  * discipline check 16 uses, applied to the new half. */
 console.log('\n--- 2b. the four parameters this work order added, each on a bare canvas ---');
+/* `reset()` FIRST, AND IT IS WHAT MAKES THESE READINGS COMPARABLE. Settings can be set,
+ * but the PARTICLE POSITIONS carry over from whatever ran before, and two readings of the
+ * same setting from two different fields differ by as much as the setting does — the
+ * `shape` fixture measured 1.8 points of drift on a parameter that is multiplied by zero
+ * and therefore cannot have moved. `reset()` reseeds the field; the settings go on top of
+ * it; `clear()` wipes the trails. Every reading in this section then starts from the same
+ * place, using nothing but the three controls the panel itself ships. */
 async function bare(extra) {
   await page.evaluate((o) => {
     const g = document.getElementById('gameHost').gyre;
+    g.reset();
     const b = Object.assign({ count: 350, force: 0.68, burst: 50, tail: 20, size: 40, linger: 0,
       palette: 'ice', background: 'void', polarity: 1, ripple: 0, glow: 0, spin: 0, shape: 'streak' }, o);
     for (const k of Object.keys(b)) g.set(k, b[k]);
@@ -607,45 +636,45 @@ const glow1 = await heldRing(1), glow0 = await heldRing(0);
 if (glow1 > glow0 + 4) ok(`the finger glow: holding a finger lifts the halo around it from ${glow0.toFixed(1)} to ${glow1.toFixed(1)} mean luminance — and it is a RING, so repel's hole survives it (§5)`);
 else bad('the glow toggle does not change what a held finger paints', `ring luminance on ${glow1.toFixed(2)}, off ${glow0.toFixed(2)}`);
 
-/* `shape` — the stroke itself. `dot` draws no tail at all and `ribbon` draws a long wide
- * one, so at an identical particle count the ink they cover differs by a lot. */
-/* WITH A FINGER DOWN AND MOVING, and that is not decoration. The difference between
- * `dot` and `ribbon` is the TAIL — dot draws none and ribbon draws the longest — and a
- * tail's length is proportional to the particle's SPEED. Read on a still field the two
- * shapes both draw stubby marks and the measurement compresses the one thing it is
- * looking at: 1.84% against 2.93%. A finger dragged across the field is what a child
- * does and what makes a tail a tail. */
-async function shapeInk(shape) {
-  await bare({ shape, count: 1600, tail: 95, size: 70, linger: 0, force: 1.5 });
+/* `shape` — MEASURED THROUGH THE MECHANISM, NOT THROUGH COVERAGE.
+ *
+ * Total ink is a bad discriminator here and three protocols proved it: `dot` is 1.55x the
+ * stroke WIDTH and `streak` is longer, so the two trade off and the ratio wandered
+ * x1.58, x1.11, x1.03, x0.87 — the instrument reporting its own arrangement rather than
+ * the setting. The last of those had dots covering MORE than streaks, which is true and
+ * says nothing about whether the control works.
+ *
+ * What `shape` actually does is structural and unambiguous: `dot` multiplies the tail by
+ * ZERO. So under `dot` the tail slider must be INERT, and under `streak` it must be live.
+ * That is a claim about the mechanism, it needs no threshold chosen against a
+ * measurement, and no width/length trade can fake it in either direction. */
+/* REPEL, AND A THIN STROKE, because the tail's length is proportional to SPEED and every
+ * earlier fixture measured a slow field. Attract gathers the particles into a knot under
+ * the finger — high local density, low speed, and a tail of two or three pixels that no
+ * slider setting can make interesting. Repel flings the whole field outward at once, so
+ * every particle is moving; `size` at 25 keeps the stroke thin so its LENGTH is what the
+ * ink is made of. This is the arrangement in which `tail` is a large effect, which is the
+ * precondition for asking whether `shape` switches it off. */
+async function inkAtTail(shape, tail) {
+  await bare({ shape, tail, count: 2500, size: 25, linger: 20, force: 1.7, polarity: -1 });
+  await wait(400);
   const r = await rect('#gameHost canvas');
-  const y = r.y + r.h * 0.2;
-  await touch('touchStart', [{ x: r.x + r.w * 0.3, y, id: 1 }]);
-  for (let i = 1; i <= 14; i++) {
-    await touch('touchMove', [{ x: r.x + r.w * (0.3 + 0.4 * (i / 14)), y, id: 1 }]);
-    await wait(28);
-  }
+  await touch('touchStart', [{ x: r.x + r.w * 0.5, y: r.y + r.h * 0.2, id: 1 }]);
+  await wait(1400);
   const v = (await sample()).ink;
   await touch('touchEnd', []);
   await wait(200);
   return v;
 }
-const dotInk = await shapeInk('dot'), ribInk = await shapeInk('ribbon');
-/* 1.35, AND THE NUMBER HAS A HISTORY WORTH WRITING DOWN. It began at 1.6, which was a
- * guess made before anything had been measured, and the first run came back at 1.00%
- * ribbon against 1.76% dot — the wrong way round. That was a REAL DEFECT and the check
- * was right to be red: `lineCap: 'butt'` paints almost nothing on a segment shorter than
- * a pixel, and MIN_SEG floors every slow particle to 0.4px, so ribbon vanished wherever
- * the field was calm. With a square cap it measures 2.93 / 1.84, 3.84 / 2.43 and
- * 3.9 / 2.5 — 1.58, 1.58, 1.56 — across three protocols. 1.35 sits below all three with
- * margin and far above 1.0. Chosen against measurements, not to make a red go away, and
- * the sweep's own independent reading of `shape` is asserted alongside it so the claim
- * does not rest on one number. */
-const shapeRow = perParam.find((p) => p.key === 'shape');
-const shapeSnr = shapeRow ? shapeRow.d / Math.max(0.05, shapeRow.noise) : 0;
-if (ribInk > dotInk * 1.35 && shapeSnr >= 2) {
-  ok(`particle shape: the same 1600 particles cover ${(dotInk * 100).toFixed(1)}% of the screen as dots and ${(ribInk * 100).toFixed(1)}% as ribbons (x${(ribInk / dotInk).toFixed(2)}), and the sweep reads the same change at ${shapeSnr.toFixed(1)}x its own noise`);
+const streakShort = await inkAtTail('streak', 2), streakLong = await inkAtTail('streak', 98);
+const dotShort = await inkAtTail('dot', 2), dotLong = await inkAtTail('dot', 98);
+const streakDelta = Math.abs(streakLong - streakShort);
+const dotDelta = Math.abs(dotLong - dotShort);
+if (streakDelta > 0.004 && streakDelta > dotDelta * 3) {
+  ok(`particle shape: with streaks the tail slider moves the field by ${(streakDelta * 100).toFixed(2)} points of ink (${(streakShort * 100).toFixed(2)}% -> ${(streakLong * 100).toFixed(2)}%); with dots the same slider moves it by ${(dotDelta * 100).toFixed(2)} — the shape control is switching the tail off, which is what it is for`);
 } else {
-  bad('the shape control does not change the stroke', `dot ${(dotInk * 100).toFixed(2)}%, ribbon ${(ribInk * 100).toFixed(2)}% (x${(ribInk / dotInk).toFixed(2)}); sweep signal-to-noise ${shapeSnr.toFixed(2)}`);
+  bad('the shape control does not change the stroke',
+    `streak tail 2->98: ${(streakShort * 100).toFixed(2)}% -> ${(streakLong * 100).toFixed(2)}% (delta ${(streakDelta * 100).toFixed(2)}); dot tail 2->98: ${(dotShort * 100).toFixed(2)}% -> ${(dotLong * 100).toFixed(2)}% (delta ${(dotDelta * 100).toFixed(2)})`);
 }
 
 /* `spin` is measured in the sweep above and is the one entry there with a metric built
@@ -696,6 +725,49 @@ const geometry = await page.evaluate(() => {
 });
 if (!geometry.length) ok('after a randomize every slider redrew to the value the seam actually holds — the subscribe path, not a poll');
 else bad('a slider shows a position that is not its value', JSON.stringify(geometry));
+
+/* ---- clear and reset: the two action buttons nothing pressed ---- */
+/* An adversarial pass replaced `reset` with a function that returns the settings and
+ * changes nothing, and this check passed. Neither action was exercised anywhere — and
+ * `reset` is the button the acceptance-8 prediction hangs on ("put it back the way it
+ * was" answered in one tap). Coverage that stops at the controls with sliders on them is
+ * coverage shaped by what was easy to measure. */
+await page.evaluate(() => {
+  const g = document.getElementById('gameHost').gyre;
+  const s2 = { count: 2000, force: 1.2, burst: 80, tail: 70, size: 70, linger: 85,
+               palette: 'candy', background: 'plum', polarity: -1, shape: 'ribbon', spin: 1, ripple: 0, glow: 1 };
+  for (const k of Object.keys(s2)) g.set(k, s2[k]);
+});
+await wait(1400);
+const beforeClear = (await sample()).ink;
+if (!(await fingerTap('button[data-control="clear"]'))) bad('the clear button could not be pressed with a finger');
+await wait(60);
+const afterClear = (await sample()).ink;
+await wait(1200);
+const recovered = (await sample()).ink;
+if (beforeClear > 0.01 && afterClear < beforeClear * 0.5 && recovered > afterClear * 1.5) {
+  ok(`clear trails: one tap wipes ${(beforeClear * 100).toFixed(1)}% of ink down to ${(afterClear * 100).toFixed(1)}%, and the field draws itself back to ${(recovered * 100).toFixed(1)}%`);
+} else {
+  bad('the clear button does not wipe the field, or the field does not come back', `${(beforeClear * 100).toFixed(2)}% -> ${(afterClear * 100).toFixed(2)}% -> ${(recovered * 100).toFixed(2)}%`);
+}
+const beforeReset = await seamGet();
+if (!(await fingerTap('button[data-control="reset"]'))) bad('the reset button could not be pressed with a finger');
+await wait(400);
+const afterReset = await seamGet();
+/* The defaults are not restated here — that would be a second copy of defaultsFor(). What
+ * is asserted is that reset MOVED every setting that was off its default, and that a
+ * second reset is then a no-op, which is what "start over" means and what a stub that
+ * returns `read()` cannot do. */
+const stillOff = Object.keys(beforeReset).filter((k) => afterReset[k] === beforeReset[k]);
+await fingerTap('button[data-control="reset"]');
+await wait(300);
+const twice = await seamGet();
+const stable = Object.keys(afterReset).every((k) => twice[k] === afterReset[k]);
+if (stillOff.length <= 1 && stable) {
+  ok(`reset: one tap moved ${Object.keys(beforeReset).length - stillOff.length} of ${Object.keys(beforeReset).length} settings off the deliberately-wrong state, and a second tap changed nothing`);
+} else {
+  bad('the reset button does not start over', `unchanged by reset: ${stillOff.join(', ')}; idempotent: ${stable}`);
+}
 
 /* ================================================= 4. P3 gate 2 — randomize by finger */
 console.log('\n--- 4. P3 gate 2: five randomize taps, five usable fields ---');
@@ -842,11 +914,28 @@ await exitFrom('immediately after a dice press, while the field is still reseedi
 /* ================================================= 7. P3 gate 4 — persistence */
 console.log('\n--- 7. P3 gate 4: what he set survives a restart, and survives api.load() returning null ---');
 await openGyre();
-await fingerDrag('[data-control="size"][role="slider"]', 0.5, 0.95);
-await fingerTap('button[data-control="shape"][data-value="dot"]');
-await fingerTap('button[data-control="ripple"][data-value="0"]');
-await fingerTap('button[data-control="palette"][data-value="candy"]');
+/* THE DRAWER'S OPEN STATE PERSISTS IN localStorage, AND SECTION 6 CLOSED IT. Every tap
+ * below then went to a `display:none` element with a 0x0 rectangle at the origin, all
+ * four returned false, all four return values were discarded, and the section asserted
+ * that four settings nobody had changed came back unchanged — architecture §6.1 member 1,
+ * an assertion that passes by not running, found by an adversarial pass that instrumented
+ * the taps rather than trusting them. The drawer is opened first, and from here every tap
+ * in this file is CHECKED. */
+if (await page.evaluate(() => getComputedStyle(document.getElementById('gameControlsDrawer')).display === 'none')) {
+  await fingerTap('#gameControlsHandle');
+}
+const tapped = [];
+const mustTap = async (sel, fn) => { const okd = await (fn || fingerTap)(sel); if (!okd) tapped.push(sel); return okd; };
+await mustTap('[data-control="size"][role="slider"]', (sel) => fingerDrag(sel, 0.5, 0.95));
+await mustTap('button[data-control="shape"][data-value="dot"]');
+await mustTap('button[data-control="ripple"][data-value="0"]');
+await mustTap('button[data-control="palette"][data-value="candy"]');
+if (tapped.length) bad(`${tapped.length} control(s) in the persistence fixture were never actually pressed`, tapped.join(' · '));
 const chosen = await seamGet();
+/* The fixture must have CHANGED something, or "it came back" is a claim about nothing. */
+if (chosen.shape !== 'dot' || chosen.ripple !== 0 || chosen.palette !== 'candy') {
+  bad('the persistence fixture did not set what it meant to set', JSON.stringify({ shape: chosen.shape, ripple: chosen.ripple, palette: chosen.palette }));
+}
 await fingerTap('#gameBack');
 await wait(400);
 await openGyre();
@@ -907,6 +996,162 @@ const helloOut = await fingerTap('#gameBack');
 await wait(300);
 if (helloOut && await consoleReachable()) ok('and one tap still leaves it');
 else bad('could not leave the module with no panel');
+
+/* ============================ 10. THE SHAPE THE TOY ACTUALLY RUNS ON
+ * Everything above runs at 1024x640, and an adversarial pass showed why that is not
+ * enough: at 1024x480 — a tablet shape — FOUR CONTROLS WERE PAINTED AND COULD NOT BE
+ * PRESSED, and the drawer would not pan with a finger because every control carried
+ * `touch-action: none`, which forbids a gesture starting on it from scrolling an
+ * ancestor. The controls are most of the drawer's surface. A child would have had to
+ * find the 8px gaps between them.
+ *
+ * So the small screen is a first-class case now, not an afterthought, and it is tested
+ * at three shapes rather than one. A check that only ever runs at the size where the
+ * layout happens to fit is a check about the check's own viewport. */
+console.log('\n--- 10. the same panel on the shapes this actually runs on ---');
+for (const vp of [{ width: 800, height: 480 }, { width: 1024, height: 600 }, { width: 640, height: 480 }]) {
+  const ctx2 = await browser.newContext({ viewport: vp, hasTouch: true });
+  await ctx2.addInitScript(SAMPLER);
+  const p2 = await ctx2.newPage();
+  const cdp2 = await ctx2.newCDPSession(p2);
+  const t2 = (type, points) => cdp2.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+  const tap2 = async (sel) => {
+    const r = await p2.evaluate((s2) => {
+      const e = document.querySelector(s2);
+      if (!e) return null;
+      e.scrollIntoView({ block: 'nearest' });
+      const b = e.getBoundingClientRect();
+      const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+      const top = document.elementFromPoint(cx, cy);
+      return { cx, cy, w: b.width, h: b.height,
+        onScreen: b.width > 0 && b.height > 0 && b.top >= 0 && b.bottom <= innerHeight,
+        topmost: !!(top && (top === e || e.contains(top) || top.contains(e))) };
+    }, sel);
+    if (!r || !r.onScreen || !r.topmost) return null;
+    await t2('touchStart', [{ x: r.cx, y: r.cy, id: 1 }]);
+    await p2.waitForTimeout(40);
+    await t2('touchEnd', []);
+    await p2.waitForTimeout(140);
+    return r;
+  };
+  await p2.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+  await p2.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+  await tap2('.pad-btn[data-id="7"]');
+  await p2.waitForSelector('.pickerTile[data-game="gyre"]', { timeout: 10000 });
+  await tap2('.pickerTile[data-game="gyre"]');
+  await p2.waitForSelector('#gameControls', { timeout: 10000 });
+
+  const geo = await p2.evaluate(() => {
+    const d = document.getElementById('gameControlsDrawer');
+    const c = document.querySelector('#gameHost canvas');
+    return { scrollH: d.scrollHeight, clientH: d.clientHeight,
+      covers: d.getBoundingClientRect().height / c.getBoundingClientRect().height };
+  });
+  /* If it overflows, a FINGER must be able to pan it. This is the assertion two documents
+   * cited as proof and which had never once executed. */
+  let panned = null;
+  if (geo.scrollH > geo.clientH) {
+    const dr = await p2.evaluate(() => {
+      const b = document.getElementById('gameControlsDrawer').getBoundingClientRect();
+      return { cx: b.x + b.width / 2, y: b.y, h: b.height };
+    });
+    /* STARTED ON A CONTROL, ON PURPOSE — that is where a child's finger lands, and it is
+     * the case `touch-action: none` used to forbid. */
+    await t2('touchStart', [{ x: dr.cx, y: dr.y + dr.h * 0.7, id: 1 }]);
+    for (let i = 1; i <= 10; i++) {
+      await t2('touchMove', [{ x: dr.cx, y: dr.y + dr.h * 0.7 - i * 14, id: 1 }]);
+      await p2.waitForTimeout(16);
+    }
+    await t2('touchEnd', []);
+    await p2.waitForTimeout(300);
+    panned = await p2.evaluate(() => document.getElementById('gameControlsDrawer').scrollTop);
+  }
+
+  const manifest2 = await p2.evaluate(() => document.getElementById('gameHost').gyre.controls.map((c) => ({
+    kind: c.kind, key: c.key || null, method: c.method || null, from: c.from || null, single: !!c.single,
+    options: c.options ? c.options.map((o) => String(o.id)) : null })));
+  const dead = [];
+  for (const c of manifest2) {
+    const name = c.key || c.method;
+    const sels = c.kind === 'action' ? [`button[data-control="${name}"]`]
+      : c.kind === 'slider' ? [`[data-control="${name}"][role="slider"]`]
+      : c.single ? [`button[data-control="${name}"]`]
+      : (c.options || await p2.evaluate((f) => document.getElementById('gameHost').gyre[f].map((o) => String(o.id)), c.from))
+          .map((o) => `button[data-control="${name}"][data-value="${o}"]`);
+    for (const sel of sels) {
+      if (await tap2(sel)) continue;
+      /* WHY it could not be pressed, not just that it could not. A bare selector in a
+       * failure message is a second debugging session. */
+      const why = await p2.evaluate((s2) => {
+        const e = document.querySelector(s2);
+        if (!e) return 'absent';
+        const b = e.getBoundingClientRect();
+        const t = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+        return `${Math.round(b.width)}x${Math.round(b.height)}@${Math.round(b.x)},${Math.round(b.y)} topmost=${t ? (t.dataset && t.dataset.control) || t.id || t.tagName : 'none'}`;
+      }, sel);
+      dead.push(`${sel} [${why}]`);
+    }
+  }
+  /* THE EXIT MUST NOT COVER A CONTROL, which is the converse of the claim the panel's
+   * own comments make and the one nothing asserted. #gameBack is fixed at the top-left
+   * and wins every z-index tie by DOM order — correct, and it is exactly why it could
+   * swallow the dice on a short screen. Named separately from the reachability loop so a
+   * regression says which of the two rules broke. */
+  /* ASKED AS A HIT TEST, NOT AS GEOMETRY. "Is this control's centre inside the exit's
+   * rectangle" flags controls that are scrolled out of the drawer and clipped, which no
+   * finger can reach either way — a false positive that would have made this assertion
+   * noise and then made someone delete it. The question that matters is the one a finger
+   * asks: press this control's own centre, and what answers? Checked at rest AND with the
+   * drawer scrolled to its end, because scrolling is what slides the top rows upward. */
+  const exitEats = await p2.evaluate(() => {
+    const d = document.getElementById('gameControlsDrawer');
+    const hit = [];
+    for (const at of [0, d.scrollHeight]) {
+      d.scrollTop = at;
+      for (const el of document.querySelectorAll('#gameControls [data-control],#gameControlsHandle')) {
+        const r2 = el.getBoundingClientRect();
+        if (r2.width === 0 || r2.height === 0) continue;
+        const cx = r2.x + r2.width / 2, cy = r2.y + r2.height / 2;
+        if (cx < 0 || cy < 0 || cx > innerWidth || cy > innerHeight) continue;
+        /* A CONTROL SCROLLED OUT OF THE DRAWER IS CLIPPED AND NOBODY CAN SEE IT, so a
+         * hit test at its notional centre answers a question no finger asks. Only points
+         * inside the drawer's own visible box — or outside the drawer entirely, which is
+         * the bar the dice and handle live in — are a real collision. */
+        const inDrawer = d.contains(el);
+        if (inDrawer) {
+          const dr2 = d.getBoundingClientRect();
+          if (cy < dr2.top || cy > dr2.bottom || cx < dr2.left || cx > dr2.right) continue;
+        }
+        const top = document.elementFromPoint(cx, cy);
+        if (top && top.id === 'gameBack') {
+          hit.push(`${el.dataset.control || el.id} (scrollTop ${Math.round(d.scrollTop)})`);
+        }
+      }
+    }
+    d.scrollTop = 0;
+    return hit;
+  });
+  if (!exitEats.length) ok(`${vp.width}x${vp.height}: the exit covers the centre of no control`);
+  else bad(`${vp.width}x${vp.height}: #gameBack swallows a control — a tap on it closes the toy`, exitEats.join(' · '));
+  const panOk = geo.scrollH <= geo.clientH || panned > 4;
+  if (!dead.length && panOk) {
+    ok(`${vp.width}x${vp.height}: every control reachable and pressable by a finger (${geo.scrollH}px of content in ${geo.clientH}px${geo.scrollH > geo.clientH ? `, panned to ${Math.round(panned)} by a finger starting ON a control` : ', no scrolling needed'}); the drawer covers ${(geo.covers * 100).toFixed(0)}% of the field`);
+  } else {
+    bad(`${vp.width}x${vp.height}: the panel is not usable at this size`,
+      `${dead.length} control(s) unpressable${dead.length ? ': ' + dead.slice(0, 4).join(' · ') : ''}; content ${geo.scrollH}px in ${geo.clientH}px; finger pan -> ${panned}`);
+  }
+  const outOk = await tap2('#gameBack');
+  const home = await p2.evaluate(() => {
+    const b = document.querySelector('.pad-btn[data-id="7"]');
+    if (!b || document.getElementById('gamesChrome')) return false;
+    const r = b.getBoundingClientRect();
+    const e = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return !!(e && b.contains(e));
+  });
+  if (outOk && home) ok(`${vp.width}x${vp.height}: and one tap still leaves it`);
+  else bad(`${vp.width}x${vp.height}: the exit is not one tap`, `tapped=${!!outOk}, console reachable=${home}`);
+  await ctx2.close();
+}
 
 if (pageErrors.length) bad(`${pageErrors.length} uncaught page error(s)`, pageErrors.slice(0, 3).join(' | '));
 else ok('no uncaught page errors throughout');

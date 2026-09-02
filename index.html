@@ -1908,7 +1908,16 @@ function panelButton(size, radius, background, onTap, ariaLabel) {
   b.style.cssText = 'width:' + size + 'px;height:' + size + 'px;border-radius:' + radius + 'px;'
     + 'border:2px solid rgba(255,255,255,0.22);background:' + background + ';padding:0;margin:0;'
     + 'display:flex;align-items:center;justify-content:center;cursor:pointer;'
-    + 'touch-action:none;-webkit-tap-highlight-color:transparent;flex:0 0 auto;'
+    /* `pan-y`, AND `none` HERE WAS A REAL DEFECT ON THE ONLY DEVICE THAT MATTERS.
+     * `touch-action: none` on a control tells the browser that NO gesture starting on it
+     * may scroll an ancestor — so on a short screen, where the drawer holds more than it
+     * can show, a finger landing anywhere on a control could not pan it. The controls are
+     * most of the drawer's surface; the gaps between them are 8px. A child would have had
+     * to find those gaps to reach the controls below the fold. `pan-y` lets the browser
+     * take a vertical drag and leaves everything else to wireTap, which disarms on the
+     * pointercancel the browser sends when it claims the gesture — so a pan never fires a
+     * control and a tap still does. */
+    + 'touch-action:pan-y;-webkit-tap-highlight-color:transparent;flex:0 0 auto;'
     /* EXPLICIT, because the bar this may sit in is `pointer-events:none` so that the
      * field shows through the gaps between the controls. A button that inherits none
      * is painted, reachable by `elementFromPoint`, and dead to a finger — which is
@@ -1936,8 +1945,25 @@ function mountControlPanel(chrome, host, entry) {
     + 'flex-direction:column;align-items:stretch;pointer-events:none';
 
   var bar = document.createElement('div');
+  /* THE LEFT INSET IS NOT PADDING, IT IS THE EXIT'S COLUMN, AND ITS ABSENCE WAS THE WORST
+   * DEFECT IN THIS WORK ORDER. #gameBack is `position:fixed` at top ~62px, 64px square,
+   * so it occupies x 10-74 and y 62-126 forever. The dice sits in this bar directly above
+   * the drawer, so its centre is at roughly 0.28*H - 48 while the drawer's height cap
+   * binds — which lands inside 62..126 for every viewport between about 393px and 621px
+   * tall. At 800x480, 640x480, 1024x600 and 915x412 an adversarial pass measured that a
+   * tap on the dice's own centre HIT THE BACK BUTTON: no randomize, the game closed, and
+   * the child was dumped on the console. Only 26.5% of the dice was reachable at all.
+   *
+   * Every check passed throughout, including the one written for this panel, because they
+   * all asked whether the panel covers the exit and none asked whether the EXIT covers a
+   * control. The z-order discipline was right and one-directional.
+   *
+   * 84px clears x=74 with a margin, at every height, without depending on either
+   * element's vertical position — which is what makes it a fix rather than a coincidence
+   * that holds at the sizes someone happened to test. */
   bar.style.cssText = 'display:flex;align-items:flex-end;justify-content:space-between;'
-    + 'gap:12px;padding:0 12px 10px;pointer-events:none';
+    + 'gap:12px;padding:0 12px 10px max(84px,calc(env(safe-area-inset-left) + 74px));'
+    + 'pointer-events:none';
 
   /* `align-content:safe start`, and the `safe` is load-bearing for the same reason it is
    * in the picker: a centred overflowing container pushes its first rows ABOVE the
@@ -1952,10 +1978,31 @@ function mountControlPanel(chrome, host, entry) {
      * still scrolls on a short viewport — sixteen controls with no words take room, and
      * §2.2b's ruling is that a control is worth a row — so the drawer pans with a finger
      * and check 19 proves that it does, rather than assuming a child will find it. */
-    + 'max-height:72vh;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;'
-    + 'padding:12px 12px calc(12px + env(safe-area-inset-bottom));'
-    + 'display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));'
-    + 'gap:10px;align-content:safe start';
+    /* 78vh AND A DENSER GRID. At 72vh with 56px rows this held 460px of content in a
+     * 459px box on a 1024x640 screen — overflow by one pixel, which is not "it fits", and
+     * on the 480px-tall shape this actually runs on FOUR CONTROLS WERE PAINTED AND COULD
+     * NOT BE PRESSED. Sixteen controls with no words take room and §2.2b's ruling is that
+     * a control is worth a row, so the room comes from the rows rather than from the
+     * controls: 56px sliders become 50, 52px buttons become 46, the gap 10 becomes 8. The
+     * drawer still pans when it must, and now the pan actually works (see panelButton). */
+    /* THE CAP IS THE EXIT'S BAND, NOT A FRACTION OF THE SCREEN. #gameBack is fixed at
+     * y 62-126 forever, so any surface whose TOP rises above ~140px puts its first row
+     * under the exit — and on a 480px screen at 78vh it did exactly that: the polarity
+     * button and the first colour swatches sat inside the exit's hit box, where a tap
+     * closes the toy instead of pressing them. The dice had the same collision in the bar
+     * above (see there). Capping the drawer's top below the band removes it at EVERY
+     * height rather than at the heights someone happened to measure, which is what the
+     * 84px inset does for the bar. Two geometric rules, both independent of viewport. */
+    /* THE LEFT GUTTER IS THE EXIT'S COLUMN, the same 84px the bar above uses, and it is
+     * what makes the collision impossible rather than unlikely. Capping the drawer's
+     * HEIGHT below the exit's band worked only until the drawer was scrolled, at which
+     * point its top rows slid up under the exit again. #gameBack owns x 10-74 at every
+     * height and every scroll position; keeping the drawer's content out of that column
+     * is a rule no scroll can defeat, and it lets the drawer keep its full height. */
+    + 'max-height:78vh;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;'
+    + 'padding:10px 10px calc(10px + env(safe-area-inset-bottom)) max(84px,calc(env(safe-area-inset-left) + 74px));'
+    + 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));'
+    + 'gap:8px;align-content:safe start';
 
   /* Every control registers a repaint here. `randomize()` changes nine settings at once
    * and the seam announces once; without this the sliders would show the settings the
@@ -1984,9 +2031,9 @@ function mountControlPanel(chrome, host, entry) {
     if (!isFinite(step) || step <= 0) step = 0;
 
     var row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:10px;pointer-events:auto';
-    var ico = panelGlyph(desc.icon, 26);
-    ico.style.cssText += ';width:34px;flex:0 0 auto';
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;pointer-events:auto';
+    var ico = panelGlyph(desc.icon, 24);
+    ico.style.cssText += ';width:30px;flex:0 0 auto';
     row.appendChild(ico);
 
     var track = document.createElement('div');
@@ -1999,9 +2046,12 @@ function mountControlPanel(chrome, host, entry) {
     /* 56px tall, and the WHOLE BAR is the target — a tap anywhere on it jumps the value
      * to that position. A three-year-old's aim is not an adult's, and a 20px thumb he
      * has to catch first is a control he cannot use. */
-    track.style.cssText = 'position:relative;flex:1 1 auto;height:56px;border-radius:16px;'
+    /* `pan-y` for the same reason, and it is exactly right for a HORIZONTAL control
+     * inside a VERTICAL scroller: the browser keeps vertical panning and hands us
+     * everything horizontal, which is the only direction this slider reads. */
+    track.style.cssText = 'position:relative;flex:1 1 auto;height:50px;border-radius:14px;'
       + 'background:rgba(255,255,255,0.10);border:2px solid rgba(255,255,255,0.20);'
-      + 'overflow:hidden;touch-action:none;cursor:pointer;min-width:0';
+      + 'overflow:hidden;touch-action:pan-y;cursor:pointer;min-width:0';
     var fill = document.createElement('div');
     fill.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:0;'
       + 'background:linear-gradient(90deg,#22D3EE,#818CF8);pointer-events:none';
@@ -2107,7 +2157,7 @@ function mountControlPanel(chrome, host, entry) {
        * between two things he cannot read; a single button that changes what it shows
        * is a thing he presses to see what happens, which is the only instruction a
        * non-reader ever gets. */
-      var cycle = panelButton(64, 18, 'linear-gradient(145deg,#334155,#1e293b)', function() {
+      var cycle = panelButton(58, 16, 'linear-gradient(145deg,#334155,#1e293b)', function() {
         var i = indexOfValue(currentValues()[desc.key]);
         var next = opts[(i + 1 + opts.length) % opts.length];
         if (next) write(desc.key, next.id);
@@ -2129,13 +2179,21 @@ function mountControlPanel(chrome, host, entry) {
     for (var i = 0; i < opts.length; i++) {
       (function(opt) {
         if (!opt || opt.id === undefined || opt.id === null) return;
-        var bg = isSwatch ? opt.hex : 'linear-gradient(145deg,#334155,#1e293b)';
-        var b = panelButton(isSwatch ? 46 : 52, isSwatch ? 23 : 15, bg, function() {
+        /* VALIDATED, because this string is concatenated into an inline `style` and the
+         * picker learned this exact lesson on the registry's `color` four hundred lines
+         * above: a `hex` of "red;position:fixed;inset:0;z-index:2147483647" builds a
+         * button that covers the entire screen and every other control. The exit survived
+         * it — the insertBefore ordering held — but the toy did not. Same trust level as
+         * the registry, same answer: a typo surface gets a validator, not a promise. */
+        var bg = isSwatch && GAMES_HEX_RE.test(opt.hex)
+          ? opt.hex : 'linear-gradient(145deg,#334155,#1e293b)';
+        var b = panelButton(isSwatch ? 42 : 46, isSwatch ? 21 : 14, bg, function() {
           write(desc.key, opt.id);
         }, (desc.label || desc.key) + ' ' + String(opt.id));
         b.dataset.control = desc.key;
         b.dataset.value = String(opt.id);
         if (isSwatch) {
+          if (!GAMES_HEX_RE.test(opt.hex)) return;
           b.dataset.hex = String(opt.hex);
         } else {
           var g = panelGlyph(opt.icon, 24);
@@ -2174,9 +2232,14 @@ function mountControlPanel(chrome, host, entry) {
   /* ---- action ---- */
   function buildAction(desc, big) {
     if (typeof desc.method !== 'string') return null;
+    /* OWN PROPERTY ONLY. `seam['toString']` is a function, so a one-word typo in a
+     * manifest built a real, pressable button — `prominent: true` put it in the dice's
+     * place — that called Object.prototype.toString and did nothing a child could see.
+     * §7: better absent than present-and-uninterpretable. */
+    if (!Object.prototype.hasOwnProperty.call(seam, desc.method)) return null;
     var fn = seam[desc.method];
     if (typeof fn !== 'function') return null;
-    var size = big ? 76 : 56;
+    var size = big ? 88 : 50;
     var bg = big
       ? 'linear-gradient(145deg,#FBBF24,#D97706)'
       : 'linear-gradient(145deg,#334155,#1e293b)';
@@ -2209,10 +2272,17 @@ function mountControlPanel(chrome, host, entry) {
   }
   if (!drawer.children.length && !prominent.length) return null;
 
-  /* The dice lives OUTSIDE the drawer and is always on screen (§2.2: "make it the most
-   * obvious thing on the surface"). It is bigger than #gameBack on purpose — the exit
-   * is deliberately small so it does not dominate the field (PUP-WO-0201 §1a.1), and
-   * the two are in opposite corners, so neither competes with the other. */
+  /* The dice lives OUTSIDE the drawer and is always on screen. §2.2: "one big button …
+   * make it the most obvious thing on the surface", and at 76px it was 5,776px2 against a
+   * slider's 15,828 — a third of the size of the thing it was supposed to out-shout. 88px
+   * with a white ring and the only amber on the screen. It is still smaller than a slider
+   * in area, and that is a deliberate trade rather than an oversight: a slider is wide
+   * because it is a TRACK a finger travels, and the dice only has to be HIT. What makes
+   * it the most obvious thing is that it is the only warm-coloured control, it is always
+   * on screen when the drawer is shut, and nothing else sits in that corner.
+   *
+   * It is bigger than #gameBack on purpose — the exit is deliberately small so it does
+   * not dominate the field (PUP-WO-0201 §1a.1) — and the two are in opposite corners. */
   var left = document.createElement('div');
   left.style.cssText = 'display:flex;align-items:flex-end;gap:10px;pointer-events:none';
   for (var p = 0; p < prominent.length; p++) left.appendChild(prominent[p]);

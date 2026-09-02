@@ -1,8 +1,9 @@
 # PUP-WO-0301 — upward feedback: the controls, and the four times the instrument was wrong
 
 **Builder:** CC-B. **Branch:** `build/wo-0301`, from `origin/main` at `eeadf46`.
-**Work order:** `docs/work-orders/PUP-WO-0301.md`. **Adversarial record:**
-`docs/findings/PUP-WO-0301-adversarial.md`. **Gate 8's prediction, written first:**
+**Work order:** `docs/work-orders/PUP-WO-0301.md`. **Adversarial record:** `docs/findings/PUP-WO-0301-adversarial.md` — **three lenses, and
+they broke a great deal of this, including four product defects and three false claims in
+this file. Read that one before this one.** **Gate 8's prediction, written first:**
 `docs/feedback/PUP-WO-0301-gate8-prediction.md`.
 
 ---
@@ -92,8 +93,12 @@ of this work order.**
 
 It read well: the branch already existed for repel, so exposing it added no mechanism, and
 "the field piles into the corners instead of wrapping" is a difference a child could
-notice. **Check 19 measured it at Δ0.60 against a floor of 1.0 that every other control
-clears by between 1.3× and 100×.** It is not a threshold problem — under attract the field
+notice. **Check 19 measured it at Δ0.60 — the lowest of every control, on an instrument whose
+noise floor turned out to be about 0.4.** *(An earlier draft cited "a floor of 1.0". No
+such floor existed in the code: two constants were declared and never used, and three
+shipped controls scored below the number `edge` was removed at. An adversarial pass
+counted. The removal rests on the physical argument below, which needs no threshold.)*
+It is not a threshold problem — under attract the field
 is *gathered at the finger*, so almost nothing is at an edge for the boundary rule to act
 on. The difference is real and takes tens of seconds; roadmap P3 gate 1 says **"visibly
 within one second"**.
@@ -127,10 +132,22 @@ cannot read the panel to find out which switch moved. Asserted in check 19.
 
 ### 5.1 `COMMIT` falling open — and the sweep was further along than the work order knew
 
-**Stated plainly because it changes what was owed:** seven checks already failed closed
-before this branch. `PUP-WO-0201` swept them, and **check 16's own comment still claimed
+**Stated plainly because it changes what was owed:** several checks already failed closed
+before this branch — and **nine files carried a byte-for-byte copy of the same eleven
+lines, not seven, and nine still do.** After this work order there are **ten**
+implementations of one rule: `lib/subject.mjs`, used by five checks, plus nine inline
+copies left in place. *Converting the rest, and giving a subject to the five static checks
+that assert none at all (`check-syntax`, `check-assets`, `check-load`, `check-mutations`,
+`check-cache-isolation`), is **owed and not done**.* The first draft said "seven" and "the
+rule now lives in one place"; both were false, and an adversarial pass counted them. `PUP-WO-0201` swept them, and **check 16's own comment still claimed
 to be alone in failing closed** — a false claim about a tree that had moved on, in the
-file that names the defect. Corrected.
+file that names the defect.
+
+**The first version of this paragraph said "Corrected." It was not.** `git diff` showed the
+sentence byte-identical: I asserted a fix I had not made, inside the paragraph about a
+false claim. It is corrected now and the diff proves it. **That is the second time in three
+work orders I have written a fix into a document before writing it into the code, and both
+times it was caught by someone running a command rather than reading the sentence.**
 
 Four genuinely still fell open, and all four now refuse:
 
@@ -171,8 +188,14 @@ from it. The better of the bright and dark tails is taken, because two of the te
 backgrounds are light and flip the draw to `multiply` — a bright-tail-only test would
 report a light background as invisible while a child looks straight at it.
 
-> `all 110 palette/background pairs clear a 1.9:1 ink-to-ground contrast ratio; the worst
-> is ice on void at 3.10:1 with 10.2% ink`
+> `all 110 palette/background pairs clear a 1.9:1 ink-to-ground contrast ratio`
+
+**The worst pair is `ice` on `void`, measuring 2.66:1 to 3.10:1 across runs.** An earlier
+draft quoted the best of those as if it were the value, and that mattered: the check's own
+comment names **3.0:1** as WCAG's floor for a graphical object, so 3.10 made the trade look
+free and 2.66 does not. **The darkest palette on the darkest ground does not clear WCAG's
+bar.** It is a particle field and not an icon, so the floor is 1.9 — but that is a live
+trade, now named instead of buried under a favourable sample.
 
 **And it is shown able to fail, in the same run**: a field drawn at the presence
 threshold reads **39.3% INK and 1.18:1 contrast**. Presence and contrast are demonstrably
@@ -326,6 +349,10 @@ on the glass** flipped polarity, and the knot under the held finger became a hol
 - **The frame rate on the real tablet.** CI measures 55.1 fps at 6× throttle on defaults
   and 41.4 fps on the heaviest field randomize can draw, but **a passing suite is not
   evidence a tool works.**
+- **What the panel costs the field, measured rather than assumed:** open — the default —
+  the drawer covers **59% of the canvas at 1024×600 and 78% at 800×480**. That is the price
+  of §2.2b's ruling that every effect gets a row, and it went unstated until an adversarial
+  pass measured it. The handle puts it away in one tap.
 - **Whether the sixteen controls are too many for a 480px-tall screen.** They fit 1024×640
   without scrolling (460px of content in 459px — by one pixel); below that the drawer
   pans, and check 19 proves the pan works **with a finger**. Whether a three-year-old
@@ -337,3 +364,33 @@ on the glass** flipped polarity, and the knot under the held finger became a hol
   that 0301's own check should answer 0301's own gate end to end. I think that would have
   meant shipping a threshold chosen to pass rather than to measure.
 - **Promotion to `/stable/` is Scotty's**, and nothing here has touched the tablet.
+
+## 10. What the adversarial pass changed, in one table
+
+**Read `docs/findings/PUP-WO-0301-adversarial.md` for the reproductions.** Every one of
+these was green before the pass ran.
+
+| # | found | severity | disposition |
+|---|---|---|---|
+| 1 | **`#gameBack` swallowed the dice.** On 800×480, 640×480, 1024×600 and 915×412 a tap on the randomize button's own centre **closed the toy**. Only 26.5% of it was reachable. | **severe** | Fixed with two geometric rules independent of viewport: an 84px left inset on the bar and on the drawer, clearing the exit's column at every height and every scroll position. Check 19 now asserts the converse rule — *the exit covers the centre of no control* — at three sizes. |
+| 2 | **No slider or swatch could pan the drawer**; 13 of 40 controls sat below the fold at 640×480, `clear` and `reset` among them. | high | `touch-action: none` → `pan-y` on every control. The browser keeps the vertical drag, we keep the horizontal. Verified: both short viewports now pan from a finger that starts **on a control**. |
+| 3 | **A prototype key in a saved blob bricked the toy permanently** — `background: "toString"` threw on mount, and the failure path rewrote the poison. Three launches, three failures, no in-app recovery. | high | Both lookup maps are `Object.create(null)`. |
+| 4 | **A manifest `hex` was spliced unvalidated into inline `cssText`** — one string covered the whole screen. The identical defect the picker's registry validator was written for. | high | Same validator (`GAMES_HEX_RE`); an invalid swatch is not rendered. Actions now require an own property, so `method: 'toString'` no longer builds a button. |
+| 5 | **Gate 4 asserted four taps that never landed.** §6 had closed the drawer; every tap hit a `display:none` element at (0,0); all four return values were discarded. | high | Every tap is checked, the fixture asserts it changed something first, and the drawer is opened before use. |
+| 6 | **An inverted slider passed the whole check.** The assertion was "different", not "the value the child pointed at". | high | A drag to each end must land within 6% of that end. |
+| 7 | **`reset` and `clear` were never pressed by anything.** A stub `reset` passed. | medium | Both exercised; `reset` must move every wrong setting and be idempotent. |
+| 8 | Two thresholds declared and never used, while four comments cited "a floor of 1.0" that no code contained. | medium | Dead constants removed; every enforced threshold now sits at the line that enforces it. |
+| 9 | Six numeric claims in this file did not reproduce, and one — the contrast figure — was the only value that made a live trade look free. | medium | Corrected above, with the spread rather than the best sample. |
+
+**Accepted and not fixed, as stated trades:** a drag along the colour strip commits the
+swatch it started on (`wireTap` requires press and release on the same element, and that
+rule is what stops a dragged finger launching a tile); `randomize` exceeds the
+shape-weighted draw budget in 8 draws of 2000, always at the count floor; the shell drops a
+malformed manifest entry silently; `Object.freeze` on the seam is shallow. All four are in
+the findings file with measurements.
+
+**One thing the pass found in its own instrument, and it is owed work for someone:**
+`page.waitForSelector` returns a handle that pins the node in-page, so a leak test written
+around it measures its own harness. It read as a 141-node-per-cycle leak that does not
+exist. **Every existing `.github/ci/demo-*.mjs` that uses `waitForSelector` inherits that
+artifact and none has been audited.**

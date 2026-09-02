@@ -6,20 +6,37 @@
  * nobody can name — architecture §6.1 member 1 wearing a provenance line.
  *
  * PUP-WO-0300 made check 16 fail closed and left a comment saying the sibling checks
- * did not. PUP-WO-0201 swept most of them, and by then SEVEN files carried a
- * byte-for-byte copy of the same eleven lines — which is how this project's fences
- * drifted four times in a week, and the reason check 16's own comment was still
- * claiming to be alone in failing closed after it no longer was.
+ * did not. PUP-WO-0201 swept most of them, and by then NINE files carried a byte-for-byte
+ * copy of the same eleven lines — which is how this project's fences drifted four times
+ * in a week, and the reason check 16's own comment was still claiming to be alone in
+ * failing closed long after it no longer was.
  *
- * So the rule lives here, once. PUP-WO-0301 §2.4 is what dispatched it, and the four
- * files that still fell open — demo-error-poisoning, demo-quota-install,
- * demo-two-path-caches and check-error-caching, the last of which printed
- * "(git unavailable)" as a subject and passed — adopt it in the same commit.
+ * THIS IS NOT YET THE ONLY COPY, AND SAYING SO WOULD BE THE DEFECT IT EXISTS TO FIX.
+ * An earlier draft of this header said "seven" and "so the rule lives here, once". Both
+ * were false: the count is nine, and after PUP-WO-0301 there are TEN implementations —
+ * this one, used by five checks, plus the nine inline copies left untouched, including
+ * check 16's. What PUP-WO-0301 §2.4 actually dispatched was the four checks that still
+ * FELL OPEN — demo-error-poisoning, demo-quota-install, demo-two-path-caches and
+ * check-error-caching, the last of which printed "(git unavailable)" under the word
+ * SUBJECT and passed — and those four adopt it here. Converting the other nine, and
+ * giving a subject to the five static checks that assert none at all
+ * (check-syntax, check-assets, check-load, check-mutations, check-cache-isolation),
+ * is owed and is recorded as owed in docs/feedback/PUP-WO-0301.md §5.1.
  *
- * PUPPAD_SUBJECT IS NOT A LOOPHOLE. §5's freeze protocol hands a read-only adversarial
- * pass a `git archive` export with no `.git` at all, so `rev-parse` cannot work there
- * and the pass must be able to state its subject explicitly. What is refused is the
- * third case: no `.git`, no environment variable, and a green anyway.
+ * PUPPAD_SUBJECT IS A DELIBERATE ESCAPE HATCH AND IT IS ALSO A LOOPHOLE, stated rather
+ * than hidden. §5's freeze protocol hands a read-only adversarial pass a `git archive`
+ * export with no `.git` at all, so `rev-parse` cannot work there and the pass must be
+ * able to state its subject explicitly. What is refused is the third case: no `.git`, no
+ * environment variable, and a green anyway. What is NOT verified is that the sha names a
+ * commit that exists, or that it describes the tree actually under test — `SHA.test` is a
+ * shape check. `PUPPAD_SUBJECT=deadbeef` will be believed.
+ *
+ * A SECOND, SHARPER LIMIT, measured by an adversarial pass: three of the adopters take
+ * the tree to test from `process.argv[2]` but resolve their subject from the tree the
+ * SCRIPT came from. Run against a mutated copy they print the repo's HEAD beside the
+ * mutant's own blob hash. The blob is honest; the commit line describes the check, not
+ * the subject. That is defensible for check-error-caching, which says so; for the other
+ * two it is not, and it is recorded in docs/feedback/PUP-WO-0301.md §5.1 as owed.
  */
 import { execFileSync } from 'node:child_process';
 

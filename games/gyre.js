@@ -69,9 +69,18 @@ const BACKGROUNDS = [
   { id: 'shell',   rgb: [230, 222, 232], light: true,  hex: '#e6dee8' },
 ];
 
-const PALETTE_MAP = {};
+/* `Object.create(null)`, AND A PLAIN `{}` HERE WAS A BRICK. `MAP[v]` is truthy for every
+ * name on Object.prototype, so `clampBackground('toString')` returned 'toString', the id
+ * was stored, `BACKGROUND_MAP['toString'].rgb` threw out of paintBackground, and mount
+ * failed. Worse, the failure path runs release() -> flushSave(), which WROTE THE POISON
+ * BACK in canonical form — so every subsequent launch failed the same way and there is no
+ * in-app way to clear the blob. The toy would have been dead until an adult cleared
+ * storage. `palette` was the milder half: a bare background and no swatch selected.
+ * A prototype-less map has no inherited names to collide with, which fixes both the
+ * lookup and the clamp in one line and cannot be forgotten at a future call site. */
+const PALETTE_MAP = Object.create(null);
 for (const p of PALETTES) PALETTE_MAP[p.id] = p;
-const BACKGROUND_MAP = {};
+const BACKGROUND_MAP = Object.create(null);
 for (const b of BACKGROUNDS) BACKGROUND_MAP[b.id] = b;
 
 /* ============================ PARAMETERS ====================================
@@ -979,8 +988,15 @@ export default function mount(host, api) {
 
   /* --- the parameter seam -------------------------------------------------- */
   const SETTERS = {
-    count: (v) => clampCount(v),
-    force: (v) => clampForce(v),
+    /* THE FALLBACK IS THE CURRENT VALUE, and these two were the only setters without one
+     * — so `clampNum`'s fallback was `undefined` and `set('count', 'abc')` returned TRUE
+     * and stored NaN, which blanks the field and is then persisted. The comment above
+     * clampCount says "a bad write is always a no-op"; it was true of eleven setters out
+     * of thirteen, which is the same shape of claim this file has been caught making
+     * before. The shipped slider always passes a number, so no child could reach it —
+     * a seam is a contract with code that does not exist yet. */
+    count: (v) => clampCount(v, settings.count),
+    force: (v) => clampForce(v, settings.force),
     burst: (v) => clampRange(v, settings.burst),
     tail: (v) => clampRange(v, settings.tail),
     size: (v) => clampRange(v, settings.size),
@@ -1011,9 +1027,14 @@ export default function mount(host, api) {
      * This was `clearTrails()` for palette OR background — a full-opacity repaint. The
      * adversarial pass measured what that costs: at linger 90 it erased 80% of the
      * drawn field in one frame. The source never did it at all; only its explicit
-     * "clear trails" button did. And PUP-WO-0301's swatch strip will fire `set` on
-     * every pointermove of a drag, which would strobe the field to bare background all
-     * the way along the strip.
+     * "clear trails" button did.
+     *
+     * (This used to add "and PUP-WO-0301's swatch strip will fire `set` on every
+     * pointermove of a drag". IT DOES NOT — measured on the shipped panel: a drag across
+     * five swatches fires exactly ONE `set`, at lift, for the swatch the press STARTED
+     * on, because `wireTap` requires press and release on the same element. The reasoning
+     * below stands on its own; the prediction about a surface that had not been built yet
+     * did not survive the surface being built.)
      *
      * The problem it was solving is real — trails in the OLD palette sit on screen for
      * as long as linger allows, which reads as the control half working — so the fade
