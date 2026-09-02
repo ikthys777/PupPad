@@ -795,6 +795,33 @@ function closeCanvas() {
 var cameraChannel = null;
 var cameraStream = null;
 var cameraGallery = [];
+
+/* ============ THE STICKER'S SIZE — PUP-WO-0700 §1 =========================
+ * A STICKER IS A FRACTION OF THE IMAGE'S WIDTH, AND THERE IS ONE OF IT.
+ *
+ * The defect Scotty found on the device — "stickers don't stay anchored once it
+ * converts to the smaller size" — was NOT a placement bug. Position is proportional in
+ * both paths and was always correct: the preview writes `left:xPct% top:yPct%` and the
+ * burn computes `xPct/100*w`. SIZE was proportional in only ONE of them. The preview
+ * hardcoded `font-size:36px`; the burn computed `Math.round(w * 0.06)`. Those agree
+ * only where `w * 0.06 ≈ 36` — at a rendered width of about 600px — and diverge
+ * everywhere else. A differently-sized emoji centred on the same point covers different
+ * content, which is exactly what "not anchored" looks like to someone holding it.
+ *
+ * TWO EXPRESSIONS THAT MUST AGREE IS THE MOST EXPENSIVE RECURRING SHAPE IN THIS
+ * PROJECT. Replacing one hardcoded number with a second matching hardcoded number would
+ * reproduce it at the next change, so the fraction lives here once and BOTH paths call
+ * this function — the preview with the sticker layer's rendered width, the burn with the
+ * canvas's. Whichever width is in play, the sticker is the same fraction of it.
+ *
+ * A grep for the literal is the cheapest proof that there is no second copy:
+ *   $ grep -n '0\.06\|36px' index.html   ->  this constant, and nothing else. */
+var STICKER_W_FRAC = 0.06;
+function stickerFontPx(width) {
+  var w = Number(width);
+  if (!isFinite(w) || w <= 0) return 0;
+  return w * STICKER_W_FRAC;
+}
 var cameraFilter = 'none';
 var cameraFacing = 'environment';
 var cameraSticker = null;
@@ -844,13 +871,71 @@ function showRemotePhoto(dataUrl) {
     +'</div>'
     +'<img src="'+dataUrl+'" style="display:block;border-radius:10px;max-width:260px;max-height:200px"/>'
     +'</div>';
+
+  /* ============ CAPTURE — PUP-WO-0700 §2 ================================
+   * WHAT "ITS OWN GALLERY" MEANS HERE, RULED BEFORE THE BUTTON WAS BUILT because §2
+   * says it is not obvious and it is not. `cameraGallery` is a plain in-memory array
+   * persisted nowhere, and `closeCamera()` empties it — so a captured snap lives until
+   * the camera panel is next closed and no longer.
+   *
+   * THAT IS THE RIGHT STORE, and the reason is what this button replaces rather than
+   * what it achieves: TODAY AN INCOMING SNAP IS GONE IN FOUR SECONDS. The popup fades
+   * itself and there is no way to keep it. "Until you close the camera" is an enormous
+   * improvement on "four seconds" for a child looking at a picture someone just sent,
+   * and it is exactly the retention PUP-WO-0701 §1.0a already ruled for this app —
+   * in-memory, never localStorage, "cache-only… because kids". Making it outlive the
+   * panel would be a different decision with a different risk, and §2 makes that a
+   * flag-and-stop rather than a quiet setItem. It is not made here.
+   *
+   * THE FADE TIMER IS CANCELLED ON PRESS. A four-second window is not long for a
+   * three-year-old to notice a button, decide, and aim at it — and a control that
+   * disappears mid-reach is a control that punishes hesitation. */
+  var fadeTimer = null;
+  var cap = document.createElement('div');
+  cap.id = 'snapCaptureBtn';
+  /* The gallery's own affordance language — a pill at the corner of the surface, the
+   * same shape as .gClose — rather than a new control vocabulary for one button. */
+  cap.style.cssText = 'position:absolute;top:2px;right:6px;z-index:5;width:38px;height:38px;'
+    + 'display:flex;align-items:center;justify-content:center;border-radius:10px;'
+    + 'background:rgba(255,255,255,0.12);border:2px solid rgba(244,114,182,0.55);'
+    + 'font-size:19px;line-height:1;cursor:pointer;touch-action:manipulation;'
+    + '-webkit-tap-highlight-color:transparent';
+  cap.setAttribute('role', 'button');
+  cap.setAttribute('aria-label', 'Keep this photo');
+  /* An arrow INTO a tray, against RESHARE's arrow out of one — the same in-versus-out
+   * pairing the game panel's attract/repel control uses, so a child who has learned one
+   * has learned both. No word is painted. */
+  cap.textContent = '\uD83D\uDCE5';
+  popup.appendChild(cap);
+  wireTap(cap, function() {
+    /* The same gate shape as every other Supabase call site. It cannot fire here — this
+     * popup only exists because a broadcast arrived — and it is kept because a guard
+     * that is unreachable by construction today is reachable the moment someone calls
+     * showRemotePhoto from somewhere else. Noted in the feedback rather than left to
+     * look like an oversight. */
+    if (!isSupabaseConfigured()) return;
+    if (cap.dataset.done) return;
+    cap.dataset.done = '1';
+    cameraGallery.push(dataUrl);
+    if (typeof window.renderCameraGallery === 'function') {
+      try { window.renderCameraGallery(); } catch (e) {}
+    }
+    cap.textContent = '\u2713';
+    cap.style.background = 'rgba(52,211,153,0.25)';
+    cap.style.borderColor = '#34D399';
+    try { doSound('ping'); } catch (e) {}
+    if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null; }
+    fadeTimer = setTimeout(fade, 1200);
+  });
+
   document.body.appendChild(popup);
   doSound('ping');
-  setTimeout(function() {
+  function fade() {
     popup.style.transition = 'opacity 0.5s';
     popup.style.opacity = '0';
     setTimeout(function() { if (popup.parentNode) popup.parentNode.removeChild(popup); }, 600);
-  }, 4000);
+  }
+  fadeTimer = setTimeout(fade, 4000);
 }
 
 function compressForBroadcast(sourceCanvas) {
@@ -1060,7 +1145,14 @@ function openCamera() {
     var yPct = ((e.clientY - rect.top) / rect.height) * 100;
     var el = document.createElement('div');
     el.textContent = cameraSticker;
-    el.style.cssText = 'position:absolute;left:'+xPct+'%;top:'+yPct+'%;transform:translate(-50%,-50%);font-size:36px;pointer-events:none';
+    /* `line-height:1` IS PART OF THE FIX, not tidying. `translate(-50%,-50%)` centres
+     * the element's BOX, and with the default line-height that box is ~1.2em tall while
+     * the burn's `textBaseline:'middle'` centres the em box — so the preview sat a
+     * fraction of a line above where the burn would put it, at every width. Setting the
+     * line box equal to the font size makes the two centrings agree. */
+    el.style.cssText = 'position:absolute;left:'+xPct+'%;top:'+yPct+'%;'
+      + 'transform:translate(-50%,-50%);line-height:1;'
+      + 'font-size:'+stickerFontPx(rect.width)+'px;pointer-events:none';
     this.appendChild(el);
     reviewStickers.push({emoji:cameraSticker, xPct:xPct, yPct:yPct});
     doSound('keyTap');
@@ -1094,7 +1186,7 @@ function openCamera() {
     reviewStickers.forEach(function(s) {
       var px = s.xPct / 100 * w;
       var py = s.yPct / 100 * h;
-      var sz = Math.round(w * 0.06);
+      var sz = Math.round(stickerFontPx(w));
       ctx.font = sz + 'px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -1137,6 +1229,13 @@ function openCamera() {
       el.style.border = '2px solid transparent';
     });
   }
+
+  /* PUBLISHED FOR CAPTURE, which lives on the incoming-snap popup outside this closure
+   * and must be able to refresh a strip that is already on screen. Cleared in
+   * closeCamera() beside the array it draws, so it cannot outlive the panel it belongs
+   * to — a stale renderer pointing at a torn-down DOM is the leak this shell has been
+   * bitten by before. */
+  window.renderCameraGallery = renderGallery;
 
   function renderGallery() {
     var strip = document.getElementById('camGalleryStrip');
@@ -1193,11 +1292,67 @@ function openCamera() {
         +'</div>'
         +(currentIdx > 0 ? '<div class="gPrev" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:12px;z-index:5">\u276E</div>' : '')
         +(currentIdx < total-1 ? '<div class="gNext" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.4);font-size:28px;cursor:pointer;padding:12px;z-index:5">\u276F</div>' : '')
-        +'<div class="gClose" style="position:absolute;top:6px;right:10px;color:rgba(148,197,255,0.5);font-size:12px;font-weight:700;padding:6px 14px;border-radius:8px;background:rgba(255,255,255,0.1);cursor:pointer;z-index:5">CLOSE</div>';
+        +'<div class="gClose" style="position:absolute;top:6px;right:10px;color:rgba(148,197,255,0.5);font-size:12px;font-weight:700;padding:6px 14px;border-radius:8px;background:rgba(255,255,255,0.1);cursor:pointer;z-index:5">CLOSE</div>'
+        /* ==== RESHARE — PUP-WO-0700 §2 ====================================
+         * PAINTED ONLY WHEN IT CAN WORK. `isSupabaseConfigured()` gates the send below,
+         * which is the load-bearing guard and the same shape as every other call site in
+         * this file; it ALSO decides whether the control is drawn at all, because a
+         * button a non-reader presses and which does nothing is invariant 1's problem,
+         * not a cosmetic one. Same predicate, not a second gate.
+         *
+         * Bottom-left, mirroring .gClose's pill at top-right, so it reads as part of the
+         * gallery's existing vocabulary. An arrow OUT of a tray against CAPTURE's arrow
+         * into one. No word. */
+        +(isSupabaseConfigured()
+          ? '<div class="gShare" role="button" aria-label="Send this photo again" style="position:absolute;bottom:8px;left:10px;width:46px;height:46px;display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;border-radius:12px;background:rgba(255,255,255,0.12);border:2px solid rgba(244,114,182,0.55);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;z-index:5">\uD83D\uDCE4</div>'
+          : '');
 
       full.querySelector('.gClose').addEventListener('click', function() {
         if (full.parentNode) full.parentNode.removeChild(full);
       });
+
+      var shareBtn = full.querySelector('.gShare');
+      if (shareBtn) {
+        wireTap(shareBtn, function() {
+          if (!isSupabaseConfigured()) return;
+          if (shareBtn.dataset.busy) return;
+          shareBtn.dataset.busy = '1';
+          /* RECOMPRESSED THROUGH THE SAME PATH THE SHUTTER USES, not sent as it sits.
+           * What the gallery holds is an 800px JPEG at 0.85; what this app broadcasts is
+           * 600px at 0.7, and `compressForBroadcast` is the one place that decides that.
+           * Sending the stored bytes directly would be a second answer to "how big is a
+           * broadcast" — the same two-expressions shape §1 of this work order exists to
+           * remove — and it would put several times more data on the wire. */
+          var img = new Image();
+          img.onload = function() {
+            var c = document.createElement('canvas');
+            c.width = img.naturalWidth; c.height = img.naturalHeight;
+            c.getContext('2d').drawImage(img, 0, 0);
+            try { broadcastPhoto(compressForBroadcast(c)); } catch (e) {}
+            shareBtn.textContent = '\u2713';
+            shareBtn.style.background = 'rgba(52,211,153,0.25)';
+            shareBtn.style.borderColor = '#34D399';
+            try { doSound('ping'); } catch (e) {}
+            /* Re-armed rather than spent: a child who presses it twice meant it twice,
+             * and a control that works once is a control that looks broken the second
+             * time. */
+            setTimeout(function() {
+              if (!shareBtn.parentNode) return;
+              shareBtn.textContent = '\uD83D\uDCE4';
+              shareBtn.style.background = 'rgba(255,255,255,0.12)';
+              shareBtn.style.borderColor = 'rgba(244,114,182,0.55)';
+              delete shareBtn.dataset.busy;
+            }, 1400);
+          };
+          /* A gallery entry that is not a loadable image must not leave the button stuck
+           * mid-press with no way to try again. */
+          img.onerror = function() {
+            delete shareBtn.dataset.busy;
+            if (window.console && console.warn) console.warn('[gallery] reshare: entry did not decode as an image');
+          };
+          img.src = cameraGallery[currentIdx];
+        }, { repeat: true });
+      }
       var prev = full.querySelector('.gPrev');
       if (prev) prev.addEventListener('click', function() { currentIdx--; renderFullImage(); });
       var next = full.querySelector('.gNext');
@@ -1248,6 +1403,7 @@ function closeCamera() {
     cameraStream = null;
   }
   cameraGallery = [];
+  try { delete window.renderCameraGallery; } catch (e) { window.renderCameraGallery = undefined; }
   var overlay = document.getElementById('cameraOverlay');
   if (overlay) overlay.parentNode.removeChild(overlay);
   doSound('blip');

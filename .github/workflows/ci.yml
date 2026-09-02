@@ -413,6 +413,23 @@ jobs:
         # open until a human runs it; simulating it is a flag-and-stop (§7).
         run: node .github/ci/demo-controls.mjs .
 
+      - name: "Check 20 — the sticker anchor at three widths, and the share buttons"
+        # PUP-WO-0700 §3. The sticker defect was TWO EXPRESSIONS THAT MUST AGREE — the
+        # preview hardcoded font-size:36px, the burn computed Math.round(w * 0.06) — and
+        # those agree at a rendered width near 600px and nowhere else. A test at ONE width
+        # cannot tell "correct" from "correct at 600px", so this measures three, one of
+        # them far from 600.
+        #
+        # The burn is OBSERVED, not inferred: getContext is wrapped before the app loads,
+        # so what is asserted is what the shipped save handler actually asked the canvas to
+        # draw. Demonstrated red against the original defect at a14573: preview 3.516% /
+        # 4.615% / 2.500% against a burn of 5.990%, i.e. between 42% and 240% of the right
+        # size depending on how wide the screen happened to be.
+        #
+        # CAPTURE and RESHARE are pressed with CDP touch points — plain, sliding, and with
+        # a second finger already on the glass — never page.click.
+        run: node .github/ci/demo-sticker-share.mjs .
+
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
   #
