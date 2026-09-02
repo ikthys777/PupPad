@@ -1094,6 +1094,93 @@ now and still cheaper now than later. It corrects the *cost*: two of the four ar
 construction, not preservation, and `PUP-WO-0400`'s scope should be written
 against that.
 
+### 8.8 The control-panel seam — the fifth channel, documented after it shipped
+
+**This subsection is a correction to this document, not a new design.** §8.1 names
+four channels between a module and the shell — `mount`, `host`, `api`, and the
+returned `teardown` — and says nothing about a fifth. But `PUP-WO-0300` built one
+and `PUP-WO-0301` rendered sixteen controls from it, so a fifth channel has been
+live since `a145734` while the contract that is supposed to enumerate the surface
+described four. **An undocumented contract surface is architecture §6.1 member 4 —
+a pointer that resolves in the author's head and not in the reader's tree** — and
+it is worse here than usual, because the next game to be ported has four assist
+buttons and two board sizes and its work order cannot say where they go.
+
+**The seam.** After `mount` returns, the shell reads `host[api.entry.id]`
+(`index.html:1932`). For Gyre, whose registry id is `gyre`, that reads `host.gyre`.
+**The property name is not a name the shell knows** — it is the mounting entry's
+own registry id, so a second game publishing `host.blockpop` gets a control panel
+with no edit to the shell at all. That generality is why the name stays: a fixed
+key like `host.controls` would be *less* general, not more, because two entries
+sharing one module (§9.3's 6×6 and 8×8) would then share one seam name while
+already having distinct ids.
+
+**Publishing is optional and failing to publish is not an error.** The shell
+requires an object carrying `get`, `set` and a non-empty `controls`; anything else
+— absent, wrong type, throwing getter — yields **no panel and no error**
+(`index.html:1933-1936`, each guarded). `games/hello.js` is the live proof of that
+path. **A game that wants no control surface does nothing.**
+
+| Member | Shape | Contract |
+|---|---|---|
+| `get()` | `() => object` | Returns the current values, keyed by control key. Called after every write and on every repaint. **May throw**; the shell falls back to the last known values. |
+| `set(key, value)` | `(string, any) => void` | Writes one value. **May throw**; the shell swallows it and repaints. The module is responsible for clamping — `games/gyre.js` does it at the setter, and `clampNum`'s comment there records why every clamp must take its fallback from the caller. |
+| `controls` | array of descriptors | The declarative manifest. Order is render order. Empty or absent means no panel. |
+| `ranges` | `{[key]: [lo, hi, step?]}` | **Slider bounds live here and only here** — a range specified twice is `PUP-WO-0300` §9's first warning. A slider whose key has no valid range is skipped, not rendered broken. |
+
+**Three descriptor kinds, and the vocabulary is closed** (`index.html:2266-2268`):
+
+- **`slider`** — `{kind, key, icon, label?}`, bounds from `ranges[key]`. The whole
+  50px bar is the target, not a thumb: a three-year-old's aim is not an adult's.
+- **`choice`** — `{kind, key, icon?, label?, single?, options:[{id, icon|hex}]}`,
+  **or `from:'<property>'`** naming a property on the seam that holds the options
+  instead of inlining them (`index.html:2138-2140`). Fewer than two options and the
+  control is skipped. **`single:true` renders ONE cycle button that flips**, which
+  is `PUP-WO-0301` §2.2's ruling that attract/repel is one two-state affordance —
+  "a row of two would make the child choose between two things he cannot read";
+  otherwise one button per option. Whether the row renders as swatches is decided
+  by **`options[0].hex` alone, for the whole set** (`:2143`), and a swatch row spans
+  the grid. **A hex swatch IS the colour it selects** — invariant 1 with no text.
+
+  **`hex` is validated, and dropping that validation is a flag-and-stop.** It is
+  concatenated into an inline `style`, so an unvalidated `"red;position:fixed;
+  inset:0;z-index:2147483647"` builds a button covering the entire screen and every
+  other control (`index.html:2182-2196`). The picker learned this exact lesson on
+  the registry's `color` four hundred lines above, and `PUP-WO-0301` **reused that
+  same validator, `GAMES_HEX_RE`, rather than writing a second one.** It fails
+  closed twice over: a hex that does not match falls back to the neutral gradient
+  (`:2188`), and a swatch whose hex does not match is dropped entirely (`:2196`).
+- **`action`** — `{kind, method, icon, label?, prominent?}`. `method` is a method
+  name on the seam; the shell calls it and knows nothing else. `prominent` lifts it
+  into the bar above the drawer.
+
+`label` is used for `aria-label` **only**. Nothing in this layer paints a word — a
+screen reader is a different audience from a non-reader and costs nothing.
+
+**Two geometric rules the panel must not break, both independent of viewport**,
+because the version that broke them shipped a child-trapping defect that every
+check passed (§6.1 member 6, and the reason gate 1 is split):
+
+1. **The left gutter is the exit's column.** `#gameBack` owns x 10–74 at every
+   height and every scroll position, so the bar and the drawer both inset by
+   `max(84px, calc(env(safe-area-inset-left) + 74px))`. Capping the drawer's
+   *height* below the exit's band was the first fix and it held only until the
+   drawer was scrolled, at which point its top rows slid back under the exit. **A
+   column rule is one no scroll can defeat.**
+2. **Nothing animates between shown and hidden.** `PUP-WO-0301` §3.6 forbids any
+   state where getting out takes more than one tap, "including mid-drag,
+   mid-animation". The cheapest way to hold that for a mid-animation state is not
+   to have one.
+
+**What this means for `PUP-WO-0400`.** Block Pop's four assists (Undo, Hint, Help,
+Mix) are `action` descriptors and its board size is `api.entry.params`, **not** a
+`choice` — a control that changes the board mid-run is a different game, and §9.3
+already ruled the two sizes ship as two registry entries. Whether the assists go
+through this seam or the game's own DOM is a ruling that work order must make
+explicitly, and it now has a documented surface to make it against.
+
+---
+
 ---
 
 ## 9. The registry entry shape
