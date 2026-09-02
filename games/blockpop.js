@@ -859,12 +859,56 @@ export default function mount(host, api) {
     return { r: best[0], c: best[1] };
   }
 
+  /* THE LIFT IS ONE NUMBER AND BOTH HALVES OF THE DRAG READ IT.
+   *
+   * The piece is drawn above the finger so a three-year-old's palm is not covering the
+   * thing he is aiming. The first build lifted the PICTURE and resolved the DROP at the
+   * raw finger, so the piece was painted ~58px above the hole it fell into — very nearly
+   * a whole 64px cell of lie, in the interaction the entire game is made of. Scotty found
+   * it in minutes with a hand on the glass; twenty-five red-proven checks did not, because
+   * every drag assertion dispatched a touch at (x,y) and then asserted the cell at (x,y)
+   * filled. BOTH HALVES READ THE SAME NUMBER, so the ghost could have been painted
+   * anywhere on the screen and they would still have agreed — architecture §6.1 member 7.
+   *
+   * The layout reconnaissance had already ruled it: lift the ghost AND the hit point by
+   * the same amount, BOTH OR NEITHER. Not "neither" — that puts the piece back under his
+   * palm. So: one constant, and the only two expressions that consume it are moveDragEl
+   * and hitCell. Two expressions that must agree is the family this project has been
+   * bitten by four times; this is that family reduced to one expression each side of a
+   * single name.
+   *
+   * Whether 0.9 of a cell clears Buddy's palm is HIS question, not ours. It is one
+   * constant so the answer is a one-line change. */
+  var DRAG_LIFT_CELLS = 0.9;
+
+  /* AND IT IS CAPPED BY GEOMETRY, BECAUSE A LIFT SILENTLY COSTS REACH.
+   * The picture sits a lift above the finger, so to put it on the BOTTOM row the finger
+   * must go a lift BELOW that row — and the finger cannot leave the glass. At 412px of
+   * height with a 64px cell, an uncapped 0.9-cell lift left the bottom row with a 15px
+   * touch band against 62px for every other row; measured, not reasoned. The cap is the
+   * distance from the last row's centre to the bottom of the screen, so no row is ever
+   * unreachable on any device, whatever DRAG_LIFT_CELLS is set to.
+   *
+   * The residual trade is real and is NOT ours to settle: every pixel of lift is a pixel
+   * off the bottom row's band. See FEEDBACK.md — the amount is Scotty's, on the glass. */
+  function dragLiftPx() {
+    var want = cellPx * DRAG_LIFT_CELLS;
+    var rect = gridRect();
+    var vh = window.innerHeight || 0;
+    var room = vh - (rect.bottom - cellPx * 0.5);
+    if (room > 0 && want > room) want = room;
+    return want > 0 ? want : 0;
+  }
+
   function hitCell(x, y, d) {
     var rect = gridRect();
     var pad = 10;
-    if (x < rect.left - pad || x > rect.right + pad || y < rect.top - pad || y > rect.bottom + pad) return null;
+    /* Resolved at the point the PICTURE occupies, not at the finger — and the off-grid
+     * tolerance is measured against that same lifted point, or it drifts by the lift. */
+    var ly = y - dragLiftPx();
+    if (x < rect.left - pad || x > rect.right + pad || ly < rect.top - pad || ly > rect.bottom + pad) return null;
     var col = Math.floor(((x - rect.left) / rect.width) * N) - d.grabC;
-    var row = Math.floor(((y - rect.top) / rect.height) * N) - d.grabR;
+    var row = Math.floor(((ly - rect.top) / rect.height) * N) - d.grabR;
     return { row: row, col: col, valid: canPlace(board, d.piece.cells, row, col) };
   }
 
@@ -873,7 +917,7 @@ export default function mount(host, api) {
     var w = drag.piece.w * cellPx;
     var h = drag.piece.h * cellPx;
     var ox = x - rr.left - (drag.grabC + 0.5) * cellPx;
-    var oy = y - rr.top - (drag.grabR + 0.5) * cellPx - cellPx * 0.9;
+    var oy = y - rr.top - (drag.grabR + 0.5) * cellPx - dragLiftPx();
     dragEl.style.width = w + 'px';
     dragEl.style.height = h + 'px';
     dragEl.style.transform = 'translate(' + ox + 'px,' + oy + 'px)';

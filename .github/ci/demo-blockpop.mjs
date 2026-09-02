@@ -345,23 +345,54 @@ try {
   {
     const s = await shape(FLEET[0]);
     await s.openBlocks({ clearStorage: true });
-    const before = (await s.boardState()).filter((c) => c.filled).length;
-    const moved = await s.fingerDragTo('.bp-slot[data-slot="0"]', '.bp-well[data-row="2"][data-col="2"]');
-    const after = await s.boardState();
-    const filled = after.filter((c) => c.filled);
-    if (!moved) bad('the drag could not start — slot 0 was not reachable by a finger');
-    else if (filled.length !== before + 1) bad(`a legal drop did not fill exactly one cell (${before} -> ${filled.length})`);
-    else if (!after.find((c) => c.r === 2 && c.c === 2 && c.filled)) bad('a legal drop filled a cell, but not the one under the finger',
-      `filled: ${filled.map((c) => c.r + ',' + c.c).join(' ')}`);
-    else ok(`a drag from slot 0 to cell 2,2 filled 2,2 and nothing else`);
+    /* AIM THE PICTURE, NOT THE FINGER — and this section used to do the opposite.
+     * It dragged to cell 2,2 and asserted 2,2 filled: the dispatched coordinate against
+     * itself, which is precisely the shape that let the drag paint itself 58px above the
+     * hole it fell into for a whole work order. Now it reads the GHOST just before the
+     * drop and asserts the cells that fill are the cells that were previewed. §11 carries
+     * the harder half — that the ghost is painted where it says it is. */
+    const readGhostCells = () => s.page.evaluate(() =>
+      [...document.querySelectorAll('.bp-ghost')].filter((g) => !g.hidden)
+        .map((g) => { const w = g.closest('.bp-well'); return w.getAttribute('data-row') + ',' + w.getAttribute('data-col'); }).sort());
 
-    /* An illegal drop: onto the cell just filled. */
-    const n0 = (await s.boardState()).filter((c) => c.filled).length;
-    await s.fingerDragTo('.bp-slot[data-slot="1"]', '.bp-well[data-row="2"][data-col="2"]');
-    const n1 = (await s.boardState()).filter((c) => c.filled).length;
-    if (n1 !== n0) bad(`a drop onto an occupied cell placed anyway (${n0} -> ${n1} filled)`);
-    else ok('a drop onto an occupied cell placed nothing');
-    await s.ctx.close();
+    const dragAndRead = async (tx, ty) => {
+      const i = Math.max(0, await s.firstFullSlot());
+      const g = await s.page.evaluate((k) => {
+        const r = document.querySelector(`.bp-slot[data-slot="${k}"] .bp-piece`).getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }, i);
+      const was = new Set((await s.boardState()).filter((c) => c.filled).map((c) => c.r + ',' + c.c));
+      await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+      for (let n = 1; n <= 8; n++) {
+        await s.touch('touchMove', [{ x: g.x + (tx - g.x) * (n / 8), y: g.y + (ty - g.y) * (n / 8), id: 1 }]);
+        await s.wait(12);
+      }
+      const ghost = await readGhostCells();
+      const kinds = await s.page.evaluate(() =>
+        [...document.querySelectorAll('.bp-ghost')].filter((g2) => !g2.hidden).map((g2) => g2.className));
+      await s.touch('touchEnd', []);
+      await s.wait(150);
+      const now = (await s.boardState()).filter((c) => c.filled && !was.has(c.r + ',' + c.c))
+        .map((c) => c.r + ',' + c.c).sort();
+      return { ghost, kinds, placed: now };
+    };
+
+    const mid = await s.rect('.bp-well[data-row="3"][data-col="2"]');
+    const one = await dragAndRead(mid.cx, mid.cy);
+    if (!one.ghost.length) bad('a drag over the board previewed nothing');
+    else if (JSON.stringify(one.placed) !== JSON.stringify(one.ghost))
+      bad('the cells that filled are not the cells the ghost previewed',
+        `previewed ${JSON.stringify(one.ghost)}, filled ${JSON.stringify(one.placed)}`);
+    else ok(`a drag placed exactly the cell(s) it previewed: ${JSON.stringify(one.placed)}`);
+
+    /* An illegal drop: aim the picture at the cell just filled. */
+    const occupied = one.placed[0].split(',');
+    const occRect = await s.rect(`.bp-well[data-row="${occupied[0]}"][data-col="${occupied[1]}"]`);
+    const two = await dragAndRead(occRect.cx, occRect.cy + (mid.cy - (await s.rect(`.bp-well[data-row="${occupied[0]}"][data-col="${occupied[1]}"]`)).cy));
+    if (two.placed.length) bad(`a drop onto an occupied cell placed anyway`, `filled ${JSON.stringify(two.placed)}`);
+    else if (two.kinds.length && two.kinds.every((k) => k.indexOf('bp-ghost-ok') >= 0))
+      bad('the ghost showed a legal preview over an occupied cell');
+    else ok('a drop whose preview covered an occupied cell placed nothing');    await s.ctx.close();
 
     /* THE GHOST IS THE ONLY THING THAT TELLS HIM WHERE IT WILL LAND, and nothing here
      * asserted it. A renderGhost that paints every hovered cell green — a green preview
@@ -941,6 +972,152 @@ try {
       else ok('one tap on it resumed play with a fresh board, and the game is still open — api.close() was not called');
     }
     await s.ctx.close();
+  }
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(11, async () => {
+  console.log('\n--- 11. the cell the piece is PAINTED over is the cell that fills, and every row is reachable ---');
+  {
+    /* THE CHECK THAT WOULD HAVE CAUGHT IT, AND WHY THE OTHER TEN DID NOT.
+     *
+     * Every drag assertion above dispatches a touch at (x, y) and then asserts the cell
+     * at (x, y) filled. BOTH HALVES READ THE SAME NUMBER. The drag proxy could be painted
+     * 58px up, off the edge, or in another corner, and they would still agree, because
+     * neither of them ever looks at a pixel. Architecture §6.1 member 7: a verification
+     * that resolves the reference and stops one layer short of the frame it is expressed
+     * in. A human with a hand on the glass found it in minutes.
+     *
+     * So this measures in a THIRD FRAME belonging to neither: SCREEN PIXELS. It reads the
+     * painted rect of `.bp-drag` — the picture under the child's eye — while the finger
+     * is still down, then drops, then reads the bounding rect of the cells that actually
+     * filled, and asserts they are centred on the same place. Neither side is a
+     * coordinate this file chose.
+     *
+     * THE LIFT IS MEASURED, NOT ASSUMED. Writing `cellPx * 0.9` here would recreate the
+     * exact defect being fixed — two expressions that must agree, one of them in the
+     * test. It is derived from the picture: lift = fingerY - paintedCentreY. */
+    for (const vp of FLEET) {
+      const s = await shape(vp, PIN_DOT);
+      await s.openBlocks({ clearStorage: true });
+      const geom = await s.page.evaluate(() => {
+        const g = document.querySelector('.bp-grid').getBoundingClientRect();
+        return { cell: g.width / 6, top: g.y, bottom: g.y + g.height, vh: innerHeight };
+      });
+
+      const grabPoint = async () => {
+        const i = Math.max(0, await s.firstFullSlot());
+        return s.page.evaluate((k) => {
+          const r = document.querySelector(`.bp-slot[data-slot="${k}"] .bp-piece`).getBoundingClientRect();
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        }, i);
+      };
+      /* Drag to a finger point, report the painted rect there, then drop and report what
+       * filled. One helper so coherence and reachability read the same machinery. */
+      const dragTo = async (tx, ty, abort) => {
+        const g = await grabPoint();
+        const before = new Set((await s.boardState()).filter((x) => x.filled).map((x) => x.r + ',' + x.c));
+        await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+        for (let i = 1; i <= 8; i++) {
+          await s.touch('touchMove', [{ x: g.x + (tx - g.x) * (i / 8), y: g.y + (ty - g.y) * (i / 8), id: 1 }]);
+          await s.wait(12);
+        }
+        const painted = await s.page.evaluate(() => {
+          const d = document.querySelector('.bp-drag');
+          if (!d || d.hidden) return null;
+          const r = d.getBoundingClientRect();
+          return { cx: r.x + r.width / 2, cy: r.y + r.height / 2 };
+        });
+        /* The lift probe must not consume a tray piece or occupy a cell a later phase
+         * aims at — it leaves the grid before lifting, so it measures and changes nothing.
+         * (Its first version dropped a dot on the cell the coherence test then aimed at,
+         * and reported "the drop placed nothing" against a correct build.) */
+        if (abort) {
+          const away = await s.page.evaluate(() => {
+            const t = document.querySelector('.bp-tray').getBoundingClientRect();
+            return { x: t.x + t.width - 10, y: t.y + t.height - 10 };
+          });
+          await s.touch('touchMove', [{ x: away.x, y: away.y, id: 1 }]);
+          await s.wait(20);
+        }
+        await s.touch('touchEnd', []);
+        await s.wait(150);
+        const landed = (await s.boardState()).filter((x) => x.filled && !before.has(x.r + ',' + x.c));
+        return { painted, landed };
+      };
+
+      /* 1. Derive the lift from the picture itself. */
+      const probe = await dragTo((await s.rect('.bp-well[data-row="3"][data-col="3"]')).cx, geom.top + geom.cell * 3.5, true);
+      if (!probe.painted) { bad(`${vp.name}: nothing was painted under the finger — .bp-drag was hidden mid-drag`); await s.ctx.close(); continue; }
+      const LIFT = (geom.top + geom.cell * 3.5) - probe.painted.cy;
+
+      /* 2. Coherence, at three arbitrary points that are NOT cell centres. */
+      let worst = { d: -1, label: '', dx: 0, dy: 0 };
+      let broke = null;
+      for (const t of [
+        { label: 'mid board', r: 2, c: 3, dx: 0.31, dy: -0.22 },
+        { label: 'near the top', r: 0, c: 1, dx: -0.18, dy: 0.28 },
+        { label: 'near the bottom', r: 5, c: 4, dx: 0.24, dy: -0.3 },
+      ]) {
+        /* Aim the PICTURE at the cell, which is what the child does — so the finger goes
+         * a lift lower. Clamped into the viewport; a finger cannot leave the glass. */
+        const wx = geom.top; void wx;
+        const w = await s.rect(`.bp-well[data-row="${t.r}"][data-col="${t.c}"]`);
+        const tx = w.x + w.w * (0.5 + t.dx);
+        const ty = Math.min(geom.vh - 3, Math.max(3, w.y + w.h * (0.5 + t.dy) + LIFT));
+        const r = await dragTo(tx, ty);
+        if (!r.painted) { broke = `${t.label}: .bp-drag was hidden mid-drag`; break; }
+        if (!r.landed.length) { broke = `${t.label}: the drop placed nothing, so there is no landed rect to compare`; break; }
+        /* CONTAINMENT, NOT CENTRE-TO-CENTRE. The picture floats continuously with the
+         * finger; a cell is discrete. Their centres differ by wherever inside the cell
+         * the finger happens to be — up to half a cell, inherently, on a correct build.
+         * The coherent statement is the one the work order asks for: THE CELL THE GHOST
+         * VISUALLY COVERS IS THE CELL THAT FILLS. So: is the painted piece's centre
+         * inside the rect of the cell that filled? At the old 58px lift it sat a full
+         * cell height above it. */
+        const cell0 = await s.page.evaluate((k) =>
+          (({ x, y, width, height }) => ({ x, y, w: width, h: height }))(
+            document.querySelector(`.bp-well[data-row="${k.r}"][data-col="${k.c}"]`).getBoundingClientRect()),
+          { r: r.landed[0].r, c: r.landed[0].c });
+        const outX = Math.max(cell0.x - r.painted.cx, r.painted.cx - (cell0.x + cell0.w), 0);
+        const outY = Math.max(cell0.y - r.painted.cy, r.painted.cy - (cell0.y + cell0.h), 0);
+        const dist = Math.hypot(outX, outY);
+        if (dist > worst.d) worst = { d: dist, label: t.label, dx: outX, dy: outY };
+      }
+      /* Zero, with 2px of slack for sub-pixel layout. The picture is either over the
+       * cell it fills or it is not. */
+      const TOL = 2;
+      if (broke) bad(`${vp.name}: ${broke}`);
+      else if (worst.d > TOL) bad(`${vp.name}: the piece is painted ${worst.d.toFixed(1)}px OUTSIDE the cell it lands in`,
+        `worst ${worst.label}: ${worst.dx.toFixed(1)}px horizontally, ${worst.dy.toFixed(1)}px vertically off a ${geom.cell.toFixed(1)}px cell — he aims at the picture and the block goes elsewhere`);
+      else ok(`${vp.name}: lift measured at ${LIFT.toFixed(1)}px; at mid-board, near the top and near the bottom the painted piece sits INSIDE the cell it fills`);
+
+      /* 3. REACHABILITY, which is what a lift can quietly take away. A lifted hit point
+       * leaves the grid at the extremes: to put the picture on the bottom row the finger
+       * must go a lift BELOW it, and the finger cannot leave the glass. */
+      const unreachable = [];
+      const bands = [];
+      for (let r = 0; r < 6; r++) {
+        const w = await s.rect(`.bp-well[data-row="${r}"][data-col="0"]`);
+        const lo = Math.max(3, w.y + LIFT);
+        const hi = Math.min(geom.vh - 3, w.y + w.h + LIFT);
+        bands.push(Math.max(0, hi - lo));
+        const res = await dragTo(w.cx, Math.min(geom.vh - 3, Math.max(3, w.cy + LIFT)));
+        if (!res.landed.some((x) => x.r === r)) unreachable.push(r);
+      }
+      /* AND THE CAP IS ASSERTED, NOT JUST ITS EFFECT. Every row stays "reachable" even
+       * at an uncapped lift — the bottom one just shrinks to a 15px band — so
+       * reachability alone cannot see the cap disappear. The cap's own rule can:
+       * the applied lift may never exceed the room between the last row's centre and the
+       * bottom of the glass. Derived from geometry, not from a number I chose. */
+      const ROOM = geom.vh - (geom.bottom - geom.cell * 0.5);
+      if (LIFT > ROOM + 1) bad(`${vp.name}: the drag lift is ${LIFT.toFixed(1)}px against ${ROOM.toFixed(1)}px of room below the last row`,
+        `the finger cannot leave the glass, so every pixel over that is a pixel off the bottom row's touch band`);
+      else if (unreachable.length) bad(`${vp.name}: row(s) ${unreachable.join(', ')} cannot be reached with the piece visible`,
+        `the lift is ${LIFT.toFixed(1)}px on a ${geom.cell.toFixed(1)}px cell and the finger cannot leave the glass`);
+      else ok(`${vp.name}: every one of the 6 rows is reachable; touch bands ${bands.map((b) => b.toFixed(0)).join('/')}px (narrowest ${Math.min(...bands).toFixed(0)}px)`);
+      await s.ctx.close();
+    }
   }
   });
 

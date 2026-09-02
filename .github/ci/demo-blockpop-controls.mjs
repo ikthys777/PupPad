@@ -99,7 +99,7 @@ plan(1, 'the left gutter is a bare 8px, so the board runs under #gameBack', {
 plan(2, 'hitCell never reports a legal drop', {
   mutate: (s) => sub(s, 'return { row: row, col: col, valid: canPlace(board, d.piece.cells, row, col) };',
     'return { row: row, col: col, valid: false };'),
-  expectText: 'a legal drop did not fill exactly one cell',
+  expectText: 'not the cells the ghost previewed',
 });
 
 /* 3 — the source's own gate, restored. */
@@ -296,6 +296,28 @@ plan(10, 'the play-again affordance closes the game instead of resuming it', {
 plan(10, 'the terminal state paints a word', {
   mutate: (s) => sub(s, `    again.textContent = '\u{1F504}';`, `    again.textContent = 'Play again';`),
   expectText: 'paints a word',
+});
+
+/* ------------------------------------------------------------------------
+ * PUP-WO-0402 §1 — the defect a human found and no check could see.
+ * §5 requires the plant to BE a defect: a plant that changes whether the file
+ * parses is testing the loader, not the check.
+ * ---------------------------------------------------------------------- */
+
+plan(11, 'the drop resolves at the finger while the piece is painted above it', {
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx();', '    var ly = y;'),
+  expectText: 'OUTSIDE the cell it lands in',
+});
+
+plan(11, 'the picture is lifted and the hit point is lifted by a DIFFERENT amount', {
+  mutate: (s) => sub(s, '    var ly = y - dragLiftPx();', '    var ly = y - dragLiftPx() * 0.5;'),
+  expectText: 'OUTSIDE the cell it lands in',
+});
+
+plan(11, 'the geometric cap on the lift is removed, costing the bottom row its touch band', {
+  mutate: (s) => sub(s, `    var room = vh - (rect.bottom - cellPx * 0.5);
+    if (room > 0 && want > room) want = room;`, '    void vh; void rect;'),
+  expectText: 'of room below the last row',
 });
 
 console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time.\n`);
