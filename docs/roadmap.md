@@ -312,12 +312,14 @@ and P1 themselves to merge. From P2 onward the rule applies without exception.
 
 **Work orders:**
 
-> ### ⚠ THE SEAM WAS RE-CUT ON 2026-09-02 AND **AWAITS SCOTTY'S RATIFICATION**
+> ### THE SEAM WAS RE-CUT ON 2026-09-02 — **RATIFIED BY SCOTTY THE SAME DAY**
 >
-> **This is CC-A's change to a ratified document and it is not ratified.** It is
-> written here because the work orders already ship under the new cut, so leaving the
-> old text standing meant **the roadmap and the work orders described different things
-> under the same three numbers** — which is what asking "what do you mean by P4 re-cut"
+> *("pr recut is fine. no issue.")* **The re-cut stood unratified for three merges
+> while CC-A asserted it had been recorded, and it had not — it was in the work order's
+> own text and in three commit messages, never in this document.** Left written up
+> rather than tidied away, because the failure is the interesting part: the roadmap and
+> the work orders described **different things under the same three numbers**, and what
+> exposed it was Scotty asking "what do you mean by P4 re-cut"
 > exposed, three merges after I claimed it was recorded.
 >
 > **What changed:** the count is still three; **the seam moved to the playable

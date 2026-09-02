@@ -196,6 +196,44 @@ sw.js          asset manifest + cache identity
 a controlled target. PupPad publishes to GitHub Pages from a branch. §6 records how
 the firebreak is reconstructed rather than assumed.
 
+**THE SECURITY LENS FOLLOWS THE TRUST BOUNDARY, NOT THE IMPORTANCE OF THE FEATURE.**
+*(Ruled 2026-09-02 by CC-A, delegated by Scotty — "you decide and we will run with it."
+It sits under his calibration, which stands: this is a toy, per-work-order passes are
+right-sized, and one deep pass runs at the end.)*
+
+**The trigger is mechanical, so it is not re-argued per work order:**
+
+> **A work order gets a security-shaped lens if and only if it reads, stores, renders or
+> forwards a byte the device did not create.** Everything else gets the right-sized pass
+> and nothing more.
+
+**Under that rule, most of this project never gets one, and that is the point.** The
+games are the clearest case: `check-games-offline.mjs` fails the build on `fetch`,
+`XMLHttpRequest`, `EventSource`, `WebSocket` or `sendBeacon` anywhere in `games/*.js`, so
+a game module **cannot** take untrusted input — the boundary is enforced by CI, not by
+review. `PUP-WO-0400`, `0401` and `0402` correctly got no security lens and lost nothing.
+
+**And the rule is not conservatism, it is where the findings actually came from.** Both
+real vulnerabilities this project has had were on the boundary and were found by exactly
+this lens: the **broadcast payload that executed script** (`showRemotePhoto` built
+`'<img src="' + dataUrl + '"'` into `innerHTML` from a channel message, and
+`PUP-WO-0700` extended one sink to three) and the **prototype-key brick**. Neither was
+reachable from a game; both were reachable from a message.
+
+**So the boundary work — camera, voice, and the co-op that adds a second device — gets
+the lens AT the boundary rather than at the end.** The reason is timing, not severity: a
+sink found at the end is found after the shape around it is built, and the XSS was fixed
+in one line only because it was found while that code was still being written.
+
+**What the lens actually asks**, so it is a pass and not a mood: *what does this accept;
+what does it do with those bytes **before** validating them; and every place they end up
+— rendered, stored, forwarded, concatenated into markup or a style.* The `dataUrl`
+finding was three sinks from one payload, and only the third had been thought about.
+
+**This does not replace the end-of-project sweep.** It is additive, and it is
+deliberately narrow: **one lens, on the work orders that touch the boundary, and none
+anywhere else.**
+
 **A NUMBER IS ONLY EVER CORRECT AT THE VIEWPORT IT WAS MEASURED AT.** *(Ruled
 2026-09-02. **CC-B's, and they stated the uncomfortable half themselves:** the drawer
 cap they shipped and replaced was this defect, and *"the reason the column rule survived
