@@ -63,6 +63,41 @@ emphatically no base64 audio in `localStorage`.
    ambiguous: pulled into WHAT, if the gallery dies on close?** That is 0700's
    question and it is flagged there.
 
+### 1.0a THE RETENTION RULING — in-memory, and the reason is that it FAILS CLOSED
+
+*Scotty's requirement, 2026-09-02: **"It is ok to grow in the app while open; the goal
+is that everything is reaped on PWA close or reset."** Session-scoped, not size-capped.*
+
+**Three options were put to CC-A. Ruled: (a) IN-MEMORY, with `URL.createObjectURL`
+rather than base64.**
+
+| | why not |
+|---|---|
+| (b) `sessionStorage` | the same **synchronous ~5 MB string store**; wrong for audio for the reason it is wrong for images. |
+| (c) Cache API / IndexedDB **with purge on startup** | **The argument for it was good and nearly won:** a phone silently reclaims a backgrounded PWA, and pure in-memory loses everything mid-session for no reason a three-year-old can perceive. **What decided against it: (c) satisfies "reaped on close" by RUNNING A PURGE; (a) satisfies it by THE PAGE DYING.** A purge is a thing that must *happen*. Process death cannot fail to happen. Any path that opens the store without purging — a crash before it, a future code path, a purge that throws — **leaves a child's photos on disk**. **(c) fails OPEN in exactly the direction the constraint exists to prevent**, and this project has spent two days on assertions that pass by not running. A purge that does not run is that shape holding real data. |
+
+**And there is nothing to migrate.** Verified at source twice, the second time because the
+co-architect asked to be checked: **exactly four `localStorage.setItem` calls exist** —
+`puppad_device_id`, `puppad_sb_url`, `puppad_sb_key`, `pupgame:` — **none is an image**.
+`cameraGallery` is the only image array, and received photos go straight into an
+`<img src>` and are never stored. **Zero persisted image bytes exist on any device.**
+
+**ONE MECHANISM, NOT TWO.** Voice uses the identical shape as images: in-memory,
+released on close, **clip length and in-session count capped** so the bound is
+*designed* rather than the lucky "the panel is open." *(Two expressions that must
+agree is this project's most expensive recurring class — §1's own sticker defect is
+the same shape.)*
+
+**THE CONCERN THAT REMAINS, RECORDED RATHER THAN DISMISSED, AND IT IS NOT RETENTION.**
+Process-reclaim loss is a **different problem pulling the opposite way**: retention
+asks how *little* survives; that concern asks for *more*. Conflating them is what makes
+(c) look right. And the sharper fact: **photos are already lost on PANEL CLOSE, which
+is far more frequent than Android reclaiming a background process.** So if losing
+photos matters, `closeCamera()`'s `cameraGallery = []` is the larger defect by orders
+of magnitude — and **whether photos should survive at all is currently decided by a
+`= []` in a teardown that nobody wrote as a policy.** That is Scotty's call and it is
+`PUP-WO-0700`'s flagged question, not a retention mechanism.
+
 ### 1.1 What the spike must still answer — the SERVER side, which is smaller now
 
 **Measured on `main` 2026-09-02:**
