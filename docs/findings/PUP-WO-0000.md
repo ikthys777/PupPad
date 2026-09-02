@@ -1223,6 +1223,37 @@ many controls the module publishes — **so a game that adds a control grows the
 band underneath it.** A layout that fits today can stop fitting because a slider was
 added, with no layout change and nothing going red.
 
+**RULING — THE DRAWER'S DEFAULT OPEN STATE MOVES TO THE SEAM, AND THE SHELL'S
+FALLBACK FLIPS TO CLOSED.** *(CC-A, 2026-09-02. CC-B raised it and correctly declined
+to assume it.)* Today `index.html:2584` is `var drawerOpen = true` — **hard-coded open
+for every game that publishes a seam.** On the fleet that means every such game starts
+with **78% of its field covered and 91px left**, measured at all three viewports and
+corroborated here from geometry alone.
+
+- **The module publishes `controlsOpen`, not the registry.** The seam is already an
+  arbitrary object the module owns, so this needs **no registry field, no manifest
+  change, and no addition to `registryEntryIsValid`** — which validates six of nine
+  fields today and would have silently ignored a new one anyway.
+- **The shell's fallback is CLOSED**, because *open* is right for exactly one game and
+  wrong for every game whose subject is the field rather than the controls. **Gyre
+  publishes `controlsOpen: true` explicitly in the same change** — Scotty's ruling that
+  for Gyre "the controls are the toy" is the reason, and the game that depends on it
+  should say so rather than inherit it by accident.
+- **This is a deliberate behaviour change to merged work**, not an additive one, and it
+  is recorded as such. The additive form — absent means open — was considered and
+  rejected: it preserves today's bytes at the cost of making *every future game* opt
+  out of a default that is wrong for it, which is the shape that produces a defect
+  nobody chose.
+- **A closed drawer is still reachable** — the handle is unaffected, and §8.2
+  obligation 2's exit is outside `host` and untouched either way.
+
+**AND THE OPEN-DRAWER FIELD IS 91px, WHICH IS A DIFFERENT ANSWER FOR A BACKGROUND THAN
+FOR A BOARD.** Gyre survives an open drawer because a particle field still reads as a
+particle field in 91px. **A board game does not.** Even with the assists in the drawer,
+Block Pop's board has to fit the open-drawer height or the child must close the drawer
+to play — **which makes the drawer a mode rather than a panel**, and that is the thing
+this ruling exists to prevent.
+
 **What this means for `PUP-WO-0400`.** Block Pop's four assists (Undo, Hint, Help,
 Mix) are `action` descriptors and its board size is `api.entry.params`, **not** a
 `choice` — a control that changes the board mid-run is a different game, and §9.3
