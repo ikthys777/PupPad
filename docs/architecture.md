@@ -259,7 +259,11 @@ true while looking nothing like a degenerate stub:
   once — redundancy working, and a badly designed meta-test. *(Recorded because the
   failed first attempt is what makes the second worth anything.)*
 
-**The family, stated once, because it now has six members and one shape.** Each is
+**The family, stated once, because it keeps gaining members and they all have one
+shape.** *(The count used to be written here. It was wrong within a day of each
+addition — §5's own "no derived count unless something recomputes it", broken in the
+paragraph that introduces the rule's own subject. The members are numbered below;
+count them there.)* Each is
 a run whose exit code is indistinguishable from a sound one:
 
 1. **An assertion that passes by not running** — neuter a stub with an *ordinary
@@ -318,6 +322,31 @@ a run whose exit code is indistinguishable from a sound one:
    distinctness test `new Set(names).size === names.length`, **which cannot be false**
    (`PUP-WO-0103` G6); and `PUP-WO-0104` §2.4 — asserting a cache **name exists**
    cannot distinguish *survived* from *deleted and recreated by the next step*.
+
+7. **A VERIFICATION THAT RESOLVES THE REFERENCE AND STOPS ONE LAYER SHORT OF THE
+   FRAME IT IS EXPRESSED IN.** *(Added 2026-09-02.)* The reader opened the file, found
+   the symbol, read the expression, and confirmed it — and never asked **what the
+   expression is measured against.** Distinct from member 4: there the pointer does not
+   resolve at all; here it resolves, to the right line, and the line's *coordinate
+   system* is the unexamined part.
+   **The case that named it, and it is CC-A's:** `PUP-WO-0700` §1 ruled *"Position is
+   proportional in both paths and is CORRECT. Nothing is wrong with the placement."*
+   Both paths do use a percentage — that much was confirmed at source, by symbol rather
+   than line number, which is this document's own preferred form. But `#camReviewCanvas`
+   is `object-fit:contain` while `#camStickerLayer` is `inset:0` over the same box, so
+   one percentage is **of the element box** and the other is **of the letterboxed
+   photograph**. They agree only at exactly 50%, or when the photo fills the box —
+   **false on 7 of the 9 viewports measured**, by up to **214px**.
+   **And the check written for the fix was blind by construction**, which is the half
+   worth keeping: it divided the preview by the layer width and the burn by the canvas
+   width — **the two denominators that make the mismatch cancel exactly** — and printed
+   `worst disagreement 0.0104 points` while the defect was present in two of its own
+   three viewports. That is member 6 *inside* member 7: agreement measured in the one
+   coordinate system where disagreement cannot appear.
+   **The rule:** when two expressions are asserted to agree, name the rectangle,
+   the origin and the units each is measured in, and **assert in a third frame that
+   belongs to neither** — CC-B's fix measures both in screen pixels and deliberately
+   letterboxes the fixture so the bar is 1188px wide.
    **Presence is the recurring proxy.** Existence, geometry and naming are all cheap
    to measure and none of them is behaviour.
    **The rule:** name the property in the assertion's own words, then ask what else
@@ -770,6 +799,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.1: *nothing ever asks whether a recommendation became a commit*. §6.5 added: the quota path, and that `PUP-WO-0600` cannot receive the tiles question. | Both the builder's. The disposition rows were accurate — they said *Recommendation* — so the gap is not recording but that nothing reads one and asks whether it became a diff. And the tiles are map data fetched per coordinate: unvendorable, the bulk of the opaque entries, and the whole of the quota path, pointed by a deferral at a work order that provably cannot receive it. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 | 2026-09-02 | **§6.1 gains member 5 — a record that stays trusted because it stayed unchanged.** §5 gains five rulings: a gate that cannot see its subject is not a gate; no derived count in a name unless something recomputes it; a measurement whose subject includes itself cannot be a constant; a work order states its fence ONCE; and the freeze protocol becomes `git archive` / `git clone`, never `cp -r` of a worktree. **§6.6 added — the ratified-but-unbuilt tally.** | P1 closing and P2 opening, across `PUP-WO-0103`, `0105`, `0200` and `0300`. **Member 5 is the builder's**, found by reading a feedback file as a deliverable — which nobody had been doing — and it names the cost of the freeze protocol this project adopted the same week: hashes prove the bytes did not move and say nothing about whether the claims survived. The §5 rulings are four builder findings and one of CC-A's; the fence ruling is the structural fix for four self-contradicting work orders, **three of them CC-A's**, and `PUP-WO-0300` §0 is the first written that way. |
+| 2026-09-02 | **§6.1 gains member 7 — a verification that resolves the reference and stops one layer short of the frame it is expressed in.** §6.1's preamble also loses its hand-maintained member count. | **CC-A's, and it is a correction to CC-A's own ruling.** `PUP-WO-0700` §1 stated the sticker's *position* was correct in both paths and only its *size* was wrong. Both paths do use a percentage — confirmed at source, by symbol rather than line number, which is this document's preferred form — but one is a percentage **of the element box** and the other **of the letterboxed photograph**, so they agree only at 50% or when the photo fills the box: false on **7 of 9 viewports**, by up to **214px**. Found by the builder's adversarial pass, which also caught that the check written for the fix divided the two paths by the two denominators that make the mismatch cancel — printing `0.0104 points` of disagreement while the defect was live in two of its own three viewports. **Member 6 nested inside member 7.** The count came out for the ordinary reason: it said six while a seventh was being added. |
 | 2026-09-02 | §5 gains the parked-and-unclaimed ruling. | `PUP-WO-0201` parked green and nothing woke the architect. Recorded because **the gap is in the shape of the monitoring, not in anyone's attention**: an actor-scoped liveness check is structurally unable to see work that is finished, correct, and waiting. Raised by the co-architect, who also supplied the mechanism. |
 
 ## 12. Provenance

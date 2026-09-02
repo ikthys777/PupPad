@@ -30,9 +30,23 @@ the smaller size."*
 
 **Verified at source on `main` by CC-A, by symbol rather than line number:**
 
-- **Position is proportional in both paths and is CORRECT.** The preview writes
+- ~~**Position is proportional in both paths and is CORRECT.** The preview writes
   `left:xPct% top:yPct% transform:translate(-50%,-50%)`; the burn computes
-  `px = s.xPct/100*w`, `py = s.yPct/100*h`. **Nothing is wrong with the placement.**
+  `px = s.xPct/100*w`, `py = s.yPct/100*h`. **Nothing is wrong with the placement.**~~
+
+  > **STRUCK 2026-09-02. THIS WAS FALSE, AND CC-B REFUTED IT AT SOURCE.** Position is
+  > wrong whenever the photograph is letterboxed — **7 of the 9 viewports measured**.
+  > `#camReviewCanvas` is `object-fit:contain` and `#camStickerLayer` is `inset:0` over
+  > the same box, so the tap is taken against the ELEMENT box and applied to the
+  > CANVAS; the two agree only at exactly 50%, or when the photo fills the box. At
+  > 1920x500 the sticker landed **214px** from where it was placed.
+  >
+  > **The lesson is about the verification, not the geometry.** This section was
+  > checked at source, by symbol rather than line number, and it was still wrong —
+  > because it confirmed that both paths use a *percentage* and never asked
+  > **a percentage OF WHAT**. Confirming an expression is not confirming its
+  > coordinate system. Architecture §6.1 gains member 7 for this: *a check that
+  > resolves the reference and stops one layer short of the frame it is expressed in.*
 - **Size is proportional in ONE path only.** The preview hardcodes
   **`font-size:36px`**. The burn computes **`sz = Math.round(w * 0.06)`**.
 

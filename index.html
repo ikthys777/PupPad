@@ -939,8 +939,12 @@ function showRemotePhoto(dataUrl) {
    * what it achieves: TODAY AN INCOMING SNAP IS GONE IN FOUR SECONDS. The popup fades
    * itself and there is no way to keep it. "Until you close the camera" is an enormous
    * improvement on "four seconds" for a child looking at a picture someone just sent,
-   * and it is exactly the retention PUP-WO-0701 §1.0a already ruled for this app —
-   * in-memory, never localStorage, "cache-only… because kids". Making it outlive the
+   * and it is STRICTER than the retention PUP-WO-0701 §1.0a ruled for this app.
+   * (Precisely, because the draft of this comment got it wrong and the correction
+   * reached the feedback doc and not this line: §1.0a rules SESSION-scoped —
+   * "everything is reaped on PWA close or reset" — and a store closeCamera() empties
+   * dies sooner than that. The "cache-only… because kids" quote is §1, not §1.0a.)
+   * In-memory, never localStorage either way. Making it outlive the
    * panel would be a different decision with a different risk, and §2 makes that a
    * flag-and-stop rather than a quiet setItem. It is not made here.
    *
