@@ -119,9 +119,18 @@ fit for a three-year-old. **Two board sizes: easy 6×6 ("Little Hands") and clas
 8×8**, which is the `api.entry.params` case `PUP-WO-0000` §8.3 was designed around:
 two registry entries, one module.
 
-**EVERY VISUAL IS SYNTHESIZED — CSS gradients, box-shadows and canvas arcs. There is
-not one image or sound file in the whole game.** So `check-assets`' blindness to
-module-referenced assets (roadmap §4a, marked P3-blocking) **does not bite here.**
+**Every visual is synthesized — CSS gradients, box-shadows and canvas arcs.**
+
+*Stated precisely, because the synthesis said "not one image or sound file in the whole
+game" and CC-A's check found ten files. The claim's SUBSTANCE holds and its WORDING did
+not:* the repo contains **10 image files — `favicon.svg`, `og.jpg`, `x-banner.jpg`, and
+seven under `public/__grok/` (Grok's PWA install-flow chrome)** — and **zero are
+referenced by any file under `src/components/game/` or `src/lib/game/`.** Checked
+per-file, not inferred. **No sound files at all.**
+
+**So `check-assets`' blindness to module-referenced assets (roadmap §4a, marked
+P3-blocking) does not bite here** — but it is a property of *this* game, not a
+property the port may assume, and none of those ten come across.
 
 ## 4. Decisions CC-A must rule on before dispatch
 
