@@ -1193,6 +1193,23 @@ QUESTION.** The panel root is `pointer-events:none` at `PANEL_Z = GAMES_Z + 1`
 band is not merely occluded: **`document.elementFromPoint` returns the drawer, and a
 drop there never reaches the game at all.** And the drawer **ships open**.
 
+**THE CEILING IS THE THING TO DESIGN AGAINST, AND IT IS A CONSTANT.** The band is
+`min(contentHeight, 78vh)` — content-bound today, ceiling-bound eventually — so **78%
+of screen height is a stable worst case no future control can exceed**, while today's
+measured values sit at 59-71% and rise. *(CC-B's refinement, and it is the right one:
+it converts a moving quantity into a fixed one without pretending the movement is not
+real. The band grows until it saturates; 78vh is where it stops.)* **On the actual
+fleet — three phones at ~412px tall, architecture §3 — that ceiling is 321px, leaving
+91px of height outside it.**
+
+**AND CI CANNOT SEE THE GROWTH.** Check 19 *measures* the drawer's coverage of the
+field (`demo-controls.mjs:1048`) and **prints it in the `ok` line without asserting
+anything about it** — CC-B found this in their own check. So the band can grow control
+by control with nothing going red. Whichever work order next touches the panel should
+assert it at the smallest supported viewport, and assert **separately** that content
+does not exceed 78vh there, because that is the moment **scrolling becomes mandatory
+rather than optional — and a non-reader is unlikely to discover a pan.**
+
 **The band's size is CONTENT-BOUND, not capped, and that is the part to design
 against.** The only declaration is `max-height:78vh` (`index.html:2296`) — at 480px
 tall that is 374px, or **78% of the screen**. *(There is no `calc(100vh - 140px)` cap:

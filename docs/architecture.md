@@ -71,9 +71,59 @@ The wrong belief is more instructive than the right fact; both are recorded.
 | ntfy needs to be stood up for this project. | Already running self-hosted and in ecosystem use. Only topics were needed. |
 | The Precision can merge its own pull requests. | It cannot, by design. Merge authority requires a separately minted, narrowly scoped credential. |
 
-**Not measured.** Cold-start time on Buddy's actual tablet, and the device model
-itself. No performance budget in §6 rests on a number from that device; the budget
-is stated as a gate to be measured during P2, not as a fact.
+**THE FLEET, ANSWERED BY SCOTTY 2026-09-02 — AND THERE IS NO TABLET.**
+
+| Device | Whose | Landscape CSS viewport |
+|---|---|---|
+| **Galaxy S10+** | **Buddy's — this is "the PupPad"** | ~869 x 412 |
+| Galaxy S20 Ultra | grampa's | ~915 x 412 |
+| Galaxy S25 Ultra | Scotty's | ~883 x 412 |
+
+*Widths are the standard CSS viewports for these models and should be confirmed on
+the device; **the height is the number that matters and it is ~412 on all three**.
+Every conclusion below holds anywhere in 360-412, so resolving the exact value does
+not change any of them.*
+
+**EVERY VIEWPORT THIS PROJECT HAS EVER TESTED AGAINST IS THE WRONG SHAPE, WITH ONE
+EXCEPTION.** `1024x640`, `1024x600`, `800x480`, `640x480`, `1920x500`, `880x600` are
+all tablet- or desktop-shaped. **`915x412` occurs exactly once in the entire repo**
+(`index.html:2247`, inside an adversarial-pass note) and it is the only phone-shaped
+size anywhere. The fleet is three phones in landscape: **a wide, very short strip**,
+not a tablet.
+
+**WHAT THAT DOES TO `PUP-WO-0400`, COMPUTED RATHER THAN ESTIMATED.** Block Pop's play
+column is four stacked bands — header 61.6, stats 52.5, board, tray+tools 220.8. The
+board is `min(560px wrapper - 24, 72dvh)`:
+
+| | 72dvh | wrapper | board | **column** | **vs 412** |
+|---|---|---|---|---|---|
+| all three phones | **296.6** | 536.0 | **296.6** | **631.5** | **153% over** |
+
+**Two inversions of what the reconnaissance concluded, both caused by measuring
+against assumed tablet sizes.** (1) `PUP-WO-0400-recon` §2.1 ruled the 72dvh cap "a
+no-op on every target viewport" because `max-w-[560px]` binds first — **true at 768-820
+tall, false here**: at 412 the cap is 296.6 and it binds decisively. (2) The overflow
+is not a 60px tail that a re-layout trims. **The column is more than half again the
+whole screen even after the cap binds**, and the board alone at its *uncapped* 536px
+would be 130% of the viewport height.
+
+**AND THE PANEL DRAWER TAKES 78% OF WHAT IS LEFT.** `max-height:78vh` is 321px of 412,
+so a game whose controls are painted in that band has **91px of height** outside it.
+Add `#gameBack`'s fixed y 62-126 and the usable strip is smaller still. **This is what
+decides §8.8's assists question and it is not close**: Block Pop's four assists go
+through the panel seam, or Block Pop has no room to put them.
+
+**One more phone-versus-tablet difference to carry into any layout:
+`env(safe-area-inset-*)` is very likely NON-ZERO here** — punch-hole cameras and curved
+edges become *side* insets in landscape — where on a tablet it is usually 0. The panel
+already spends `max(84px, calc(env(safe-area-inset-left) + 74px))` and degrades
+correctly; **a layout that hard-codes 84 does not.**
+
+**Still not measured.** Cold-start time on the S10+. No performance budget in §6 rests
+on a number from that device; the budget is stated as a gate to be measured during P2,
+not as a fact. **The S10+ is also the oldest and slowest of the three, so it is the
+one the budget must be measured on** — not Scotty's S25 Ultra, which is the device
+most likely to be at hand.
 
 ## 4. Shape and seams
 
