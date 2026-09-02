@@ -196,6 +196,43 @@ sw.js          asset manifest + cache identity
 a controlled target. PupPad publishes to GitHub Pages from a branch. §6 records how
 the firebreak is reconstructed rather than assumed.
 
+**AN OPERATOR QUESTION IS A SHARED RESOURCE, AND TWO SESSIONS ASKED THE SAME ONE
+MINUTES APART.** *(Ruled 2026-09-02. **CC-B's, and it is the first defect in this project
+that belongs to the PAIR rather than to either session.**)*
+
+**What happened.** CC-B put the drag-lift trade to Scotty with **three** options — keep
+the lift, drop to 34px, decide on the glass. **The taper did not exist yet.** He chose
+34px, the even board, explicitly accepting a hand over the piece. **Minutes later CC-A
+put the same trade to him with four options including the taper**, without knowing it had
+been asked. He chose the taper. **Two different questions, two different answers, both
+correctly quoted.**
+
+**CC-B had already built `0.53` and was verifying it when CC-A's ruling arrived.** Had
+the messages crossed the other way, or had CC-A's not arrived, **the branch would have
+shipped the answer to the superseded question while the work order recorded the other —
+with both sessions correctly citing the operator, and no way to tell which was current.**
+
+**And then CC-A corrected CC-B's record using only CC-A's own half**, which would have
+left the file saying he was offered the taper as one of four when he was first offered
+three that did not contain it. **A true account of one asking is a false account of the
+sequence.** The fix is neither account: **both askings and both answers.**
+
+**THE PROTOCOL, and neither session followed any of it:**
+
+1. **Whichever session asks the operator says so to the other, before the answer is
+   acted on.** The question is the shared resource, not the answer.
+2. **A ruling that adds an option to a question already asked must name which asking it
+   supersedes** — otherwise two live answers exist and both are quotable.
+3. **A request to "put it in front of him" must say WHO IS CARRYING IT.** That sentence
+   is what caused this: CC-B wrote *"I want it in front of him rather than in a doc"*,
+   CC-A read it as *you ask him*, CC-B meant *I am asking him*. **Hand-off or
+   escalation — the words look identical and the consequence is a duplicate question to
+   a human who then answers both.**
+
+**The cost this time was one wasted build.** The mirror case is a directive and a build
+that disagree while both cite the operator — which is unresolvable from the artifacts,
+because the artifacts are both honest.
+
 **THE SECURITY LENS FOLLOWS THE TRUST BOUNDARY, NOT THE IMPORTANCE OF THE FEATURE.**
 *(Ruled 2026-09-02 by CC-A, delegated by Scotty — "you decide and we will run with it."
 It sits under his calibration, which stands: this is a toy, per-work-order passes are
