@@ -319,6 +319,15 @@ export default function mount(host, api) {
     return typeof v === 'number' && isFinite(v) && (v | 0) === v && v >= 0 && v <= COLOR_COUNT;
   }
 
+  /* A COUNTER IS NOT A COLOUR ID. validCell is bounded by COLOR_COUNT because it
+   * validates a board cell; the first version of loadSaved reused it for `score` and
+   * `combo`, so every resumed score above 7 was silently zeroed — and a single line
+   * clear scores 11, which means effectively every real session lost its score on
+   * resume. The board and tray restored correctly, so it read as a working save. */
+  function validCount(v) {
+    return typeof v === 'number' && isFinite(v) && (v | 0) === v && v >= 0 && v <= 1e9;
+  }
+
   function validPiece(p) {
     if (!p || typeof p !== 'object') return null;
     if (!Array.isArray(p.cells) || p.cells.length === 0 || p.cells.length > 9) return null;
@@ -368,17 +377,15 @@ export default function mount(host, api) {
       if (!p) return null;
       t.push(p);
     }
-    var sc = raw.score;
-    var cb = raw.combo;
     return {
       board: out, tray: t,
-      score: validCell(sc) ? sc : 0,
-      combo: validCell(cb) ? cb : 0
+      score: validCount(raw.score) ? raw.score : 0,
+      combo: validCount(raw.combo) ? raw.combo : 0
     };
   }
 
-  function persist() {
-    if (dead) return;
+  function persist(force) {
+    if (dead && !force) return;
     var t = [];
     for (var i = 0; i < tray.length; i++) {
       var p = tray[i];
@@ -559,8 +566,11 @@ export default function mount(host, api) {
    * Driven off a MEASURED RECT, never a viewport unit — the source's
    * `max-w-[min(100%,72dvh)]` is exactly the number-that-happened-to-fit this rule
    * exists to avoid: at 412px of height that cap is 296.6px and it silently wins.
-   * `cellPx` is rect.width / N, the source's own boardCellSize (BlockPopGame.tsx:591),
-   * and stays the single source of truth for the ghost's size and the grab offset. */
+   * `cellPx` is the GRID's width / N. The source's boardCellSize (BlockPopGame.tsx:591)
+   * is rect.width / n over the board frame; here the frame carries 6px of padding on
+   * each side, so the grid is `side - 12` and cellPx is (side - 12) / N — 64.0px at
+   * side 396, not the 396/6 = 66.0 the work order's table quotes. It stays the single
+   * source of truth for the ghost's size and the grab offset. */
   function relayout() {
     if (dead) return;
     var hr = host.getBoundingClientRect();
@@ -869,17 +879,41 @@ export default function mount(host, api) {
     dragEl.style.transform = 'translate(' + ox + 'px,' + oy + 'px)';
   }
 
+  function releaseCaptures(pid) {
+    for (var i = captured.length - 1; i >= 0; i--) {
+      if (pid === undefined || captured[i][1] === pid) {
+        try { captured[i][0].releasePointerCapture(captured[i][1]); } catch (e) {}
+        captured.splice(i, 1);
+      }
+    }
+  }
+
   function onSlotDown(index, ev) {
     if (dead || over) return;
     var piece = tray[index];
     if (!piece) return;
     if (ev.cancelable) ev.preventDefault();
+    /* A SECOND FINGER ON ANOTHER SLOT REPLACES `drag`, so the first drag's pointer
+     * capture had no owner left to release it and it accumulated until teardown — one
+     * per two-finger gesture. Release the outgoing drag's captures, and repaint the
+     * ghost, before the new drag overwrites it. */
+    if (drag) releaseCaptures(drag.pointerId);
     var pid = ev.pointerId;
     var target = ev.currentTarget;
     if (target && target.setPointerCapture && pid !== undefined) {
       try { target.setPointerCapture(pid); captured.push([target, pid]); } catch (e) {}
     }
-    var rect = target.getBoundingClientRect();
+    /* MEASURE THE PIECE, NOT THE SLOT. grabCell divides the rect it is handed into
+     * piece.w columns. The source hands it the slot because the source's slot is a
+     * near-square 112px cell of a 3-column grid, so the piece very nearly fills it. This
+     * port's slot is a WIDE LANDSCAPE PANEL (~417 x 127) and a 3-wide piece box is only
+     * ~114px of it, sitting entirely inside column 1 — so every grab on a tri-h returned
+     * grabC 1 whatever the child aimed at, and the piece jumped a full cell on pickup.
+     * Measured at 12.5% of easy-mode deals by weight (tri-h 6 + quad-h 2 of 64). The
+     * piece box is the thing the child is actually looking at. */
+    var pbox = target.querySelector('.bp-piece');
+    var rect = (pbox || target).getBoundingClientRect();
+    if (!rect.width || !rect.height) rect = target.getBoundingClientRect();
     var g = grabCell(rect, piece, ev.clientX, ev.clientY);
     drag = {
       index: index, piece: piece, grabR: g.r, grabC: g.c,
@@ -888,6 +922,7 @@ export default function mount(host, api) {
     fillPieceBox(dragEl, piece, Math.max(8, Math.floor(cellPx) - 3), 3);
     dragEl.hidden = false;
     moveDragEl(ev.clientX, ev.clientY);
+    renderGhost();
     renderTray(false);
   }
 
@@ -906,12 +941,7 @@ export default function mount(host, api) {
     var d = drag;
     drag = null;
     dragEl.hidden = true;
-    for (var i = captured.length - 1; i >= 0; i--) {
-      if (captured[i][1] === d.pointerId) {
-        try { captured[i][0].releasePointerCapture(captured[i][1]); } catch (e) {}
-        captured.splice(i, 1);
-      }
-    }
+    releaseCaptures(d.pointerId);
     var x = ev.clientX;
     var y = ev.clientY;
     var dist = Math.hypot(x - d.startX, y - d.startY);
@@ -1003,12 +1033,14 @@ export default function mount(host, api) {
       try { listeners[i][0].removeEventListener(listeners[i][1], listeners[i][2], listeners[i][3]); } catch (e) {}
     }
     listeners.length = 0;
-    for (var j = 0; j < captured.length; j++) {
-      try { captured[j][0].releasePointerCapture(captured[j][1]); } catch (e) {}
-    }
-    captured.length = 0;
+    releaseCaptures(undefined);
     drag = null;
-    persist();
+    /* FORCED, because `dead` is already true by design and persist() guards on it —
+     * the first version of this teardown called persist() four lines after setting the
+     * flag that makes it a no-op, while the comment above listed "then the save" as a
+     * step that ran. Harmless in effect (every mutation already persists at the call
+     * sites) but the comment asserted coverage that did not exist. */
+    persist(true);
     try { delete host[entry.id]; } catch (e) { host[entry.id] = undefined; }
     if (style.parentNode) style.parentNode.removeChild(style);
     if (root.parentNode) root.parentNode.removeChild(root);

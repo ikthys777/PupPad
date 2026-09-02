@@ -63,6 +63,9 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 
+const PIN_DOT = 0;
+const PIN_TRI = 0.390625;
+
 const FLEET = [
   { name: 'S10+', width: 869, height: 412 },
   { name: 'S20U', width: 915, height: 412 },
@@ -70,9 +73,16 @@ const FLEET = [
 ];
 
 /* Pins the deal AND instruments teardown. Runs before any page script. */
-const HARNESS = () => {
-  Math.random = () => 0;
-  const T = { addedWin: new Map(), timers: new Set(), ros: 0, roDisconnects: 0, anim: { pop: 0, clear: 0 } };
+const HARNESS = (pin) => {
+  /* The deal pin. 0 makes pickWeighted return the first survivor of the mode filter —
+   * `dot`. THAT HIDES THINGS, and the blindness pass proved it: a 1x1 is the one shape
+   * whose grab offset cannot be wrong and whose ghost is one cell, so a hit test correct
+   * for a dot and wrong for every polyomino passed. 0.390625 lands on `tri-h` in a full
+   * easy pool (roll 25 of 64: 25-8-7-7 = 3, then -6 <= 0). Sections that need a
+   * multi-cell piece ask for it. */
+  Math.random = () => pin;
+  const T = { addedWin: new Map(), timers: new Set(), intervals: new Set(), rafs: new Set(),
+    ros: 0, roDisconnects: 0, anim: { pop: 0, clear: 0 } };
   window.__bp = T;
   const aEL = window.addEventListener.bind(window);
   const rEL = window.removeEventListener.bind(window);
@@ -82,13 +92,40 @@ const HARNESS = () => {
     if (n <= 0) T.addedWin.delete(f); else T.addedWin.set(f, n);
     return rEL(t, f, o);
   };
+  /* ATTRIBUTE, DO NOT COUNT. The shell arms its own timers while the game is up — the
+   * console's radar spawns a 2100ms paw print on pointerup (index.html:3280), and the
+   * exit tap arms one. Counting every armed timeout made teardown look leaky when the
+   * survivor was the SHELL's. Attribute by arming stack instead: a timer whose stack
+   * names games/blockpop.js is the game's, and only those are the game's to clear. */
+  const mine = (e) => String((e && e.stack) || '').indexOf('blockpop.js') >= 0;
   const sT = window.setTimeout.bind(window);
   const cT = window.clearTimeout.bind(window);
   window.setTimeout = function (fn, ms, ...a) {
+    const own = mine(new Error());
     const id = sT(function () { T.timers.delete(id); return fn.apply(this, a); }, ms);
-    T.timers.add(id); return id;
+    if (own) T.timers.add(id);
+    return id;
   };
   window.clearTimeout = function (id) { T.timers.delete(id); return cT(id); };
+  /* setTimeout ALONE IS NOT "no timers left". A module leaking a 250ms setInterval ran
+   * on happily past teardown while section 8 printed "0 armed timers" — demonstrated
+   * green. rAF the same. */
+  const sI = window.setInterval.bind(window);
+  const cI = window.clearInterval.bind(window);
+  window.setInterval = function (fn, ms, ...a) {
+    const own = mine(new Error());
+    const id = sI(fn, ms, ...a);
+    if (own) T.intervals.add(id);
+    return id;
+  };
+  window.clearInterval = function (id) { T.intervals.delete(id); return cI(id); };
+  const rAF = window.requestAnimationFrame.bind(window);
+  const cAF = window.cancelAnimationFrame.bind(window);
+  window.requestAnimationFrame = function (fn) {
+    const id = rAF(function (t) { T.rafs.delete(id); return fn(t); });
+    T.rafs.add(id); return id;
+  };
+  window.cancelAnimationFrame = function (id) { T.rafs.delete(id); return cAF(id); };
   const RO = window.ResizeObserver;
   if (RO) {
     window.ResizeObserver = class extends RO {
@@ -105,9 +142,9 @@ const HARNESS = () => {
 const browser = await chromium.launch({ channel: 'chromium' });
 
 /* Builds a fresh touch context at one fleet shape. */
-async function shape(vp) {
+async function shape(vp, pin = 0) {
   const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, hasTouch: true });
-  await ctx.addInitScript(HARNESS);
+  await ctx.addInitScript(HARNESS, pin);
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
   const errs = [];
@@ -239,6 +276,23 @@ try {
         board: br ? { w: br.width, h: br.height, x: br.x } : null,
         vw: innerWidth, vh: innerHeight };
     });
+    /* RECTANGLES ARE NOT PLAYABILITY. A 39x39 board and a tray of 1px pieces both
+     * satisfied "on screen, not in the exit's column" and this section called them ok —
+     * and sections 2-4 passed too, because a synthetic tap on the exact geometric centre
+     * of a 2px cell lands, and no finger can do that. A synthetic tap on a mathematical
+     * centre is not a finger either. */
+    const play = await s.page.evaluate(() => {
+      const bw = document.querySelector('.bp-boardwrap');
+      const g = document.querySelector('.bp-grid');
+      const w0 = document.querySelector('.bp-well');
+      const pcs = [...document.querySelectorAll('.bp-piececell')].map((e) => e.getBoundingClientRect().width);
+      const br = bw.getBoundingClientRect();
+      const gr = g.getBoundingClientRect();
+      const wr = w0.getBoundingClientRect();
+      return { boardW: br.width, boardH: br.height, gridW: gr.width, cell: wr.width,
+        pieceCells: pcs.length, minPieceCell: pcs.length ? Math.min(...pcs) : 0, vh: innerHeight };
+    });
+    const MIN_TOUCH = 44;
     const offscreen = geo.out.filter((e) => e.x < 0 || e.y < 0 || e.x + e.w > geo.vw + 0.5 || e.y + e.h > geo.vh + 0.5);
     const inBack = geo.back
       ? geo.out.filter((e) => e.x < geo.back.x + geo.back.w && e.x + e.w > geo.back.x
@@ -248,7 +302,18 @@ try {
       offscreen.slice(0, 3).map((e) => `${e.q} at ${Math.round(e.x)},${Math.round(e.y)} ${Math.round(e.w)}x${Math.round(e.h)}`).join(' · '));
     else if (inBack.length) bad(`${vp.name}: ${inBack.length} game control(s) intersect #gameBack's column (x ${Math.round(geo.back.x)}-${Math.round(geo.back.x + geo.back.w)})`,
       inBack.slice(0, 3).map((e) => `${e.q} at ${Math.round(e.x)},${Math.round(e.y)}`).join(' · '));
-    else ok(`${vp.name} ${vp.width}x${vp.height}: all ${geo.out.length} controls on screen, none in the exit's column; board ${Math.round(geo.board.w)}x${Math.round(geo.board.h)} at x=${Math.round(geo.board.x)}`);
+    else if (Math.abs(play.boardW - play.boardH) > 1)
+      bad(`${vp.name}: the board is not square (${play.boardW.toFixed(1)} x ${play.boardH.toFixed(1)})`);
+    else if (play.boardH < play.vh * 0.8)
+      bad(`${vp.name}: the board is ${play.boardH.toFixed(0)}px tall in a ${play.vh}px viewport — the height is meant to be what drives it`,
+        'a board far smaller than the available height means the layout rule stopped binding');
+    else if (play.cell < MIN_TOUCH)
+      bad(`${vp.name}: a board cell is ${play.cell.toFixed(1)}px, under the ${MIN_TOUCH}px minimum touch target`);
+    else if (!play.pieceCells)
+      bad(`${vp.name}: the tray renders no piece cells at all — three empty boxes`);
+    else if (play.minPieceCell < 8)
+      bad(`${vp.name}: the smallest tray piece cell is ${play.minPieceCell.toFixed(1)}px — the tray reads as empty`);
+    else ok(`${vp.name} ${vp.width}x${vp.height}: all ${geo.out.length} controls on screen, none in the exit's column; board ${Math.round(geo.board.w)}x${Math.round(geo.board.h)} square at x=${Math.round(geo.board.x)}, cell ${play.cell.toFixed(1)}px (>= ${MIN_TOUCH}), ${play.pieceCells} tray piece cells, smallest ${play.minPieceCell.toFixed(1)}px`);
     await s.ctx.close();
   }
   });
@@ -276,6 +341,92 @@ try {
     if (n1 !== n0) bad(`a drop onto an occupied cell placed anyway (${n0} -> ${n1} filled)`);
     else ok('a drop onto an occupied cell placed nothing');
     await s.ctx.close();
+
+    /* THE GHOST IS THE ONLY THING THAT TELLS HIM WHERE IT WILL LAND, and nothing here
+     * asserted it. A renderGhost that paints every hovered cell green — a green preview
+     * over an illegal drop — passed the whole check. So did no ghost at all. Done with a
+     * THREE-WIDE piece, because a dot's ghost is one cell and its grab offset cannot be
+     * wrong: the grabCell defect this found was invisible to a dot by construction. */
+    const t = await shape(FLEET[0], PIN_TRI);
+    await t.openBlocks({ clearStorage: true });
+    const shp = await t.page.evaluate(() => {
+      const h = document.getElementById('gameHost');
+      return [...document.querySelectorAll('.bp-slot')].map((sl) => sl.querySelectorAll('.bp-piececell').length);
+    });
+    /* Each grab must leave the board and the tray EXACTLY as it found them, or the
+     * second grab is measuring a different piece. So the finger leaves the grid before
+     * lifting — far enough that it is not a tap either. */
+    const readGhost = () => t.page.evaluate(() =>
+      [...document.querySelectorAll('.bp-ghost')].filter((g) => !g.hidden)
+        .map((g) => { const w = g.closest('.bp-well'); return w.getAttribute('data-row') + ',' + w.getAttribute('data-col'); }).sort());
+    const dragFrom = async (frac) => {
+      const b = await t.page.evaluate((f) => {
+        const bb = document.querySelector('.bp-slot[data-slot="0"] .bp-piece').getBoundingClientRect();
+        const c = document.querySelector('.bp-well[data-row="3"][data-col="3"]').getBoundingClientRect();
+        const tr = document.querySelector('.bp-tray').getBoundingClientRect();
+        return { sx: bb.x + bb.width * f, sy: bb.y + bb.height / 2,
+          cx: c.x + c.width / 2, cy: c.y + c.height / 2,
+          awayX: tr.x + tr.width - 12, awayY: tr.y + tr.height - 12 };
+      }, frac);
+      await t.touch('touchStart', [{ x: b.sx, y: b.sy, id: 1 }]);
+      for (let i = 1; i <= 6; i++) {
+        await t.touch('touchMove', [{ x: b.sx + (b.cx - b.sx) * (i / 6), y: b.sy + (b.cy - b.sy) * (i / 6), id: 1 }]);
+        await t.wait(14);
+      }
+      const g = await readGhost();
+      await t.touch('touchMove', [{ x: b.awayX, y: b.awayY, id: 1 }]);
+      await t.wait(20);
+      await t.touch('touchEnd', []);
+      await t.wait(120);
+      return g;
+    };
+    const gLeft = await dragFrom(0.15);
+    const gRight = await dragFrom(0.85);
+    if (!shp.some((n) => n >= 3)) bad('the deal pin did not produce a multi-cell piece', `tray piece cell counts ${JSON.stringify(shp)}`);
+    else if (!gLeft.length || !gRight.length) bad('a three-wide piece dragged over the board showed no ghost at all',
+      `left grab ${JSON.stringify(gLeft)} right grab ${JSON.stringify(gRight)}`);
+    else if (JSON.stringify(gLeft) === JSON.stringify(gRight)) bad('the ghost did not move with the grab point — the piece is unaimable',
+      `grabbing the left end and the right end of a 3-wide piece both previewed ${JSON.stringify(gLeft)}; the grab column is being computed against the wrong rectangle`);
+    else ok(`a 3-wide piece: grabbing its left end previews ${JSON.stringify(gLeft)} and its right end ${JSON.stringify(gRight)} — the ghost follows the grab`);
+
+    /* AND IT MUST TELL THE TRUTH ABOUT LEGALITY. A renderGhost that paints every
+     * hovered cell green passed everything above: the positions were right, the colour
+     * was a lie. Hang the 3-wide piece off the right edge — columns 5,6,7 of a 6-wide
+     * board — so the drop is illegal and the preview must say so. */
+    const illegalGhost = await t.page.evaluate(async () => {
+      const b = document.querySelector('.bp-slot[data-slot="0"] .bp-piece').getBoundingClientRect();
+      const c = document.querySelector('.bp-well[data-row="3"][data-col="5"]').getBoundingClientRect();
+      return { sx: b.x + b.width * 0.15, sy: b.y + b.height / 2, cx: c.x + c.width / 2, cy: c.y + c.height / 2 };
+    });
+    await t.touch('touchStart', [{ x: illegalGhost.sx, y: illegalGhost.sy, id: 1 }]);
+    for (let i = 1; i <= 6; i++) {
+      await t.touch('touchMove', [{ x: illegalGhost.sx + (illegalGhost.cx - illegalGhost.sx) * (i / 6),
+        y: illegalGhost.sy + (illegalGhost.cy - illegalGhost.sy) * (i / 6), id: 1 }]);
+      await t.wait(14);
+    }
+    const kinds = await t.page.evaluate(() =>
+      [...document.querySelectorAll('.bp-ghost')].filter((g) => !g.hidden).map((g) => g.className));
+    await t.touch('touchEnd', []);
+    await t.wait(140);
+    if (!kinds.length) bad('a 3-wide piece hanging off the right edge previewed nothing at all');
+    else if (kinds.some((k) => k.indexOf('bp-ghost-ok') >= 0))
+      bad('the ghost showed a LEGAL preview for a drop that hangs off the board',
+        `classes ${JSON.stringify(kinds)} — a green preview over an illegal drop is worse than no preview`);
+    else ok(`a 3-wide piece hung off the right edge previews as illegal (${kinds.length} cell(s), all bp-ghost-no)`);
+
+    /* And the ghost must be gone once the drag ends. */
+    const truth = await t.page.evaluate(async () => {
+      const wells = [...document.querySelectorAll('.bp-well')];
+      const filled = wells.filter((w) => { const c = w.querySelector('.bp-candy'); return c && !c.hidden; }).length;
+      return { filled };
+    });
+    const illegal = await t.page.evaluate(() => {
+      const g = [...document.querySelectorAll('.bp-ghost')].filter((x) => !x.hidden);
+      return g.map((x) => x.className);
+    });
+    if (illegal.length) bad('a ghost is still painted after the drag ended', JSON.stringify(illegal));
+    else ok(`the ghost is cleared when the drag ends (board holds ${truth.filled})`);
+    await t.ctx.close();
   }
   });
 
@@ -297,6 +448,40 @@ try {
     if (!after.find((c) => c.r === 4 && c.c === 1 && c.filled)) bad('tap-select then tap-cell did not place',
       `${before} -> ${after.filter((c) => c.filled).length} filled`);
     else ok('tap-select then tap-cell placed at 4,1');
+
+    /* THE OTHER DIRECTION, AND ONLY THE CONTROL FOUND IT MISSING. Planting
+     * TAP_SLOP = 14 goes red; planting TAP_SLOP = 1e9 went GREEN. An unbounded slop
+     * makes every abandoned drag arm a piece, so a child who drags somewhere illegal and
+     * lifts has silently selected it — and his next touch anywhere on the board places
+     * it. A slop gate needs both ends asserted. */
+    await s.page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    const sel0 = await s.page.evaluate(() =>
+      [...document.querySelectorAll('.bp-slot')].map((x) => x.getAttribute('data-active')).join(''));
+    /* FROM A SLOT THAT STILL HOLDS A PIECE. The placement just above consumed slot 0,
+     * so dragging from it started no drag at all and this clause passed whatever the
+     * slop was — green against TAP_SLOP = 1e9. */
+    const fullIdx = Math.max(0, await s.firstFullSlot());
+    const far = await s.page.evaluate((i) => {
+      const b = document.querySelector(`.bp-slot[data-slot="${i}"]`).getBoundingClientRect();
+      const tr = document.querySelector('.bp-tray').getBoundingClientRect();
+      /* End OFF THE GRID — inside the tray column, far corner. A long drag that ends on
+       * a legal cell simply places, which tells us nothing about the slop gate. */
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2,
+        ex: tr.x + tr.width - 10, ey: tr.y + tr.height - 10 };
+    }, fullIdx);
+    await s.touch('touchStart', [{ x: far.x, y: far.y, id: 1 }]);
+    for (let i = 1; i <= 8; i++) {
+      await s.touch('touchMove', [{ x: far.x + (far.ex - far.x) * (i / 8), y: far.y + (far.ey - far.y) * (i / 8), id: 1 }]);
+      await s.wait(12);
+    }
+    await s.touch('touchEnd', []);
+    await s.wait(140);
+    const sel1 = await s.page.evaluate(() =>
+      [...document.querySelectorAll('.bp-slot')].map((x) => x.getAttribute('data-active')).join(''));
+    if (sel1.indexOf('1') >= 0 && sel0.indexOf('1') < 0)
+      bad('a long drag that ended nowhere legal still selected the piece — the slop gate has no upper bound',
+        `slot active flags went ${sel0} -> ${sel1}; his next touch on the board would place it`);
+    else ok('a long drag ending off the grid selected nothing');
     await s.ctx.close();
   }
   });
@@ -325,6 +510,35 @@ try {
     else if (after.score !== expected) bad(`the score did not rise by the formula`,
       `before the clearing move ${sc}, after ${after.score}, expected ${expected} (1 placed cell + 10*1 line*combo 1)`);
     else ok(`six dots filled row 0, it cleared, and the score went ${sc} -> ${after.score} (+11 = 1 cell + 10x1 line at combo 1)`);
+
+    /* A COLUMN, because deleting the column scan outright left the whole check green. */
+    await s.page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    for (let r = 0; r < 6; r++) await s.placeAt(r, 0);
+    await s.page.waitForTimeout(400);
+    const col = (await s.boardState()).filter((c) => c.c === 0 && c.filled);
+    if (col.length) bad(`column 0 did not clear — ${col.length} of 6 cells still filled`,
+      'rows clear and columns do not; clearFullLines is only scanning one axis');
+    else ok('six dots filled column 0 and it cleared too');
+
+    /* A COMBO ABOVE 1, because `combo = 0` in place of `combo + 1` left it green: the
+     * multiplier is 1 at combo 1, so one clearing placement can never tell them apart.
+     * Two CONSECUTIVE clearing placements — no non-clearing move between, or combo
+     * resets — put the multiplier at 2. */
+    const t2 = await shape(FLEET[0], PIN_DOT);
+    await t2.openBlocks({ clearStorage: true });
+    for (let c = 0; c < 5; c++) await t2.placeAt(0, c);
+    for (let c = 0; c < 5; c++) await t2.placeAt(1, c);
+    await t2.placeAt(0, 5);
+    const preCombo = (await t2.seam()).score;
+    await t2.placeAt(1, 5);
+    await t2.page.waitForTimeout(400);
+    const post = await t2.seam();
+    /* 1 placed cell + 10 * 1 line * combo 2 = 21. At a stuck combo of 1 it would be 11. */
+    if (post.combo < 2) bad(`the combo did not advance on consecutive clears (combo ${post.combo})`);
+    else if (post.score - preCombo !== 21) bad('the combo multiplier is not reaching the score',
+      `second consecutive clear scored ${post.score - preCombo}, expected 21 (1 cell + 10x1 line at combo 2); 11 means the multiplier is stuck at 1`);
+    else ok(`two consecutive clears: combo reached ${post.combo} and the second scored +21 (1 cell + 10x1 line x combo 2)`);
+    await t2.ctx.close();
     await s.ctx.close();
   }
   });
@@ -340,6 +554,12 @@ try {
     for (const [r, c] of spots) await s.placeAt(r, c);
     await s.page.waitForTimeout(500);
     const filledNow = (await s.boardState()).filter((c) => c.filled).length;
+    /* LIVENESS FIRST. "0 pops during the drag" is a one-sided counter, and zero is what
+     * an inert game reports too: a build whose keyframes were emptied, a build whose
+     * place() always returns false, and a build where no candy is ever shown ALL passed
+     * this section. Establish that candies pop at all, and that there are candies, before
+     * asserting that none popped. */
+    const popsWhilePlacing = await s.page.evaluate(() => window.__bp.anim.pop);
     await s.page.evaluate(() => { window.__bp.anim.pop = 0; window.__bp.anim.clear = 0; });
     /* Now drag a piece back and forth across every one of those candies. */
     const a = await s.tapTarget(`.bp-slot[data-slot="${Math.max(0, await s.firstFullSlot())}"]`);
@@ -359,10 +579,13 @@ try {
     const during = await s.page.evaluate(() => ({ ...window.__bp.anim }));
     await s.touch('touchEnd', []);
     await s.wait(150);
-    if (filledNow !== 8) info(`board held ${filledNow} candies, not the 8 expected — the measurement below still stands`);
-    if (during.pop !== 0) bad(`${during.pop} candy pop animation(s) restarted during a drag across a filled board`,
+    if (filledNow !== 8) bad(`the board holds ${filledNow} candies, not the 8 placed — nothing can be concluded about re-popping`,
+      'an inert game reports 0 pops during a drag for the wrong reason');
+    else if (popsWhilePlacing < 8) bad(`only ${popsWhilePlacing} pop animation(s) ran while placing 8 candies — this game does not animate`,
+      'a build with no pop animation at all passes the assertion below, so it is asserted first');
+    else if (during.pop !== 0) bad(`${during.pop} candy pop animation(s) restarted during a drag across a filled board`,
       `${filledNow} candies on the board; every one of them re-popping at pointer rate is the defect neither naive port survives`);
-    else ok(`a 28-step drag across ${filledNow} settled candies started 0 pop animations`);
+    else ok(`${popsWhilePlacing} pops while placing ${filledNow} candies, then a 28-step drag across them started 0`);
     await s.ctx.close();
   }
   });
@@ -401,12 +624,26 @@ try {
     const filled = st.filter((c) => c.filled);
     const invisible = filled.filter((c) => c.opacity < 0.9);
     const target = st.find((c) => c.r === 0 && c.c === 0);
-    if (!target || !target.filled) bad('the piece placed inside the clear window never landed');
+    const anim = await s.page.evaluate(() => ({ ...window.__bp.anim }));
+    /* PRECONDITIONS, BECAUSE THE ASSERTION BELOW IS SATISFIED BY A GAME THAT NEVER
+     * CLEARS. With row 0 still full the second placement is simply rejected, the target
+     * cell is filled from the EARLIER placement, opacity is 1, and this section reports
+     * ok — it was section 4 doing the work. Establish that a clear ran and that row 0
+     * emptied before concluding anything about stranding. */
+    const row0 = st.filter((c) => c.r === 0 && c.c > 0 && c.filled);
+    /* Order matters: a STRANDED clear leaves its cells present-but-invisible, so the
+     * row-0 precondition below would fire on them and report "did not clear" for what is
+     * really "cleared and never let go". Diagnose the strand first. */
+    if (!anim.clear) bad('no clear animation ran at all — this section cannot speak to a stranded clear',
+      'a build that never clears a line, and a build with no clear animation, both satisfy the visibility assertion');
+    else if (invisible.length) bad(`${invisible.length} candy/candies are on the board but invisible`,
+      invisible.slice(0, 4).map((c) => `${c.r},${c.c} opacity ${c.opacity}`).join(' · ')
+        + ' — .bp-clear is forwards to opacity 0 and the dying set was never released');
+    else if (row0.length) bad(`row 0 did not clear (${row0.length} of its other 5 cells still filled) — nothing was ever in the clear window`);
+    else if (!target || !target.filled) bad('the piece placed inside the clear window never landed');
     else if (target.opacity < 0.9) bad(`the candy placed inside the clear window is invisible (opacity ${target.opacity})`,
       'this is the source\'s stranded `clearing` state: .candy-clear is forwards to opacity 0 and nothing ever nulls it');
-    else if (invisible.length) bad(`${invisible.length} candy/candies are on the board but invisible`,
-      invisible.slice(0, 4).map((c) => `${c.r},${c.c} opacity ${c.opacity}`).join(' · '));
-    else ok(`placed inside the clear window: the new candy is visible (opacity ${target.opacity}) and all ${filled.length} candies on the board are`);
+    else ok(`row 0 cleared (${anim.clear} clear animations), then a candy placed into just-cleared 0,0 inside the window is visible (opacity ${target.opacity}); all ${filled.length} candies on the board are`);
     await s.ctx.close();
   }
   });
@@ -435,9 +672,15 @@ try {
     }, { timeout: 10000 });
     await s.page.waitForTimeout(150);
     const again = (await s.boardState()).filter((c) => c.filled).length;
+    /* THE BOARD IS NOT THE ONLY STATE. A module-scope `__retainedScore` written in
+     * release() and read back at mount carried the score across entries and this section
+     * went green, because it only counted candies. Ask the seam. */
+    const seamAgain = await s.seam();
     if (played < 3) bad(`the first mount did not take the placements (${played} filled)`);
     else if (again !== 0) bad(`remounting with storage cleared brought back ${again} candy/candies — module state survived the teardown`);
-    else ok(`played ${played} cells, left, cleared storage, came back to an empty board — nothing retained in the module`);
+    else if (!seamAgain || seamAgain.score !== 0 || seamAgain.combo !== 0 || seamAgain.over)
+      bad(`the board came back empty but the seam did not`, `score ${seamAgain && seamAgain.score}, combo ${seamAgain && seamAgain.combo}, over ${seamAgain && seamAgain.over} — something outlived the teardown`);
+    else ok(`played ${played} cells, left, cleared storage, came back to an empty board with score 0 and combo 0 — nothing retained in the module`);
 
     /* The reachable §0.4 failure, tested directly: two entry ids, one module URL. */
     const cross = await s.page.evaluate(async () => {
@@ -473,8 +716,19 @@ try {
   console.log('\n--- 8. TEARDOWN: nothing live, mid-drag, with a pointer captured ---');
   {
     const s = await shape(FLEET[0]);
-    await s.openBlocks({ clearStorage: true });
-    const baseline = await s.page.evaluate(() => ({ win: window.__bp.addedWin.size, ros: window.__bp.ros, dis: window.__bp.roDisconnects }));
+    /* THE BASELINE MUST PREDATE THE GAME. Taken after openBlocks it already CONTAINS the
+     * module's listeners, so `post.win > baseline.win` can never fire — deleting the
+     * whole removeEventListener loop left this clause green. The comparison has to be
+     * against a page that has never mounted the game. */
+    await s.page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+    await s.page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    await s.page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+    const baseline = await s.page.evaluate(() => ({
+      win: window.__bp.addedWin.size, ros: window.__bp.ros, dis: window.__bp.roDisconnects,
+      intervals: window.__bp.intervals.size,
+    }));
+    await s.openBlocks({ clearStorage: false });
+    const live = await s.page.evaluate(() => ({ win: window.__bp.addedWin.size }));
     /* Leave mid-drag, with a finger still down and a pointer capture taken. */
     const a = await s.tapTarget(`.bp-slot[data-slot="${Math.max(0, await s.firstFullSlot())}"]`);
     const c = await s.rect('.bp-well[data-row="2"][data-col="2"]');
@@ -490,9 +744,21 @@ try {
     const back = await s.rect('#gameBack');
     await s.touch('touchStart', [{ x: c.cx, y: c.cy, id: 1 }, { x: back.cx, y: back.cy, id: 2 }]);
     await s.wait(40);
+    /* ORDER IS THE WHOLE TEST, AND THE FIRST VERSION HAD IT BACKWARDS.
+     * `Input.dispatchTouchEvent{type:'touchEnd', touchPoints:[P]}` RELEASES P. Lifting id
+     * 1 first ended the drag — onUp ran, the capture was released — and the exit then
+     * fired against a finished drag holding zero captures. Green, against a state this
+     * section was not written to test. The EXIT finger (id 2) must lift while the
+     * dragging finger (id 1) is still down. */
+    const dragLive = await s.page.evaluate(() => {
+      const d = document.querySelector('.bp-drag');
+      return !!(d && !d.hidden);
+    });
+    if (!dragLive) bad('no drag was live when the exit was pressed — this section is not testing teardown mid-drag',
+      '.bp-drag is hidden, so onSlotDown never took a capture and the assertions below prove nothing');
+    await s.touch('touchEnd', [{ x: back.cx, y: back.cy, id: 2 }]);
+    await s.wait(80);
     await s.touch('touchEnd', [{ x: c.cx, y: c.cy, id: 1 }]);
-    await s.wait(60);
-    await s.touch('touchEnd', []);
     await s.page.waitForTimeout(500);
     const post = await s.page.evaluate(() => ({
       host: !!document.getElementById('gameHost'),
@@ -503,18 +769,26 @@ try {
         try { return String(x.animationName || '').indexOf('bp-') === 0; } catch (e) { return false; }
       }).length,
       timers: window.__bp.timers.size,
+      intervals: window.__bp.intervals.size,
       win: window.__bp.addedWin.size,
       ros: window.__bp.ros, dis: window.__bp.roDisconnects,
+      /* ANYWHERE, not just in body. games/blockpop.js states the hazard itself: a <style>
+       * appended to document.head survives endGameSession's body-only sweep unreported.
+       * Moving the append to the head and dropping its removal left CHECK 21 green. */
+      bpSheets: [...document.querySelectorAll('style')].filter((e) => (e.textContent || '').indexOf('.bp-') >= 0).length,
     }));
     const gripes = [];
     if (post.host || post.chrome) gripes.push('the host/chrome is still in the document');
     if (post.bpNodes) gripes.push(`${post.bpNodes} game node(s) still in the document`);
     if (post.anims) gripes.push(`${post.anims} bp- animation(s) still running`);
-    if (post.timers > 0) gripes.push(`${post.timers} timer(s) still armed`);
+    if (post.timers > 0) gripes.push(`${post.timers} timeout(s) armed by the game still live`);
+    if (post.intervals > baseline.intervals) gripes.push(`${post.intervals - baseline.intervals} interval(s) armed by the game still running`);
+    if (post.bpSheets > 0) gripes.push(`${post.bpSheets} bp- stylesheet(s) still in the document`);
+    if (live.win <= baseline.win) gripes.push(`the listener wrapper never observed the module adding any (baseline ${baseline.win}, with the game up ${live.win}) — this clause proves nothing`);
     if (post.win > baseline.win) gripes.push(`${post.win - baseline.win} window listener(s) not removed`);
     if (post.ros > post.dis) gripes.push(`${post.ros - post.dis} ResizeObserver(s) never disconnected`);
     if (gripes.length) bad('teardown from mid-drag left something live', gripes.join(' · '));
-    else ok(`left mid-drag with a pointer captured: host gone, 0 game nodes, 0 bp- animations, 0 armed timers, window listeners back to ${post.win}, ${post.dis} of ${post.ros} observers disconnected`);
+    else ok(`left mid-drag with a pointer captured: host gone, 0 game nodes, 0 bp- animations, 0 bp- stylesheets, 0 armed timeouts, 0 leaked intervals, window listeners ${baseline.win} -> ${live.win} with the game up -> ${post.win} after, ${post.dis} of ${post.ros} observers disconnected`);
 
     const backHome = await s.page.evaluate(() => {
       const p = document.querySelector('.pad-btn[data-id="7"]');
@@ -529,6 +803,122 @@ try {
 
     if (s.errs.length) bad(`${s.errs.length} uncaught page error(s)`, s.errs.slice(0, 3).join(' | '));
     else ok('no uncaught page errors throughout');
+    await s.ctx.close();
+  }
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(9, async () => {
+  console.log('\n--- 9. the board he put down is the board he picks up ---');
+  {
+    /* EVERY OTHER SECTION OPENS WITH clearStorage: true, so until this one existed the
+     * save/resume path was never run with a non-empty save at all — and that is the path
+     * Scotty asked for: the board is durable between app closes "in a way that
+     * everything else doesn't", so it can be picked up and put back down. A resumed
+     * score above 7 was silently zeroed by a colour-id validator and nothing saw it. */
+    const s = await shape(FLEET[0]);
+    await s.openBlocks({ clearStorage: true });
+    for (let c = 0; c < 6; c++) await s.placeAt(0, c);
+    for (const [r, c] of [[2, 1], [2, 2], [3, 1]]) await s.placeAt(r, c);
+    await s.page.waitForTimeout(400);
+    const beforeCells = (await s.boardState()).filter((x) => x.filled).map((x) => x.r + ',' + x.c).sort();
+    const beforeSeam = await s.seam();
+    const blob = await s.page.evaluate(() => { try { return localStorage.getItem('pupgame:blocks'); } catch (e) { return null; } });
+
+    await s.fingerTap('#gameBack');
+    await s.page.waitForTimeout(200);
+    await s.fingerTap('.pad-btn[data-id="7"]');
+    await s.page.waitForSelector('.pickerTile[data-game="blocks"]', { timeout: 10000 });
+    await s.fingerTap('.pickerTile[data-game="blocks"]');
+    await s.page.waitForFunction(() => {
+      const h = document.getElementById('gameHost');
+      return !!(h && h.blocks && h.querySelector('.bp-grid'));
+    }, { timeout: 10000 });
+    await s.page.waitForTimeout(150);
+    const afterCells = (await s.boardState()).filter((x) => x.filled).map((x) => x.r + ',' + x.c).sort();
+    const afterSeam = await s.seam();
+
+    if (!blob) bad('nothing was written to pupgame:blocks at all');
+    else if (beforeSeam.score <= 7) bad(`the setup only reached a score of ${beforeSeam.score}`,
+      'the resume bug this guards was a colour-id validator capping the score at 7, so the fixture must exceed it');
+    else if (JSON.stringify(afterCells) !== JSON.stringify(beforeCells))
+      bad('the board he put down is not the board he picked up',
+        `left ${JSON.stringify(beforeCells)}, came back to ${JSON.stringify(afterCells)}`);
+    else if (afterSeam.score !== beforeSeam.score)
+      bad(`the score did not survive the resume (${beforeSeam.score} -> ${afterSeam.score})`,
+        afterSeam.score === 0 ? 'zeroed entirely — a counter is being validated by a colour-id predicate bounded at COLOR_COUNT' : '');
+    else ok(`left with ${beforeCells.length} candies and a score of ${beforeSeam.score}, came back to the same board and the same score`);
+    await s.ctx.close();
+  }
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(10, async () => {
+  console.log('\n--- 10. the terminal state has exactly one way out, and it is not the exit ---');
+  {
+    /* DRIVE THE FILTER, DO NOT BYPASS IT. Game over is the state where
+     * pickFittingPiece's hard filter comes back empty and the DOT fallback still does not
+     * fit — which is only true of a completely full board. The fixture is therefore a
+     * full board handed to api.load(), and everything downstream is the real code path:
+     * dealTray runs the real filter, it returns empty, the fallback is a dot, and
+     * anyTrayFits says no. Nothing here calls the seam to force a state.
+     *
+     * ARRIVING HERE BY PLAY IS IMPOSSIBLE IN EASY MODE and that is a property of the
+     * design, not of this check: rescueUnplaceable swaps any unplaceable tray piece for
+     * one that fits, and a dot fits wherever a single cell is free, so the board must be
+     * entirely full — but the placement that fills a row clears it. Little Hands is
+     * unlosable on purpose. See FEEDBACK.md. */
+    const s = await shape(FLEET[0]);
+    await s.page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+    await s.page.evaluate(() => {
+      const full = [];
+      for (let r = 0; r < 6; r++) { const row = []; for (let c = 0; c < 6; c++) row.push(1 + ((r + c) % 7)); full.push(row); }
+      try { localStorage.setItem('pupgame:blocks', JSON.stringify({ v: 1, board: full, tray: [null, null, null], score: 40, combo: 0 })); } catch (e) {}
+    });
+    await s.page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+    await s.fingerTap('.pad-btn[data-id="7"]');
+    await s.page.waitForSelector('.pickerTile[data-game="blocks"]', { timeout: 10000 });
+    await s.fingerTap('.pickerTile[data-game="blocks"]');
+    await s.page.waitForFunction(() => {
+      const h = document.getElementById('gameHost');
+      return !!(h && h.blocks && h.querySelector('.bp-grid'));
+    }, { timeout: 10000 });
+    await s.page.waitForTimeout(200);
+
+    const over = await s.page.evaluate(() => {
+      const h = document.getElementById('gameHost');
+      const ov = document.querySelector('.bp-over');
+      if (!ov) return { present: false, seam: h && h.blocks ? h.blocks.get() : null };
+      const btns = [...ov.querySelectorAll('button')];
+      const text = (ov.textContent || '').trim();
+      return { present: true, controls: btns.length, text,
+        inHost: !!(h && h.contains(ov)), seam: h.blocks.get() };
+    });
+    if (!over.present) bad('a full board did not raise the terminal state', `seam ${JSON.stringify(over.seam)}`);
+    else if (!over.seam.over) bad('the overlay is up but the seam does not report the game as over');
+    else if (!over.inHost) bad('the terminal affordance is not inside host — §8.5 requires it there');
+    else if (over.controls !== 1) bad(`the terminal state offers ${over.controls} controls, not exactly one`);
+    else if (/[a-zA-Z]/.test(over.text)) bad(`the terminal state paints a word: ${JSON.stringify(over.text)}`,
+      'invariant 1 — every control operable by a non-reader');
+    else ok(`a full board raised the terminal state: exactly one control inside host, no letters, glyph ${JSON.stringify(over.text)}`);
+
+    if (over.present) {
+      await s.fingerTap('#bpAgain');
+      await s.page.waitForTimeout(300);
+      const back = await s.page.evaluate(() => {
+        const h = document.getElementById('gameHost');
+        return { chrome: !!document.getElementById('gamesChrome'), host: !!h,
+          overlay: !!document.querySelector('.bp-over'),
+          filled: [...document.querySelectorAll('.bp-candy')].filter((c) => !c.hidden).length,
+          seam: h && h.blocks ? h.blocks.get() : null };
+      });
+      if (!back.chrome || !back.host) bad('the play-again affordance closed the game — it must not call api.close()',
+        'invariant 5: the way out of the STATE is not the way out of the game');
+      else if (back.overlay) bad('one tap did not leave the terminal state');
+      else if (back.filled !== 0 || back.seam.score !== 0) bad(`one tap left the state but not to a fresh board`,
+        `${back.filled} candies, score ${back.seam.score}`);
+      else ok('one tap on it resumed play with a fresh board, and the game is still open — api.close() was not called');
+    }
     await s.ctx.close();
   }
   });
