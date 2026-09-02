@@ -1,7 +1,14 @@
 # PupPad CI — ten checks, each of which can go red for exactly one reason.
 #
-# This workflow REPORTS. It does not publish, deploy, or write to any branch
-# (northstar invariant 4). Publication is PUP-WO-0103's.
+# THIS WORKFLOW PUBLISHES (PUP-WO-0103). main goes to the site root, stable to
+# /stable/, and Buddy's tablet points at /stable/. Northstar invariant 4 — the copy
+# Buddy uses advances only when a human promotes it — is enforced here by the publish
+# job's verification of the PUBLISHED BYTES, not by convention and not by the ref.
+#
+# THE RULE THAT MATTERS MOST: every copy that gets published is CHECKED IN THE RUN
+# THAT PUBLISHES IT. An earlier version checked only the triggering ref, so a push to
+# main published stable's content — to the promoted copy — with stable never checked
+# in that run. "A red check means nothing publishes" was false in both directions.
 #
 # Checks 5 and 6 were added by PUP-WO-0102 and verify THE WORKER, which is the seam
 # between the two work orders: a check that verifies the worker lives here, a check
@@ -19,19 +26,57 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
-
+    # stable republishes the promoted copy when a human fast-forwards it. A push to
+    # either ref rebuilds BOTH copies from their own refs, so publication is
+    # idempotent and neither copy goes stale because the other moved.
+    branches: [main, stable]
 # Minimal by construction. A workflow that inherits write scope it does not use is
 # a credential sitting in the blast radius of every future edit to this file.
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Cancel superseded PR runs, but NEVER a run on main. A cancelled run is neither
-  # green nor red, and main is what publishes to the tablet — two quick pushes
-  # must not leave the live commit with no verdict at all. Matters more once
-  # PUP-WO-0103 gates publication on this.
+  # KEYED BY SHA FOR PUSHES, BY REF FOR PULL REQUESTS — and the difference is a real
+  # defect, not tidiness.
+  #
+  # This was `ci-${{ github.ref }}` with `cancel-in-progress` false for pushes, whose
+  # comment said "two quick pushes must not leave the live commit with no verdict at
+  # all." That is exactly what happened. `cancel-in-progress: false` protects a run
+  # that is ALREADY RUNNING; GitHub permits only ONE PENDING run per group, and a
+  # newly queued run evicts an already-pending one REGARDLESS of the flag. Three
+  # merges landed back to back and the middle one — 922c2dc, the merge that put the
+  # service worker on Buddy's tablet — was cancelled while pending. That commit has
+  # no verdict of its own on main. Verified against the API, not inferred:
+  #     gh api repos/ikthys777/PupPad/actions/runs --jq '...' -> 922c2dc concl=cancelled
+  #
+  # Giving every pushed COMMIT its own group means no push can evict another's
+  # pending run, so every commit that lands gets a verdict. Superseded PR runs are
+  # still cancelled, which is the behaviour that was actually wanted.
+  #
+  # This does NOT let two publications race: the publish job below carries its own
+  # `pages-publish` group with cancel-in-progress false, so deployments serialise
+  # even though their runs no longer share a group.
+  # THREE EVENT KINDS, THREE ANSWERS — and the third was missed on the first attempt.
+  #   pull_request      -> by ref. A newer push to a PR supersedes the older run; that
+  #                        is the one case where cancelling is what you want.
+  #   push              -> by COMMIT. Every commit that lands gets its own verdict.
+  #
+  # A third case existed while this workflow had a workflow_dispatch surface, and it
+  # is worth keeping the lesson now the surface is gone: github.sha for a dispatch is
+  # the SHA of the BRANCH HEAD, identical across every dispatch on one branch, so
+  # three dispatches seconds apart shared a group and the middle was evicted while
+  # pending — the same mechanism, one event kind over.
+  #
+  # ROUND 5, O2 — KEYING A PUSH BY SHA ALONE COLLIDES ON EXACTLY ONE EVENT, AND
+  # THAT EVENT IS A PROMOTION. Fast-forwarding `stable` to a commit already on
+  # `main` pushes THE SAME SHA to a second ref, so both pushes landed in group
+  # `ci-<sha>` — and since GitHub keeps only ONE PENDING run per group, whichever
+  # was still pending was evicted. The promotion is the one push in this repo that
+  # is guaranteed to carry a SHA another ref already published, so the collision is
+  # not a corner case: it is the normal path, and it loses the promotion silently.
+  # The ref is now part of the push key, which keeps "every commit that lands gets
+  # its own verdict" and adds "on every ref it lands on".
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -123,6 +168,7 @@ jobs:
         # rather than letting the mutation set rot unnoticed.
         run: node .github/ci/check-mutations.mjs .
 
+
       - name: "Check 8 — an HTTP error never replaces a cached entry"
         # PUP-WO-0105. Architecture §6.4 lets that work order go BEFORE the
         # PUP-WO-0104 cache gate on the condition that a worker change is gated by a
@@ -175,3 +221,1064 @@ jobs:
         # and ASSERTS the harm boundary: never an activated worker with no app shell,
         # which is the state the reverted round-3 fix produced.
         run: node .github/ci/demo-quota-install.mjs .
+
+  # ==========================================================================
+  # Publication — two copies, one Pages deployment.
+  #
+  # Gated on the checks BY CONSTRUCTION: `needs: checks` means a red check does not
+  # fail the deploy, it prevents the deploy job from existing (architecture §6).
+  #
+  # WHY THERE IS A `verify` MODE. On a pull request this job cannot run at all —
+  # publishing from an unmerged branch is exactly what invariant 4 forbids — so
+  # without a dispatch path every line below would reach `main` having never once
+  # executed. That is PUP-WO-0101's F15, and the work order says to close it by
+  # construction rather than by promise. `verify` runs the ENTIRE pipeline —
+  # checkout both refs, verify against the server, refuse dangerous trees, build from
+  # the commits, check every published copy, load each in a browser, stamp — and
+  # STOPS before upload and deploy.
+  #
+  # What `verify` does NOT prove, stated so nobody reads more into a green run than
+  # is there: the upload and the Pages deployment themselves. Those two steps first
+  # execute for real on the first push to main after this merges.
+  # ==========================================================================
+  publish:
+    name: Publish both copies
+    needs: checks
+    # RUNS ON PULL REQUESTS TOO, AND THAT IS THE POINT.
+    #
+    # It used to run only on a push to main/stable — so on a PR none of it executed,
+    # and the archive refusals below (a .gitattributes, a committed symlink, a
+    # `stable/` path colliding with the promoted copy's mount point) could not be
+    # demonstrated on the path that actually publishes. A bespoke `workflow_dispatch`
+    # mode was built to exercise them, and that mode became a SECOND PATH TO
+    # PUBLICATION whose only guard was one boolean — invariant 4's own category of
+    # worry, introduced by the machinery for testing invariant 4.
+    #
+    # Building and verifying on a PR costs nothing and needs nothing: this job is
+    # `contents: read`, and every credential that could publish lives on the `deploy`
+    # job, which is unreachable from a pull request. So the demo/refuse-* branches now
+    # demonstrate refusals through the ordinary path, and the dispatch surface is gone.
+    if: >-
+      github.event_name == 'pull_request'
+      || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # PUP-WO-0103 §7 requires the permissions to be stated rather than assumed.
+    # THIS JOB NEEDS NOTHING BEYOND READ. It verifies and builds; it does not deploy.
+    # pages: write and id-token: write live on the `deploy` job below and nowhere
+    # else, so the credential exists only in the job that actually needs it.
+    permissions:
+      contents: read
+    #
+    # NO `environment:` HERE, AND THAT IS THE POINT — found by running it.
+    #
+    # The first version put `environment: github-pages` on this whole job. The
+    # github-pages environment carries a branch_policy protection rule, so a job
+    # bound to it is REJECTED BEFORE ITS FIRST STEP on any branch the policy does not
+    # allow. The verify dispatch failed with zero steps executed and no log:
+    #     jobs[] -> {"name":"Publish both copies","steps":[]}
+    # That is the protection working correctly — and it meant every verification step
+    # sat behind the DEPLOYMENT policy, so none of them could run anywhere the site
+    # cannot be deployed from. Backwards: verification should run everywhere,
+    # deployment should be gated.
+    #
+    # The policy is a repository setting and therefore not the builder's to touch
+    # (§7). The fix is on this side: verification here, unbound; deployment in its
+    # own job below, bound.
+    concurrency:
+      # Real publications must serialise: two of them writing the Pages artifact at
+      # once is the one thing this group exists to prevent. Never cancelled in flight.
+      #
+      # ROUND 5, O1 — BUT PULL REQUESTS USED TO SHARE THAT SLOT AND THEY PUBLISH
+      # NOTHING. Every PR run enters this job with DRY_RUN=true, verifies, and stops
+      # before the upload; it still occupied `pages-publish`. With only ONE PENDING
+      # run permitted per group, a promotion's publish job waiting behind a running
+      # one could be EVICTED by an unrelated PR queued after it — and nothing rescues
+      # it, because the promotion push has already happened and will not happen again.
+      # A lost publication with a green tick on the push that was supposed to cause it.
+      # Pushes still all share one group and serialise. Each PR ref now gets its own,
+      # so PR churn cannot contend with a publication at all; superseded PR runs are
+      # still cancelled by the workflow-level group above.
+      #
+      # ================= WHAT THIS LOCK CANNOT DO =================
+      # ROUND 5 §7 FLAGS 1 AND 3, ruled by CC-A: real and NOT fixable here.
+      # Every push shares the single slot `pages-publish-push`, and GitHub keeps ONE
+      # PENDING RUN PER GROUP — a newly queued run evicts an already-pending one
+      # REGARDLESS of cancel-in-progress. So a promotion's publish job waiting behind a
+      # running one can be EVICTED BY ANY THIRD PUSH, and because it was never assigned
+      # a runner IT PRINTS NOTHING AT ALL: no annotation, no cancelled() step, no line
+      # in any log. Usually the evicting run rescues it, since publish checks out LIVE
+      # refs and republishes both copies — but only if THAT run's publish succeeds, and
+      # publish carries refusals `checks` does not. A checks-green/publish-red evictor
+      # destroys the promotion, and it cannot be re-pushed because the ref is already
+      # at that SHA.
+      #
+      # RENAMING THIS GROUP CANNOT FIX IT. Serialise-and-never-drop is not obtainable
+      # from a primitive whose pending depth is one: per-ref groups let two publications
+      # race instead, and no group at all removes the serialisation this lock exists for.
+      # A redesign of the publication model is a numbered work order behind P2.
+      #
+      # SO THE HARM IS DETECTED, NOT THE EVENT — which is strictly stronger, because it
+      # cannot be defeated by an eviction path nobody has thought of yet. The stamp step
+      # writes /stable/build-stamp.json with the RESOLVED SHA of the ref it published,
+      # and the post-stamp step declares it published. After promoting, fetch
+      #     https://ikthys777.github.io/PupPad/stable/build-stamp.json
+      # and read whether `.sha` is the commit you pushed. If it is not, the promotion did
+      # not land — whatever ate it. That check is a REQUIRED step of the promotion
+      # procedure in docs/roadmap.md, not an optional one, and it needs no run to survive.
+      group: pages-publish-${{ github.event_name == 'pull_request' && github.ref || 'push' }}
+      cancel-in-progress: false
+    env:
+      # A pull request builds and verifies; it never uploads and can never deploy.
+      DRY_RUN: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Check out the CI tooling from the triggering ref
+        uses: actions/checkout@v7
+
+      - name: Use Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .github/ci/package-lock.json
+
+      - name: Install CI tooling
+        working-directory: .github/ci
+        run: npm ci
+
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          # ON A PULL REQUEST, THE ROOT COPY IS THE PR'S OWN HEAD.
+          #
+          # It was `refs/heads/main` unconditionally, which made the PR path useless
+          # for the thing it was added for: a PR carrying a .gitattributes, a symlink
+          # or a `stable/` path had its defect in its HEAD, and the job cheerfully
+          # built main's clean tree instead. The demo/pr-refuse-* PRs "failed" without
+          # once exercising the refusal they are named after.
+          #
+          # Building the PR head is also what a PR should verify — what the site would
+          # serve IF this merged. It cannot publish: `deploy` is push-only.
+          # The promoted copy stays refs/heads/stable in every event, because a PR
+          # never proposes a change to the promoted copy; only a human moving that ref
+          # does (northstar invariant 4).
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'refs/heads/main' }}
+          path: src/main
+          fetch-depth: 0
+
+      - name: Check out stable
+        uses: actions/checkout@v7
+        with:
+          # refs/heads/stable explicitly, never the bare name: a bare ref can be
+          # satisfied by a TAG of the same name, and invariant 4 says the promoted
+          # copy advances only when a human promotes it.
+          #
+          ref: refs/heads/stable
+          path: src/stable
+          fetch-depth: 0
+
+      - name: "Invariant 4 — each checkout is the commit its remote ref names"
+        # An earlier version of this step was tautological: it compared a stamp field
+        # against the literal it had just written, and its sha check fell back to
+        # `rev-parse HEAD` of the checkout under test. Both are gone. `git ls-remote`
+        # asks the SERVER, and there is no fallback — if the remote tip cannot be
+        # established, publication fails.
+        run: |
+          set -euo pipefail
+          remote="https://github.com/${GITHUB_REPOSITORY}.git"
+          for ref in main stable; do
+            head_sha=$(git -C "src/$ref" rev-parse HEAD)
+            if [ "$ref" = main ] && [ "${{ github.event_name }}" = pull_request ]; then
+              # The root copy is deliberately NOT refs/heads/main here — it is what
+              # main would become. Nothing is published from a pull request, and the
+              # promoted copy below is still asserted against the server.
+              echo "main: PR head ${head_sha:0:12} (what the root copy would become); this run cannot deploy"
+              continue
+            fi
+            # Exact-match the ref: `ls-remote <pattern>` matches on path-component
+            # tails, so a branch literally named decoy/refs/heads/main would return
+            # two lines and wedge publication (fail-closed, but wedged).
+            remote_sha=$(git ls-remote "$remote" "refs/heads/${ref}" \
+                          | awk -v r="refs/heads/${ref}" '$2 == r { print $1; exit }')
+            [ -n "$remote_sha" ] || { echo "::error::refs/heads/${ref} does not exist on the remote"; exit 1; }
+            echo "$ref: checkout=${head_sha:0:12} remote=${remote_sha:0:12}"
+
+            # ROUND 5 §7 FLAG 4, RULED BLOCKING — a regression MY OWN O2 FIX introduced.
+            # Under the old `ci-<sha>` key a merge to main and a promotion of that same
+            # commit shared a concurrency group and evicted each other, so this race
+            # could not arise. Keying by ref+sha lets them run in PARALLEL, and
+            # refs/heads/stable moving between the checkout and this `ls-remote` now
+            # reaches here. It used to print "REFUSING TO PUBLISH — northstar
+            # invariant 4" for ANY mismatch: M1's shape with the stakes raised, fired by
+            # a benign race at the moment a human is doing what the flip sequence says.
+            #
+            # THE FIRST FIX OVERCORRECTED AND THE NARROW PASS CAUGHT IT. It classified
+            # by ancestry and then announced "Nothing is wrong with any bytes." ANCESTRY
+            # IS A FACT ABOUT THE COMMIT DAG AND SAYS NOTHING ABOUT TREES — a descendant
+            # may carry any content at all, and a reviewer demonstrated one carrying
+            # main's exact tree while this step denied anything was wrong and told the
+            # reader "do NOT read it as the promoted copy having been corrupted."
+            # Replacing an over-broad ALARM with a confident DENIAL is not an
+            # improvement. Ancestry proves STALENESS. That is now all it claims.
+            #
+            # (The reviewer rated that DISQUALIFYING as a false negative on invariant 4.
+            # It is not, and the distinction matters: northstar invariant 4 reads "the
+            # copy Buddy uses advances only when a HUMAN promotes it", falsified by
+            # "observe the promoted copy change WITHOUT a human action." Only a human
+            # can push refs/heads/stable — Protect-stable refuses installation tokens
+            # and this workflow holds no ref-write capability — so a human putting main's
+            # tree on stable IS a promotion, which the invariant permits. The over-claim
+            # was real; the severity rested on reading invariant 4 as being about which
+            # tree lands rather than about what caused it to land. CC-A upheld this and
+            # added the argument that settles it: a descendant of stable carrying main's
+            # exact tree IS WHAT THE FLIP SEQUENCE'S OWN FIRST STEP PRODUCES —
+            # fast-forwarding refs/heads/stable to main makes exactly that, by
+            # construction. A reading under which the flip's first step violates
+            # invariant 4 is the wrong reading of an invariant written to protect it.)
+            #
+            # THAT ARGUMENT HAS A PRECONDITION AND IT MUST TRAVEL WITH IT:
+            # invariant 4 is satisfied here ONLY BECAUSE ONLY A HUMAN CAN PUSH
+            # refs/heads/stable. That rests on the `Protect-stable` ruleset refusing
+            # installation tokens — a REPOSITORY SETTING, verified in both directions at
+            # architecture §6.2 (bypass_mode: always for repository admin; GH013 and an
+            # unmoved ref for an installation token). If that ruleset is ever relaxed,
+            # an automated push to stable becomes possible, the causation argument
+            # dissolves, and the reviewer's severity becomes CORRECT: a forward move
+            # would no longer imply a human action, and this branch's reassurance would
+            # be false. Re-read this block if Protect-stable changes.
+            [ "$head_sha" = "$remote_sha" ] || {
+              # ONE annotation per branch, not twelve. GitHub renders only 10 annotations
+              # of each level PER STEP, and the first version emitted 12 errors — so the
+              # two "Do NOT" guardrails, the whole point of the change, fell past the cap
+              # and never rendered. %0A keeps it to one; the plain text goes to the log.
+              nl2ann() { awk 'BEGIN{ORS=""}{if(NR>1)printf "%%0A"; print}'; }
+              moved=unknown; gerr=
+              # Fetch by URL, not by `origin`. `origin` is whatever actions/checkout
+              # left; nothing asserts it is $remote, and when it is not the fetch
+              # SUCCEEDS and the object is simply absent — a silent success landing in
+              # the `unknown` branch with no error for the reader to read.
+              if gerr=$(git -C "src/$ref" fetch -q --no-tags "$remote" "refs/heads/${ref}" 2>&1) \
+                 && git -C "src/$ref" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+                # merge-base reports an UNREADABLE GRAPH as exit 1 — the same code as
+                # "not an ancestor" — so status alone cannot tell a genuine rewind from
+                # object damage. The distinguishing signal is on stderr, which an earlier
+                # version discarded with 2>/dev/null and then told the reader to "read
+                # the git error above". Capture it and classify on it.
+                if gerr=$(git -C "src/$ref" merge-base --is-ancestor "$head_sha" "$remote_sha" 2>&1)
+                then moved=forward
+                elif [ -n "$gerr" ]; then moved=unknown
+                else moved=diverged; fi
+              fi
+              case "$moved" in
+                forward)
+                  msg=$(printf '%s\n' \
+                    "refs/heads/${ref} MOVED FORWARD while this run was building." \
+                    "checkout=${head_sha} is an ANCESTOR of remote=${remote_sha}." \
+                    "WHAT THIS ESTABLISHES: this run's checkout is STALE. Someone pushed to" \
+                    "refs/heads/${ref} after this run checked it out. On 'stable' only a human" \
+                    "can do that, so it is a promotion, which northstar invariant 4 permits." \
+                    "WHAT IT DOES NOT ESTABLISH: anything whatever about the new commit's" \
+                    "CONTENT. Ancestry is a property of the commit graph, not of trees, and a" \
+                    "descendant may carry any tree at all. THIS RUN HAS NOT EXAMINED" \
+                    "${remote_sha}. Do not read this as saying the promoted copy is fine." \
+                    "Refusing, because a stale copy must not publish." \
+                    "REMEDY: do NOT fast-forward anything to answer this. The push that moved" \
+                    "the ref has its own run, which examines and publishes that commit. But do" \
+                    "not assume it landed: a publish or deploy job evicted while pending prints" \
+                    "nothing at all (see the concurrency blocks in this file). VERIFY by" \
+                    "fetching /PupPad/stable/build-stamp.json and checking .sha is the commit" \
+                    "you pushed.")
+                  # On a pull request nothing can publish — DRY_RUN=true, and `deploy`
+                  # requires a push — so there is no publication for staleness to
+                  # endanger. Failing here would red-mark EVERY in-flight PR every time a
+                  # human promotes, since a promotion IS a forward move of stable.
+                  if [ "${{ github.event_name }}" = pull_request ]; then
+                    printf '::warning::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                    printf '%s\n' "$msg"
+                    echo "(pull request: nothing can publish from this run, so this is not fatal)"
+                    continue
+                  fi
+                  printf '::error::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                  printf '%s\n' "$msg"
+                  ;;
+                diverged)
+                  msg=$(printf '%s\n' \
+                    "src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}," \
+                    "and the checkout is NOT an ancestor of the remote tip: the ref was" \
+                    "REWOUND or force-pushed. The graph was readable, so this is not a" \
+                    "lookup failure." \
+                    "REFUSING TO PUBLISH — northstar invariant 4." \
+                    "REMEDY: find out who rewrote refs/heads/${ref} and why. Do NOT" \
+                    "fast-forward anything until that is answered.")
+                  printf '::error::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                  printf '%s\n' "$msg"
+                  ;;
+                *)
+                  msg=$(printf '%s\n' \
+                    "src/${ref} is ${head_sha} but refs/heads/${ref} is ${remote_sha}," \
+                    "and this run COULD NOT ESTABLISH which way the ref moved. REFUSING." \
+                    "Nothing is established about the bytes in either direction, so this is" \
+                    "NOT an invariant 4 finding — and it does not rule one out either." \
+                    "git said: ${gerr:-(nothing: the object was absent after a successful fetch)}" \
+                    "REMEDY: read the git output on the line above. Do NOT fast-forward.")
+                  printf '::error::%s\n' "$(printf '%s' "$msg" | nl2ann)"
+                  printf '%s\n' "$msg"
+                  ;;
+              esac
+              exit 1; }
+          done
+
+      - name: "Reject trees that can publish something other than their own bytes"
+        # `git archive` does NOT simply write the commit's tree — it honours
+        # .gitattributes FROM THE TREE IT IS ARCHIVING. Both directions demonstrated:
+        #   export-subst  interpolates the COMMIT MESSAGE into a published file, so
+        #                 arbitrary JS reaches /stable/ while the tree reads clean in
+        #                 review and every check passes. The payload lives in
+        #                 `git log`, which no gate reads.
+        #   export-ignore silently DROPS files from the published copy. Removing
+        #                 manifest.json makes cache.addAll reject, so the promoted
+        #                 copy has no working worker — fail-OPEN, on a green build.
+        # And actions/upload-pages-artifact tars with --dereference, so a committed
+        # symlink is FOLLOWED and its target published off the runner filesystem.
+        # None of it is reachable if a publishable tree may contain neither.
+        run: |
+          set -euo pipefail
+          for ref in main stable; do
+            # -z: ls-tree C-QUOTES any path with a non-ASCII or special character, so
+            # "dokument\303\266/.gitattributes" does not match an anchored grep and the
+            # gate silently allows it. NUL-delimited output is never quoted.
+            # `grep -zqE` on the RAW NUL stream. This was `| tr '\0' '\n' | grep -q`,
+            # which re-frames on newlines and undoes the very thing -z was chosen for:
+            # a file named `photo<NEWLINE>.gitattributes` becomes two lines, the second
+            # of which IS `.gitattributes`, so the tree was refused with "delete the
+            # .gitattributes from that branch" when no such file exists — a remedy that
+            # cannot be performed, wedging publication forever. Reproduced.
+            # It also retires a SIGPIPE question: with `tr` in the middle and `grep -q`
+            # exiting on first match, `tr` could in principle die of 141 under pipefail
+            # and skip the refusal SILENTLY. Measured, it does not — PIPESTATUS 0 0 0 at
+            # 166 KB, where a read-once consumer gives 141 141 0 — so that reported
+            # finding is NOT reproducible. With `tr` gone the question cannot be asked.
+            if git -C "src/$ref" ls-tree -r -z --name-only HEAD | grep -zqE '(^|/)\.gitattributes$'; then
+              echo "::error::$ref carries a .gitattributes. git archive honours it, so the published"
+              echo "::error::bytes need not be the committed bytes. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: delete the .gitattributes from that branch and push. If you need"
+              echo "::error::one for local diffs or merges, put it in .git/info/attributes, which is"
+              echo "::error::not committed and which git archive does not read. M3: a refusal with no"
+              echo "::error::remedy is one that gets deleted rather than satisfied."
+              exit 1
+            fi
+            if git -C "src/$ref" ls-tree -r HEAD | awk '$1 == "120000" { found=1 } END { exit !found }'; then
+              echo "::error::$ref contains a symlink. The Pages artifact is tarred with --dereference,"
+              echo "::error::so its target would be published from the runner filesystem. REFUSING."
+              # NOT `... | head -5`: head closes the pipe, the writer dies of SIGPIPE
+              # with 141, pipefail aborts the step MUTE and the remedy below is never
+              # printed. That is B6, which this same round fixed forty lines away —
+              # and I reintroduced it here while writing the remedy. Capture, then trim.
+              sym=$(git -C "src/$ref" ls-tree -r HEAD | awk '$1 == "120000" { $1=$2=$3=""; sub(/^ +/,""); print }' || true)
+              printf '%s\n' "$sym" | sed -n '1,5p' | sed 's/^/::error::  symlink: /'
+              n=$(printf '%s\n' "$sym" | grep -c . || true)
+              [ "${n:-0}" -le 5 ] || echo "::error::  ... and $((n - 5)) more not listed"
+              echo "::error::REMEDY: replace each symlink above with a real committed file"
+              echo "::error::(git rm the link, copy the target in, git add, push)."
+              exit 1
+            fi
+          done
+          echo "OK: both trees can only publish their own committed bytes."
+
+      - name: Build the site from the COMMITS, not the working trees
+        # With .gitattributes and symlinks refused above, `git archive HEAD` now does
+        # write the commit's tree and nothing else, so no working-tree edit, stray
+        # file, or later step can put unpromoted bytes into a published copy. The
+        # previous version copied working trees and merged stable OVER main's, which
+        # meant a `stable/` path in main survived into /stable/ — main's content on
+        # the promoted copy, which is invariant 4 falsified.
+        run: |
+          set -euo pipefail
+          # `^stable(/|$)`: a regular FILE or a submodule named `stable` collides with the
+          # promoted copy's mount point too, and `^stable/` missed both. They were
+          # fail-closed via the byte assertion — whose message says nothing about a
+          # collision and sends the reader to the wrong place.
+          # grep -zqE on the raw stream: see the .gitattributes refusal above. With `tr`
+          # in place, a file named `art<NEWLINE>stable` was refused as "main carries a
+          # 'stable/' path", printing a path that is not in the tree.
+          if git -C src/main ls-tree -r -z --name-only HEAD | grep -zqE '^stable(/|$)'; then
+            echo "::error::main carries a 'stable/' path, which collides with the promoted copy's mount point."
+            echo "::error::REFUSING TO PUBLISH — the two copies would merge."
+            hits=$(git -C src/main ls-tree -r -z --name-only HEAD | grep -zE '^stable(/|$)' | tr '\0' '\n' || true)
+            printf '%s\n' "$hits" | sed -n '1,5p' | sed 's/^/::error::  /'
+            n=$(printf '%s\n' "$hits" | grep -c . || true)
+            [ "${n:-0}" -le 5 ] || echo "::error::  ... and $((n - 5)) more not listed"
+            echo "::error::REMEDY: rename or remove those paths on main. /stable/ is the mount point"
+            echo "::error::for the PROMOTED copy built from refs/heads/stable; main may not occupy it."
+            exit 1
+          fi
+          rm -rf dist && mkdir -p dist
+          git -C src/main archive HEAD | tar -x -C dist
+          # rm -rf, not mkdir -p: `mkdir -p` is a no-op over an existing directory and
+          # `tar | tar -x` merges rather than replaces, so both leave main's bytes
+          # underneath stable's. The directory is destroyed and recreated.
+          rm -rf dist/stable && mkdir -p dist/stable
+          git -C src/stable archive HEAD | tar -x -C dist/stable
+          echo "root copy:     $(find dist -maxdepth 1 -type f | wc -l) files"
+          echo "promoted copy: $(find dist/stable -maxdepth 1 -type f | wc -l) files"
+
+      - name: "Assert the PUBLISHED BYTES are the commit's, not merely the ref's"
+        # PUP-WO-0103 §1.2. Everything above verifies refs and refuses dangerous
+        # trees; this verifies the RESULT — the bytes that will actually be served.
+        #
+        # ================= ROUND 5's OWN CORRECTION WAS WRONG =================
+        # Round 4 found that this step's closing sentence was false because
+        # `published ⊂ hashed` strictly. Round 5 "fixed" it by declaring the
+        # uploader's exclusions as `--exclude=.git --exclude=.github`, and went
+        # further: it overruled round 4's example, writing that a future
+        # `.well-known/assetlinks.json` would NOT be dropped, "run it and they are
+        # there". THAT REBUTTAL IS FALSE AND ROUND 4 WAS RIGHT.
+        #
+        # actions/upload-pages-artifact@v4 passes THREE excludes, not two:
+        #     --exclude=.git --exclude=.github --exclude=".[^/]*"
+        # The step is `shell: sh`, so the quotes are stripped and tar receives the
+        # glob `.[^/]*` — which drops EVERY DOTFILE AT ANY DEPTH. Measured here:
+        #     two excludes   -> assetlinks=1  _headers=1  .gitkeep=1
+        #     three excludes -> assetlinks=0  _headers=1  .gitkeep=0
+        # `_headers` has no leading dot and survives either way, so it discriminates
+        # NOTHING — and round 5 cited it as corroboration. The discriminating file is
+        # a dotfile: `.gitkeep`.
+        #
+        # HOW THE WRONG ANSWER WAS REACHED, because it is the more useful half: the
+        # flags were reasoned from memory instead of read from the action, and the
+        # verification then ran against the imagined flag list. Ask what the fix
+        # refuses, not whether it passes the case you invented. Worse, the answer was
+        # already in this repository: docs/findings/PUP-WO-0103-adversarial.md:1512
+        # states all three flags, says the third is v4-only, and records that a lens
+        # resolved that exact disagreement BY FETCHING THE ACTION. Round 5 contradicted
+        # evidence sitting in the file it was annotating.
+        #
+        # LIVE ON THIS TREE, not hypothetical: docs/findings/.gitkeep and
+        # docs/work-orders/.gitkeep are hashed, declared published, and never
+        # published. The consequential case is the one round 4 named — assetlinks.json
+        # is what binds the child's home-screen icon to this origin.
+        #
+        # So the exclusion below models all three flags: .git, .github, and any path
+        # with a DOT-LEADING COMPONENT at any depth.
+        run: |
+          set -euo pipefail
+          # LC_ALL=C IS LOAD-BEARING, NOT TIDINESS. GNU grep in a UTF-8 locale
+          # (runners set LANG=C.UTF-8) treats a record containing an invalid byte as
+          # BINARY: it prints "binary file matches" to stderr, exits 0, and OMITS THAT
+          # RECORD from stdout. Both manifests lose it identically, so `cmp` passes.
+          # A Latin-1 `café.png` — one byte \xe9 — made a tampered file publish under
+          # a green gate. Measured: 1 of 2 records survived under C.UTF-8, 2 of 2
+          # under LC_ALL=C.
+          export LC_ALL=C
+          # The record is "<40-hex oid>\t<path>". The pattern is ANCHORED to that oid,
+          # because an unanchored \t matched an embedded TAB INSIDE A FILENAME:
+          # `logo<TAB>.git` read as separator + path `.git`, was dropped from both
+          # sides, and is NOT excluded by tar — green while tampered.
+          EX_REC='^[0-9a-f]{40}'$'\t''(.*/)?\.[^/]'
+          fail=0
+          T=$(mktemp -d)
+          mkdir -p verified
+
+          # B1 — PATHS COME FROM --name-only. Round 5 justified this by claiming
+          # `-z --format='%(path)'` still C-quotes. THAT MEASUREMENT IS ALSO FALSE:
+          # on git 2.43.0 `-z --format='%(path)'` and `-z --name-only` are
+          # byte-identical and raw. What IS true is that any RICHER format quotes —
+          # `--format='%(objectmode) %(objectname) %(path)'`, the one this step would
+          # otherwise want, emits "mam\303\241.png". So the code is right and round
+          # 4's "-z fixes it" was right too. The claim recorded no git version, which
+          # is the actual defect in it.
+          # Modes and oids come from a parallel listing of the same tree in the same
+          # order, zipped by index. Both listings are captured to FILES with their
+          # exit status checked: inside a process substitution, a failing `git` is
+          # invisible to `set -e` AND to `pipefail`, and an empty manifest then
+          # compared equal-length against another empty manifest printed the full
+          # "REFUSING TO PUBLISH — northstar invariant 4" verdict with git's error
+          # discarded.
+          manifest_commit() {
+            local src="$1"; local -a mo=() nm=(); local i bad=0
+            git -C "$src" ls-tree -r -z HEAD --format='%(objectmode) %(objectname)' > "$T/mo" || return 9
+            git -C "$src" ls-tree -r -z HEAD --name-only                            > "$T/nm" || return 9
+            mapfile -d '' mo < "$T/mo"
+            mapfile -d '' nm < "$T/nm"
+            [ "${#mo[@]}" = "${#nm[@]}" ] || return 9
+            [ "${#nm[@]}" -gt 0 ] || return 7
+            for ((i=0;i<${#nm[@]};i++)); do
+              case "${mo[i]%% *}" in
+                # B4 — a submodule (160000) is a tree entry with no file on disk. It
+                # used to surface as a hash mismatch reported as invariant 4, the
+                # gravest message in the project, for something that is not that.
+                100644|100755) printf '%s\t%s\0' "${mo[i]#* }" "${nm[i]}" ;;
+                *) printf '%s %s\n' "${mo[i]%% *}" "${nm[i]}" >&2; bad=1 ;;
+              esac
+            done
+            [ "$bad" = 0 ] || return 8
+          }
+
+          # B2/B3 — NUL throughout, `--` before the path, --no-filters.
+          #   `read -r` on newline-delimited find output STRIPS LEADING WHITESPACE and
+          #   splits a name containing a newline; without `--`, '-x.png' made git print
+          #   `unknown switch 'x'`. NONE of it tripped `set -euo pipefail`, because a
+          #   failing $(...) inside a printf ARGUMENT is not a command failure — the
+          #   only symptom was a hash mismatch blaming invariant 4, forever, since the
+          #   name stays committed.
+          #   Only `-type f` is hashed. An earlier round-5 draft used `! -type d` to
+          #   catch the fifo/socket/device case below, and `git hash-object` on a FIFO
+          #   BLOCKS FOREVER waiting for a writer — turning a silent publish into a
+          #   20-minute job timeout with no diagnostic at all, which is strictly worse.
+          #   Non-regular entries are REFUSED above instead of hashed here.
+          manifest_disk() {
+            local dir="$1"; shift
+            ( cd "$dir" || exit 9
+              find . -type f "$@" -printf '%P\0' \
+              | while IFS= read -r -d '' f; do
+                  h=$(git hash-object --no-filters -- "$f") || exit 9
+                  printf '%s\t%s\0' "$h" "$f"
+                done )
+          }
+          nrec() { tr -cd '\0' < "$1" | wc -c; }
+          peek() { tr '\0' '\n' < "$1" | cat -v | sed -n "1,6p"; }
+
+          check_copy() {
+            local dir="$1" src="$2" label="$3" slug="$4"; shift 4
+            local -a prune=("$@"); local n_ex rc=0 links
+            # B6 — `find ... | head -5` let head close the pipe, find died of SIGPIPE
+            # 141, and pipefail aborted the step MUTE above the pipe-buffer threshold.
+            # The prune is applied here too: without it the root copy reported the
+            # promoted copy's symlinks under the "root (/)" label.
+            # ONE scan for every entry that is neither a directory nor a regular file:
+            # symlinks (tar --dereference publishes the TARGET off the runner
+            # filesystem), and fifos/sockets/device nodes (tar publishes them, and
+            # `-type f` could not see them). The prune is applied here too: without it
+            # the root copy reported the promoted copy's entries under "root (/)".
+            links=$(find "$dir" ! -type d ! -type f "${prune[@]}" -printf '%y %p\n' || true)
+            if [ -n "$links" ]; then
+              echo "::error::$label — entries that are not regular files, in the directory"
+              echo "::error::about to be published (type l=symlink p=fifo s=socket b/c=device):"
+              printf '%s\n' "$links" | sed -n '1,5p'
+              echo "::error::A symlink is published as its TARGET, off the runner filesystem"
+              echo "::error::(the artifact is tarred with --dereference); the rest are published"
+              echo "::error::as-is and are not in any commit. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: replace each entry listed above with a real committed file."
+              fail=1; return 0
+            fi
+            manifest_commit "$src" 2>"$T/nonblob" | sort -z > "$T/c.raw" || rc=$?
+            case "${rc:-0}" in
+              0) ;;
+              8) echo "::error::$label — the commit's tree holds an entry that is not a regular file:"
+                 sed -n '1,5p' "$T/nonblob"
+                 echo "::error::A submodule publishes NOTHING; the site would be missing it. REFUSING."
+                 echo "::error::REMEDY: remove that entry from the tree. This is NOT an invariant 4"
+                 echo "::error::failure and NOTHING should be fast-forwarded to answer it."
+                 fail=1; return 0 ;;
+              7) echo "::error::$label — the commit's tree listed ZERO files. REFUSING TO PUBLISH."
+                 echo "::error::REMEDY: this is a broken checkout or an empty commit, NOT invariant 4."
+                 fail=1; return 0 ;;
+              *) echo "::error::$label — could not read the commit's tree (rc=$rc). REFUSING."
+                 sed -n '1,5p' "$T/nonblob"
+                 echo "::error::REMEDY: read git's error above. This is NOT invariant 4."
+                 fail=1; return 0 ;;
+            esac
+            if ! manifest_disk "$dir" "${prune[@]}" | sort -z > "$T/d.raw"; then
+              echo "::error::$label — could not hash the built directory. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: read git's error above; a path in the build defeated hashing."
+              fail=1; return 0
+            fi
+            n_ex=$(grep -zcE "$EX_REC" < "$T/c.raw" || true)
+            grep -zZvE "$EX_REC" < "$T/c.raw" > "$T/c.pub" || true
+            grep -zZvE "$EX_REC" < "$T/d.raw" > "$T/d.pub" || true
+            # The path-only list the post-stamp step re-checks against. NUL-DELIMITED:
+            # a newline-delimited version of this file split `nl\nname.png` into two
+            # entries, which is the exact framing defect -z exists to avoid, committed
+            # while writing the check that verifies framing.
+            cut -z -f2- < "$T/c.pub" > "verified/$slug.paths"
+            echo "$label: tree=$(nrec "$T/c.raw") file(s); to be published=$(nrec "$T/c.pub"); withheld by the uploader=${n_ex:-0}"
+            if cmp -s "$T/c.pub" "$T/d.pub"; then
+              echo "  ok — every file that will be published is byte-identical to the commit's"
+            else
+              echo "::error::$label — the bytes about to be published are NOT the commit's tree."
+              echo "  the commit's publishable set begins:"; peek "$T/c.pub"
+              echo "  the built directory's begins:";        peek "$T/d.pub"
+              echo "::error::REFUSING TO PUBLISH — northstar invariant 4."
+              echo "::error::REMEDY: a step between the archive and here changed the tree. Do not"
+              echo "::error::fast-forward any ref to answer this; find the step."
+              fail=1
+            fi
+          }
+          check_copy dist        src/main   "root (/)"            root     -not -path './stable/*'
+          check_copy dist/stable src/stable "promoted (/stable/)" promoted
+          [ "$fail" = 0 ] || exit 1
+          echo
+          echo "OK: every file either copy will publish is byte-for-byte its own commit's."
+          echo "    WITHHELD BY THE UPLOADER, and therefore NOT published: .git and .github at"
+          echo "    any depth, AND every path with a dot-leading component at any depth —"
+          echo "    actions/upload-pages-artifact@v4's third exclude, \".[^/]*\". The per-copy"
+          echo "    counts above are that set. On this tree it currently includes"
+          echo "    docs/findings/.gitkeep and docs/work-orders/.gitkeep."
+          echo "    This step is NOT the last word on the artifact: the stamp step writes three"
+          echo "    uncommitted files afterwards, and the step named below re-checks the"
+          echo "    directory that is actually uploaded."
+
+      - name: Install the browser
+        # BEFORE the per-copy checks, not after — found by a real run.
+        # Check 6 (demo-two-path-caches) drives Chromium, and it sits inside the
+        # per-copy loop below. With this step after that loop, check 6 failed for
+        # BOTH copies with "Executable doesn't exist at .../chrome-linux/chrome" and
+        # the publish job went red for a reason that had nothing to do with the
+        # copies it was judging. That ordering came forward from PUP-WO-0101, where
+        # the publish job had never once executed, so nothing could have caught it.
+        working-directory: .github/ci
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: "Check 5 against the /stable/ copy specifically — invariant 4's call site"
+        # continue-on-error, with a gate step at the end of the job. F9: a failing step
+        # aborts the job, so placing this FIRST — done so acceptance 5a's call site
+        # always runs — meant that while /stable/ was bad, NO root-copy check ever
+        # executed. That is today's state until stable is fast-forwarded, and it is the
+        # inverse of the defect that put this step first. Both copies are judged in
+        # every run now; nothing publishes while either is red.
+        continue-on-error: true
+        id: stable_call_site
+        # PUP-WO-0103 §1.3, ruled from PUP-WO-0102's F1. This runs BEFORE the general
+        # per-copy loop, and the ordering is load-bearing rather than cosmetic.
+        #
+        # It was originally placed after the loop, and the first real run showed why
+        # that is wrong: the loop failed, so this step was SKIPPED, and the named call
+        # site that acceptance item 5a exists to demonstrate never executed at all. A
+        # call site that only runs when nothing else has gone wrong is not a call
+        # site — it is the H1 defect again, one layer up: the principle was written
+        # down and the thing that invokes it was unreachable.
+        #
+        # First, so its precise diagnostic is what a human reads. The loop below is
+        # the general backstop, and if someone later narrows the loop this step still
+        # fails and still says why.
+        #
+        # THE LIVE CASE: refs/heads/stable is 2952aa1, whose sw.js is
+        # `var CACHE_NAME = 'pup-pad-v16'` with `names.filter(n => n !== CACHE_NAME)`
+        # and `caches.match(event.request)` — origin-wide on BOTH the reap and the
+        # read. Published at /stable/ alongside a v17 root, it would delete the root
+        # cache on every activation, and the root worker's legacy exception would
+        # delete pup-pad-v16 — which IS stable's live cache — on every activation of
+        # its own. Mutual destruction, forever, not once.
+        #
+        # ROUND 5, M1 — THIS SITE USED TO PRESCRIBE THE ACT INVARIANT 4 PROTECTS.
+        # It was `if node ...; else <NOT PREFIX-BOUNDED> ... fast-forward stable; fi`,
+        # so ANY nonzero exit produced that diagnosis and that instruction: a crash in
+        # the checker, a missing dist/stable, ERR_MODULE_NOT_FOUND, a bad argument.
+        # Fast-forwarding `stable` publishes main's content to /stable/ — the single
+        # act northstar invariant 4 exists to prevent — and the job was telling a
+        # human to do it in answer to an unrelated failure. A refusal that names the
+        # wrong cause is bad; one that prescribes the wrong remedy is worse than
+        # silence, because a human who follows it has done the damage himself.
+        #
+        # check-cache-isolation.mjs now separates the two, and check 7 ASSERTS the
+        # separation rather than trusting it (PART A must exit 1, never 3):
+        #     0  the promoted worker is prefix-bounded
+        #     1  it is NOT — a real verdict, and the fast-forward remedy applies
+        #     3  no verdict was reached; the check broke. Still refuses, and says
+        #        plainly that nothing should be fast-forwarded.
+        #
+        # ONE CASE IS NOT COVERED, AND AN EARLIER VERSION OF THIS COMMENT CLAIMED IT
+        # WAS. It listed "ERR_MODULE_NOT_FOUND" among the crashes now separated. It is
+        # not: a failed module RESOLUTION is a LINK-time error, raised before any
+        # module in the graph is evaluated, so the uncaughtException handler inside
+        # check-cache-isolation.mjs has not been installed yet and Node exits 1 — the
+        # code that means "real verdict" and carries the fast-forward remedy. No
+        # in-module handler can catch it; it would need a wrapper process.
+        # Mitigated, not fixed: `publish: needs: checks` runs the same script on the
+        # same checkout first, so a missing import fails there. Recorded because a
+        # comment claiming uncovered coverage is how three of this project's false
+        # greens survived.
+        run: |
+          set -uo pipefail
+          rc=0
+          node .github/ci/check-cache-isolation.mjs dist/stable || rc=$?
+          case "$rc" in
+            0)
+              echo "the promoted copy's worker touches only what it owns."
+              ;;
+            1)
+              echo "::error::THE /stable/ COPY'S WORKER IS NOT PREFIX-BOUNDED."
+              echo "::error::Publishing it would destroy the root copy's cache on every activation,"
+              echo "::error::and the root worker would destroy this one's. REFUSING TO PUBLISH."
+              echo "::error::REMEDY: this is the one failure the fast-forward answers. If"
+              echo "::error::refs/heads/stable is still behind PUP-WO-0102, fast-forward it."
+              exit 1
+              ;;
+            *)
+              echo "::error::CHECK 5 DID NOT REACH A VERDICT ON THE /stable/ COPY (exit $rc)."
+              echo "::error::Nothing has been established about the promoted worker, in either"
+              echo "::error::direction. REFUSING TO PUBLISH, because an unverified promoted copy"
+              echo "::error::is exactly what this job exists to stop."
+              echo "::error::REMEDY: fix the check — read its output above. Do NOT fast-forward"
+              echo "::error::refs/heads/stable to answer this; that would publish main's content"
+              echo "::error::to /stable/, which is northstar invariant 4, and it would not fix"
+              echo "::error::the check."
+              exit 1
+              ;;
+          esac
+
+      - name: "Check EVERY published copy, in the run that publishes it"
+        if: '!cancelled() && steps.stable_call_site.conclusion != ''skipped'''
+        continue-on-error: true
+        id: per_copy
+        # PUP-WO-0103 §1.3. The rule an earlier version got wrong: the checks job only
+        # ever examines the TRIGGERING ref, so a push to main would publish stable's
+        # content — to Buddy's tablet — with stable never checked in that run.
+        #
+        # §1.4 falls out of this rather than needing its own special case: a /stable/
+        # copy whose worker reaps or READS outside its own prefix fails check 5 here,
+        # so it cannot be published whatever order the human steps happen in. A
+        # sequencing paragraph in a work order is not a mechanism; this is.
+        #
+        # WHICH CHECKS, AND WHY EACH IS OR IS NOT HERE:
+        #   1 syntax          yes — a copy whose sw.js does not parse caches nothing.
+        #   2 assets          yes — an asset missing from urlsToCache breaks offline.
+        #   5 cache-isolation yes — THE call site for §1.4. See the named step below.
+        #   6 two-path        yes — check 5's sandbox is detectable by a one-line
+        #                     `typeof ExtendableEvent` gate and check 6 is the only
+        #                     thing that catches it. PUP-WO-0101 omitted it here,
+        #                     leaving that hole open on exactly the path that
+        #                     publishes while the report said all six ran.
+        #   3 cache-name      NO — it compares two REVISIONS, not a property of a
+        #                     tree. There is no "previous revision" of a published
+        #                     directory. It runs in the checks job, where it belongs.
+        #   4 load            yes, but separately below — it needs a browser.
+        #   7 mutations       NO — it mutates .github/ci and re-runs check 5 against
+        #                     the mutants. It is a property of the TOOLING, not of a
+        #                     published copy, and a published copy has no .github/ci
+        #                     to mutate. It runs once in the checks job.
+        run: |
+          set -euo pipefail
+          fail=0
+          for copy in dist dist/stable; do
+            label="/$([ "$copy" = dist ] && echo '' || echo 'stable/')"
+            echo "::group::checking published copy: $label"
+            for chk in check-syntax check-assets check-cache-isolation demo-two-path-caches; do
+              if node ".github/ci/$chk.mjs" "$copy"; then
+                echo "  ok  $chk"
+              else
+                echo "::error::$chk FAILED for published copy '$label' — refusing to publish."
+                fail=1
+              fi
+            done
+            echo "::endgroup::"
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: "GATE — refuse publication if either copy failed"
+        # The two steps above are continue-on-error so both copies are always judged.
+        # This is where that becomes a refusal again. Fail-closed: an outcome that is
+        # neither success nor failure refuses too. `!cancelled()` rather than
+        # `always()` so a cancelled job does not run eight Node checks to no purpose.
+        if: '!cancelled()'
+        run: |
+          set -euo pipefail
+          s='${{ steps.stable_call_site.outcome }}'; p='${{ steps.per_copy.outcome }}'
+          echo "/stable/ call site: $s    per-copy checks: $p"
+          if [ "$s" = skipped ] || [ "$p" = skipped ]; then
+            # Distinguished, because conflating them is the F13 defect again: an
+            # earlier step failing left this printing "a published copy did not pass
+            # its checks" when NO COPY WAS EVER CHECKED, sending the reader to
+            # fast-forward stable over what might be a shell bug three steps up.
+            echo "::error::REFUSING TO PUBLISH — the copies were never checked; an earlier step failed."
+            exit 1
+          fi
+          [ "$s" = success ] && [ "$p" = success ] || {
+            echo "::error::REFUSING TO PUBLISH — a published copy did not pass its checks."
+            exit 1; }
+
+      - name: "Load every published copy in a real browser"
+        run: |
+          set -euo pipefail
+          fail=0
+          for copy in dist dist/stable; do
+            node .github/ci/check-load.mjs "$copy" || { echo "::error::check-load FAILED for '$copy'"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: "The two PUBLISHED workers, exercised as a pair"
+        # PUP-WO-0103 §1.5, carried from PUP-WO-0101's F8 and the hardest item in the
+        # work order. Everything above checks each copy ALONE. Check 6 registers one
+        # sw.js at two scopes, which is the deployed pair only when the copies are
+        # identical — and the case that matters is precisely when they are NOT:
+        # promotion lag, root at v18 while /stable/ is still v17. Two different
+        # workers, one origin, both live.
+        run: node .github/ci/check-two-trees.mjs dist dist/stable
+
+      - name: Stamp each copy with the ref and commit it was built from
+        # Written AFTER every check so the stamp cannot influence one, and after the
+        # published-bytes assertion so that comparison stays exact rather than
+        # carrying an exception for this file. It makes P1 gate item 3 two curls and
+        # keeps invariant 4 auditable afterwards rather than only at the gate.
+        #
+        # ROUND 5, O3 — THE INSTRUMENT USED TO FALSIFY THE THING IT MEASURES.
+        # This wrote `built_at` and `run` into BOTH stamps, and a push to `main`
+        # redeploys the whole artifact including ./stable/. So /stable/build-stamp.json
+        # changed on every deployment, with no promotion and no change to the promoted
+        # copy's app bytes.
+        #
+        # THE JUSTIFICATION FIRST WRITTEN HERE OVERSTATED THE ROADMAP, AND IS CORRECTED
+        # RATHER THAN DELETED. It said "Roadmap P1 exit gate item 3 reads that exact
+        # file". It does not. Gate item 3 (docs/roadmap.md:172) names NO file and
+        # prescribes `curl -sI`, which is --head — headers only, no body — so the
+        # prescribed command cannot read a commit out of anything. `grep build-stamp`
+        # across roadmap, architecture and northstar returns nothing. The weaker framing
+        # a few lines above ("makes P1 gate item 3 two curls") is the accurate one, and
+        # an auditor must fetch BOTH stamps with `curl -s`, not `-sI`.
+        #
+        # THE CHANGE IS STILL RIGHT, for a better reason than the one first given:
+        # bytes under /stable/ changing on every push to `main` is a literal violation
+        # of northstar invariant 4 whatever any gate reads.
+        #
+        # The stamp is now a PURE FUNCTION OF THE COMMIT IT DESCRIBES: ref, sha, path,
+        # and nothing else. Byte-identical across any number of redeployments of the
+        # same commit, which is what makes it usable as evidence. The volatile
+        # deployment metadata has not been dropped — it moved to /deploy-stamp.json at
+        # the root, where it belongs: there is exactly ONE deployment per run and it is
+        # a property of the run, not of the promoted copy. Nothing in CI reads either
+        # file; the consumers are the P1 gate and a human with curl.
+        run: |
+          set -euo pipefail
+          stamp() {
+            # The sha is ASSIGNED first. As an argument to printf, a failing
+            # $(git rev-parse) is not a command failure — `set -e` does not fire and
+            # the stamp is written with an empty sha at exit 0. The invariant-4 step
+            # above looks identical and behaves the opposite way, because there the
+            # substitution IS an assignment.
+            local sha
+            sha=$(git -C "src/$2" rev-parse HEAD)
+            [ -n "$sha" ] || { echo "::error::could not resolve HEAD for src/$2"; exit 1; }
+            printf '{"ref":"%s","sha":"%s","path":"%s"}\n' "$2" "$sha" "$3" > "$1/build-stamp.json"
+          }
+          stamp dist        main   /
+          stamp dist/stable stable /stable/
+
+          # The volatile half, at the root only, where one deployment is described once.
+          root_sha=$(git -C src/main rev-parse HEAD)
+          stable_sha=$(git -C src/stable rev-parse HEAD)
+          printf '{"run":"%s","built_at":"%s","root_sha":"%s","stable_sha":"%s"}\n' \
+            "${GITHUB_RUN_ID}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$root_sha" "$stable_sha" \
+            > dist/deploy-stamp.json
+
+          cat dist/build-stamp.json dist/stable/build-stamp.json dist/deploy-stamp.json
+
+          # P1 gate item 3 says the promoted copy's commit DIFFERS from the root's
+          # after a merge to main with no promotion. Print the comparison it will make
+          # so the run that publishes is also the run that records it.
+          if [ "$root_sha" = "$stable_sha" ]; then
+            echo "P1 gate 3: both copies are at $root_sha — identical, so the gate is not"
+            echo "           yet falsifiable from this deployment. Expected right after a"
+            echo "           promotion; land a commit on main without promoting to separate."
+          else
+            echo "P1 gate 3: root=$root_sha  promoted=$stable_sha  (they differ, as invariant 4 requires)"
+          fi
+
+      - name: "Assert the DIRECTORY BEING UPLOADED is the verified set plus exactly the stamps"
+        # ROUND 5 ADVERSARIAL PASS. The byte assertion above is not the last word on the
+        # artifact and its closing sentence quietly implied that it was. It runs at step
+        # 9; the upload is step 19. Between them the stamp step writes THREE files that
+        # are in no commit tree — dist/build-stamp.json, dist/stable/build-stamp.json and
+        # dist/deploy-stamp.json — INCLUDING one into the promoted copy, which is a file
+        # under /stable/ that no human promoted. The gate certified a directory that was
+        # then modified, so any step inserted into that window could add arbitrary bytes
+        # to the artifact and nothing would notice.
+        #
+        # This closes the window by re-deriving the published set from the directory that
+        # is actually uploaded and requiring it to equal
+        #     (what the byte assertion verified)  +  (exactly these three stamp paths)
+        # Anything else — added, removed or renamed after the gate — refuses here.
+        #
+        # It runs on EVERY trigger, pull requests included, deliberately: a step behind
+        # DRY_RUN is a step nobody has watched work, and that is how the two false
+        # greens in this same job survived three rounds.
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          EX_REC='^(.*/)?\.[^/]'
+          T=$(mktemp -d)
+          # The uploader's model, identical to the byte assertion's: .git, .github and
+          # any dot-leading component at any depth are withheld. Non-regular entries were
+          # refused upstream, so -type f is complete here.
+          ( cd dist && find . -type f -printf '%P\0' ) | sort -z \
+            | grep -zZvE "$EX_REC" > "$T/actual" || true
+
+          # Expected = verified root paths + verified promoted paths under stable/ + stamps.
+          : > "$T/expected"
+          cat verified/root.paths >> "$T/expected"
+          while IFS= read -r -d '' p; do printf 'stable/%s\0' "$p"; done < verified/promoted.paths >> "$T/expected"
+          printf 'build-stamp.json\0stable/build-stamp.json\0deploy-stamp.json\0' >> "$T/expected"
+          sort -z "$T/expected" -o "$T/expected"
+
+          n_a=$(tr -cd '\0' < "$T/actual" | wc -c); n_e=$(tr -cd '\0' < "$T/expected" | wc -c)
+          echo "artifact will contain $n_a published file(s); expected $n_e"
+          if cmp -s "$T/actual" "$T/expected"; then
+            echo "OK: the uploaded directory is exactly the verified bytes plus the three stamps."
+            echo "    build-stamp.json (x2) and deploy-stamp.json are in no commit tree. They are"
+            echo "    DECLARED here rather than tolerated, which is the difference between an"
+            echo "    exception and a hole."
+            echo
+            echo "    STILL NOT ESTABLISHED, and left open rather than absorbed: the uploader's"
+            echo "    exclusion list is MODELLED here, not read back off the artifact. The model"
+            echo "    was checked byte-for-byte against the real tar command over a fixture of"
+            echo "    Latin-1, tab, newline, leading-space, leading-dash, dotfile-directory and"
+            echo "    nested .git paths and agreed exactly — but that was checked by hand, not"
+            echo "    by this job. If a future v4 changes what it drops, both steps stay green"
+            echo "    and the site loses files. This has NO work order number, deliberately:"
+            echo "    an earlier draft invented one, and a number reads as a reference, so it"
+            echo "    makes a reader believe something tracks this when nothing does."
+            exit 0
+          fi
+          echo "::error::THE DIRECTORY ABOUT TO BE UPLOADED IS NOT WHAT WAS VERIFIED."
+          comm -23 <(tr '\0' '\n' < "$T/actual") <(tr '\0' '\n' < "$T/expected") \
+            | sed -n '1,10p' | sed 's/^/::error::  ADDED after the gate: /' || true
+          comm -13 <(tr '\0' '\n' < "$T/actual") <(tr '\0' '\n' < "$T/expected") \
+            | sed -n '1,10p' | sed 's/^/::error::  MISSING since the gate: /' || true
+          echo "::error::REFUSING TO PUBLISH. A step between the byte assertion and the upload"
+          echo "::error::changed the tree. REMEDY: find that step. Do NOT fast-forward any ref."
+          exit 1
+
+      - name: "pull request — everything above ran; stop before publishing"
+        if: env.DRY_RUN == 'true'
+        run: |
+          echo "PULL REQUEST — the whole publication pipeline ran and passed."
+          echo "Nothing was uploaded and nothing was deployed."
+          echo "What a PR run does NOT exercise, stated so nobody reads more into a"
+          echo "green than is there: actions/upload-pages-artifact and"
+          echo "actions/deploy-pages. Those execute only on a push to main or stable."
+
+      - name: Upload the site
+        if: env.DRY_RUN != 'true'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+      - name: "cancelled — fail closed AND SAY SO"
+        # ACCEPTANCE 8a, PARTIALLY DISCHARGED AND THE REST EXPLICITLY WAIVED.
+        # The item reads "a cancelled or absent run does not publish, demonstrated —
+        # not reasoned." Round 4 found it in none of the three permitted states: not
+        # demonstrated, not flagged, not waived. It is now in two of them, honestly.
+        #
+        # THE PROPERTY HOLDS BY CONSTRUCTION, and that half IS reasoning, so it is
+        # labelled as such: on cancellation the runner skips every remaining step
+        # without an always()/cancelled() condition, so `Upload the site` never runs;
+        # and `deploy` carries `needs: publish`, so a publish that did not succeed
+        # means the deploy job does not exist. Nothing reaches the site.
+        #
+        # WHAT WAS MISSING WAS THE "SAY SO". The GATE step is `if: !cancelled()`, so
+        # on an actual cancellation it is SKIPPED and the job ended in silence — a
+        # human reading the run saw no refusal at all, which is indistinguishable
+        # from a run that simply had nothing to do. This step is that sentence.
+        #
+        # WAIVED, WITH THE REASON: the demonstration is not mine to produce.
+        # Cancelling a run is a write-scoped API call, and `git`/`gh` in the build
+        # environment are intentionally read-only. Whoever merges can discharge it in
+        # one action — start a push run and cancel it — and this step is what they
+        # should look for in the log. Until then item 8a is WAIVED, not demonstrated,
+        # and this comment is the flag rather than a green tick standing in for one.
+        #
+        # ================= WHAT THIS STEP CANNOT SEE =================
+        # ROUND 5 §7 FLAG 2. This step covers a job that STARTED and was then
+        # cancelled: a manual cancel that lands while THIS job is running, or a
+        # superseded pull-request run.
+        #
+        # AND THE LIKELIEST MANUAL CANCEL IS NOT ONE OF THEM. `publish` has
+        # `needs: checks`, and `checks` is fourteen steps including two browser
+        # installs — by far the longest window and the moment a human is most likely to
+        # hit Cancel. A cancel arriving then leaves `publish` cancelled BEFORE it is
+        # assigned a runner, so this step never executes. "Manual cancels are covered"
+        # would be false; most are not.
+        #
+        # IT CANNOT FIRE ON THE PATH O1 AND O2 EXIST TO ELIMINATE. `pages-publish-push`
+        # is one concurrency slot for every push and GitHub keeps only ONE PENDING run
+        # per group, so a promotion's publish job waiting behind a running one is
+        # EVICTED WHILE PENDING — no runner is ever assigned, and a step that never
+        # runs cannot report. The same is true of `pages-deploy`.
+        #
+        # That distinction is written down because an unfireable reporter is worse than
+        # no reporter: it makes the silence look covered. This step's presence must not
+        # be read as "a lost publication would have said so." It would not.
+        # WHAT CATCHES THAT INSTEAD is the post-condition, not a log line — see the
+        # concurrency block above and the promotion procedure in docs/roadmap.md:
+        # after promoting, fetch /PupPad/stable/build-stamp.json and read whether `sha`
+        # is the commit you just pushed. A promotion that was evicted is visible there
+        # whatever ate it, including eviction paths nobody has thought of yet.
+        #
+        # Second honest limit: a SECOND cancel request force-kills the job and this step
+        # will not run either. Silence after a double-cancel is expected, not a defect.
+        if: cancelled()
+        run: |
+          # ONE annotation. GitHub renders only 10 warnings per step and the first
+          # version emitted 13, so the URL and the "absence of an error is not evidence"
+          # line — the entire actionable payload — fell past the cap and never rendered.
+          # One of the thirteen was an EMPTY `::warning::`, burning a slot to print
+          # nothing.
+          msg=$(printf '%s\n' \
+            "This run STARTED and was then CANCELLED before it finished verifying." \
+            "NOTHING WAS DEPLOYED — the site still serves whatever it served before." \
+            "(The upload step may or may not have completed; only the DEPLOY is" \
+            "guaranteed not to have happened, because deploy requires publish to" \
+            "have succeeded.)" \
+            "This is the fail-closed path, not a failure to check." \
+            "" \
+            "THIS MESSAGE DOES NOT COVER EVERY WAY A RUN CAN FAIL TO PUBLISH." \
+            "A publish or deploy job EVICTED WHILE PENDING (one concurrency slot, one" \
+            "pending run) never gets a runner and prints NOTHING AT ALL — and neither" \
+            "does a cancel that arrives while the 'checks' job is still running." \
+            "IF YOU WERE PROMOTING, and only then: verify it landed by fetching" \
+            "  https://ikthys777.github.io/PupPad/stable/build-stamp.json" \
+            "and checking .sha is the commit you pushed. Absence of an error is not" \
+            "evidence your promotion landed. (That URL 404s until the Pages flip.)")
+          printf '::warning::%s\n' "$(printf '%s' "$msg" | awk 'BEGIN{ORS=""}{if(NR>1)printf "%%0A"; print}')"
+          printf '%s\n' "$msg"
+
+  # ==========================================================================
+  # Deployment — the ONLY job that can change what the site serves.
+  #
+  # Split from `publish` so the github-pages environment (and its branch policy)
+  # gates the deployment alone, not the verification. `needs: publish` means every
+  # assertion in that job stands between a commit and the site: a red check does not
+  # fail the deploy, it prevents this job from existing.
+  #
+  # It deploys the artifact its own run uploaded, so nothing built elsewhere can be
+  # deployed through it.
+  # ==========================================================================
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: publish
+    # PUSH TO main OR stable, AND NOTHING ELSE. Never a pull request, never a fork,
+    # and there is no dispatch surface left to reach it by. The promoted copy advances
+    # only when a human moves refs/heads/stable — which the branch ruleset permits to a
+    # repository admin and refuses to every token, so the human's promotion authority
+    # is structural rather than something this workflow grants.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stable')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The whole of what publication needs beyond read, and it lives only here:
+    #   pages: write     — create the Pages deployment
+    #   id-token: write  — the OIDC token actions/deploy-pages exchanges for it
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      # Never cancel a deployment in flight — a cancelled deploy can leave the site
+      # serving a half-updated pair of copies.
+      # ROUND 5 §7 FLAG 3. This group is global across every ref with
+      # cancel-in-progress false, so it inherits the identical depth-1 rule: a deploy
+      # job pending behind a running one is EVICTED by a third, silently — and unlike
+      # `publish`, this job has NO `if: cancelled()` step at all, so it is silent by
+      # construction rather than by accident. The artifact uploads, `publish` goes
+      # green, and nothing deploys.
+      # Caught by the same post-condition, for the same reason: /stable/build-stamp.json
+      # reports the sha actually SERVED, so a deployment that never happened is visible
+      # to the human who promoted, with no dependence on any job having run.
+      group: pages-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
+

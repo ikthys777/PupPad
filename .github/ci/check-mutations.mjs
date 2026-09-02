@@ -54,24 +54,49 @@ import { tmpdir } from 'node:os';
 const REPO = process.argv[2] || process.cwd();
 const results = [];
 
-function run(label, { sw = [], harness = [], expect }) {
+function run(label, { sw = [], harness = [], expect, expectFail }) {
   const dir = mkdtempSync(join(tmpdir(), 'puppad-red-'));
   try {
     cpSync(join(REPO, 'sw.js'), join(dir, 'sw.js'));
     cpSync(join(REPO, '.github/ci'), join(dir, 'ci'), {
       recursive: true, filter: (s) => !s.includes('node_modules'),
     });
-    const patch = (file, subs) => {
+    /* ROUND 5, M2 — THE BEST DIAGNOSTIC IN THE REPO WAS UNREADABLE WHERE IT FIRES.
+     * This text was thrown as an Error, so GitHub rendered it as a Node stack trace
+     * with no annotation, and `${file}` named the file INSIDE THE TEMPORARY COPY —
+     * a path that no longer exists by the time anyone reads the log, in a directory
+     * the human cannot edit. So the one message in the pipeline that exists to stop
+     * a maintainer deleting the check pointed at a file they could not open. It now
+     * annotates, names the path IN THE REPO, and exits instead of unwinding. */
+    const patch = (file, subs, realPath) => {
       if (!subs.length) return;
       let s = readFileSync(file, 'utf8');
       for (const [a, b] of subs) {
-        if (!s.includes(a)) throw new Error(`${label}: anchor not found in ${file}:\n${a}`);
+        if (!s.includes(a)) {
+          console.error(`::error file=${realPath}::${label}: mutation anchor no longer matches ${realPath} — update the anchor, do not delete the mutation.`);
+          console.error(`\n${label}: anchor not found in ${realPath}`);
+          console.error(`  (searched the working copy at ${file}, which is a throwaway clone of ${realPath})\n`);
+          console.error(`  THIS IS MAINTENANCE, NOT FLAKINESS, AND THE FIX IS NOT TO DELETE THIS CHECK.`);
+          console.error(`  Mutations are anchored to exact source text. This anchor stopped matching`);
+          console.error(`  BECAUSE the file it points into was edited — red precisely because of the`);
+          console.error(`  change, which is the opposite of flaky. Update the anchor in`);
+          console.error(`  .github/ci/check-mutations.mjs to the edited text, keeping the mutation's`);
+          console.error(`  MEANING the same, and re-run.`);
+          console.error(`  Deleting the mutation removes the only evidence that the defect it`);
+          console.error(`  restores would still be caught (architecture §6.1).\n`);
+          console.error(`  anchor:\n${a}`);
+          /* rmSync the throwaway clone before exiting: this `process.exit` sits inside
+           * the try{} whose finally{} does the cleanup, so every anchor failure leaked
+           * one /tmp/puppad-red-* directory. Measured: exactly one per failure. */
+          try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+          process.exit(1);
+        }
         s = s.replace(a, b);
       }
       writeFileSync(file, s);
     };
-    patch(join(dir, 'sw.js'), sw);
-    patch(join(dir, 'ci/lib/sw-harness.mjs'), harness);
+    patch(join(dir, 'sw.js'), sw, 'sw.js');
+    patch(join(dir, 'ci/lib/sw-harness.mjs'), harness, '.github/ci/lib/sw-harness.mjs');
 
     let out = '', code = 0;
     try {
@@ -85,8 +110,20 @@ function run(label, { sw = [], harness = [], expect }) {
     const observed = expect === 'RED' || expect === 'GREEN'
       ? (red ? 'RED' : 'GREEN')
       : (red ? 'LOUD' : 'SILENT');
-    const pass = observed === expect;
+    let pass;
     const fails = out.split('\n').filter((l) => l.includes('FAIL')).map((l) => l.trim());
+    /* FINDING B — THE EXIT CODE IS NOT THE VERDICT.
+     * This compared `code !== 0` and nothing else, so ANY red counted as "the defect
+     * was caught" — including a red for a completely different reason. A mutation that
+     * merely breaks sw.js with a syntax error would have scored as proof that the
+     * assertion under test still works. `expectFail` names the assertion that must be
+     * the one to fire; a red produced by anything else is now a misprediction, which
+     * is what it always was. */
+    const matched = !expectFail || fails.some((f) => f.includes(expectFail));
+    pass = observed === expect && matched;
+    if (observed === expect && !matched) {
+      console.log(`        RED, but NOT on the expected assertion: wanted ${JSON.stringify(expectFail)}`);
+    }
     results.push({ label, expect, got: observed, pass, fails, code });
     console.log(`${pass ? '  ok  ' : '  MISPREDICTED'} ${label}`);
     console.log(`        expected ${expect}, got ${observed} (exit ${code})`);
@@ -104,14 +141,14 @@ console.log('\n=== PART A — restore the defect, check 5 must go RED ===');
 
 /* §3.3 THE HEADLINE. Invariant 7's own falsification test. */
 run('A1  origin-wide READ restored (invariant 7, architecture §6.1)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "SERVED the other deploy path",
   sw: [[`      return caches.open(CACHE_NAME).then(function(cache) {
         return cache.match(event.request);
       }).then(function(hit) {`, `      return caches.match(event.request).then(function(hit) {`]],
 });
 
 run('A2  origin-wide REAP restored (architecture §6)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "reap DELETED",
   sw: [[`          if (!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT) return true;
           /* Otherwise: this worker's own prefix, and never outside it. */
           return name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME;`,
@@ -119,17 +156,17 @@ run('A2  origin-wide REAP restored (architecture §6)', {
 });
 
 run('A3  legacy exception becomes a PATTERN, not a literal', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "NEAR MISS",
   sw: [[`name === LEGACY_CACHE_EXACT`, `name.indexOf('pup-pad-v1') === 0`]],
 });
 
 run('A4  /stable/ exclusion removed (root serves the promoted copy)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "SERVES /stable/",
   sw: [[`  if (FOREIGN_SUBTREE !== null) {`, `  if (false) {`]],
 });
 
 run('A5  prefix delimiter dropped — root\'s prefix nests inside stable\'s name', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "STARTS WITH",
   sw: [[`  return 'puppad|' + encodeURIComponent(path) + '|';`,
         `  return 'puppad|' + encodeURIComponent(path);`]],
 });
@@ -138,26 +175,26 @@ run('A5  prefix delimiter dropped — root\'s prefix nests inside stable\'s name
  * PUP-WO-0101 encoding fix that closed an attack and opened an invariant 3
  * violation. It must be caught by assertion 9, not by anyone remembering. */
 run('A6  F7 regression: require paths to ARRIVE canonical (refuses /my%20photo.png)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "legitimately encoded asset",
   sw: [[`  var parts = pathname.split('/');`,
         `  try { if (pathname !== decodeURIComponent(pathname)) return null; } catch (e) { return null; }
   var parts = pathname.split('/');`]],
 });
 
 run('A7  stable worker allowed to delete the ROOT\'s legacy cache', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "DELETED pup-pad-v16",
   sw: [[`if (!IS_STABLE_WORKER && name === LEGACY_CACHE_EXACT) return true;`,
         `if (name === LEGACY_CACHE_EXACT) return true;`]],
 });
 
 run('A8  non-canonical scope no longer unregisters (orphan cache)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "stayed registered",
   sw: [[`  if (CACHE_PREFIX === null || canonicalPath(SCOPE_PATH) !== SCOPE_PATH) {`,
         `  if (CACHE_PREFIX === null) {`]],
 });
 
 run('A9  bare foreign directory served (/PupPad/stable with no slash)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "foreign directory",
   sw: [[`    if (canon === FOREIGN_SUBTREE.slice(0, -1)) return false;`, ``]],
 });
 
@@ -166,7 +203,7 @@ run('A9  bare foreign directory served (/PupPad/stable with no slash)', {
  * sandbox to HAVE setTimeout — without it this mutant dies on a ReferenceError and
  * the check would appear to catch a defect it cannot actually host. */
 run('A10 reap moved outside waitUntil onto a timer (F9)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "reap did NOT delete",
   sw: [[`  event.waitUntil(
     caches.keys().then(function(names) {
       return Promise.all(
@@ -194,7 +231,7 @@ run('A10 reap moved outside waitUntil onto a timer (F9)', {
  * assertion in sections 1-2 passes, because at the moment they measure the worker
  * has behaved impeccably. Only the trap sees what happens next. */
 run('A11 correct reap PLUS a deferred origin-wide sweep — the exact F9 shape', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "AFTER activate settled",
   sw: [[`  self.clients.claim();
 });
 
@@ -217,7 +254,7 @@ self.addEventListener('fetch', function(event) {`]],
 /* F4. The sandbox could not express a navigation, so a worker that exempts
  * top-level navigations from the /stable/ decline was structurally invisible. */
 run('A12 navigations exempted from the /stable/ decline (pass F4)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "SERVES /stable/ for a top-level navigation",
   sw: [[`  if (!servesRequest(event.request.url)) return;`,
         `  if (!servesRequest(event.request.url) && event.request.mode !== 'navigate') return;`]],
 });
@@ -225,7 +262,7 @@ run('A12 navigations exempted from the /stable/ decline (pass F4)', {
 /* F5. Check 5 ran the MIRROR of northstar invariant 7's stated test — it seeded
  * stable and read from root. The promoted copy's own offline read was unexercised. */
 run('A13 the PROMOTED copy reads origin-wide (invariant 7 in its own direction, pass F5)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "PROMOTED COPY SERVED THE TEST BUILD",
   sw: [[`        return hit || new Response('', { status: 504, statusText: 'Offline and not cached' });`,
         `        if (hit) return hit;
         if (IS_STABLE_WORKER) return caches.match(event.request);
@@ -235,7 +272,7 @@ run('A13 the PROMOTED copy reads origin-wide (invariant 7 in its own direction, 
 /* F7. install was never dispatched and addAll recorded nothing, so the precache —
  * a third way for a worker to touch what it does not own — was unobservable. */
 run('A14 the precache reaches into the other deploy path (pass F7)', {
-  expect: 'RED',
+  expect: 'RED', expectFail: "precached OUTSIDE",
   sw: [[`  './icon-512.png'
 ];`, `  './icon-512.png',
   './stable/index.html'
@@ -350,7 +387,31 @@ console.log('\n' + '='.repeat(78));
 const escaped = results.filter((r) => !r.pass);
 for (const r of results) console.log(`  ${r.pass ? 'ok          ' : 'MISPREDICTED'} ${r.expect.padEnd(6)} ${r.label}`);
 const silent = results.filter((r) => r.got === 'SILENT');
+
+/* ROUND 5, M1 — THE EXIT CODE CONVENTION IS ASSERTED HERE, NOT PROMISED IN A COMMENT.
+ * check-cache-isolation.mjs now distinguishes 1 (the property is VIOLATED — a real
+ * verdict) from 3 (NO VERDICT — the check itself broke), because ci.yml's /stable/
+ * call site reads nothing but the exit code and used to print "NOT PREFIX-BOUNDED"
+ * plus "fast-forward stable" for both. That convention is only worth anything if a
+ * defect actually produces 1, so PART A asserts it: a mutation that CRASHES the check
+ * is not demonstrating that the assertion under test fires — it is demonstrating that
+ * the harness fell over, which is the §6.1 member-3 defect (a failure whose cause is
+ * not the one under test) wearing a green tick.
+ * A baseline of 0 and PART B are excluded: B-mutations blind the harness deliberately
+ * and may legitimately reach no verdict. */
+const partA = results.filter((r) => /^A\d/.test(r.label));
+const crashedA = partA.filter((r) => r.code === 3);
+console.log(`\n  exit codes observed — PART A: ${[...new Set(partA.map((r) => r.code))].sort().join(', ')}` +
+            `  |  PART B: ${[...new Set(results.filter((r) => /^B\d/.test(r.label)).map((r) => r.code))].sort().join(', ')}`);
+if (crashedA.length) {
+  console.error(`::error::CHECK 7 FAILED — ${crashedA.length} PART A mutation(s) CRASHED check 5 (exit 3)`);
+  console.error('  rather than making it reach a verdict. Each proves only that the harness broke:');
+  for (const r of crashedA) console.error(`    ${r.label}`);
+  process.exit(1);
+}
+
 if (escaped.length) {
+  console.error(`::error::CHECK 7 FAILED — ${escaped.length} mutation(s) did not behave as predicted.`);
   console.error(`\nCHECK 7 FAILED — ${escaped.length} mutation(s) did not behave as predicted:`);
   for (const r of escaped) console.error(`  ${r.label}: expected ${r.expect}, got ${r.got}`);
   process.exit(1);

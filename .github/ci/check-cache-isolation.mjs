@@ -17,6 +17,7 @@
  * token is present, not that a foreign cache is still there afterwards — and the
  * defect is one line of rewriting away from passing such a grep.
  */
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeCacheStorage, loadWorker, swRequest, REQUEST_SHAPES } from './lib/sw-harness.mjs';
 
@@ -25,6 +26,44 @@ const SW = join(REPO, 'sw.js');
 
 const ROOT_SCOPE = 'https://ikthys777.github.io/PupPad/';
 const STABLE_SCOPE = 'https://ikthys777.github.io/PupPad/stable/';
+
+/* ROUND 5, M1/M2 — THE EXIT CODE IS THE ONLY THING THE CALL SITE CAN READ, AND
+ * IT USED TO SAY THE SAME THING FOR TWO OPPOSITE EVENTS.
+ * Every failure here exited 1, and Node also exits 1 on an uncaught exception. So
+ * `if node check-cache-isolation.mjs; else ...` in ci.yml could not tell "the
+ * promoted worker is NOT prefix-bounded" from "this script crashed", and the call
+ * site printed the former for both — then PRESCRIBED FAST-FORWARDING `stable`,
+ * which is the exact act northstar invariant 4 exists to prevent, in answer to an
+ * unrelated crash. A wrong remedy is worse than no remedy.
+ *
+ * The convention, now readable from outside:
+ *     0  the property HOLDS
+ *     1  the property is VIOLATED — a real verdict, assertions failed
+ *     3  NO VERDICT WAS REACHED — the check itself broke. Fail closed, but do not
+ *        diagnose the subject from it.
+ * Nothing in check 7 changes: it judges `code !== 0`, so a crash is still RED, and
+ * PART A additionally requires a matching FAIL line, which a crash cannot produce.
+ *
+ * The ::error:: annotations are the M2 half: 0 of 22 annotations in the workflow
+ * were inside a check script, so the most-likely-to-fire refusal in the whole
+ * pipeline arrived as an unannotated stack trace. They are emitted unconditionally
+ * rather than behind GITHUB_ACTIONS, so that check 7 exercises them too — a line
+ * only CI ever runs is a line nobody has watched work. */
+const noVerdict = (what, err) => {
+  console.error(`::error::CHECK 5 COULD NOT REACH A VERDICT — ${what}`);
+  console.error(`::error::This is NOT a finding about the copy under test. Do NOT fast-forward`);
+  console.error(`::error::any ref in response to it, and do not read it as invariant 4 or 7.`);
+  /* "The failure follows" used to be followed by NOTHING whenever err was falsy —
+   * Promise.reject(), reject(0), reject('') all reach here with nothing to print. And
+   * the handler swallowed Node's code frame (the source line and the caret), which is
+   * the most useful part of an uncaught throw. Print something in every case. */
+  console.error(`::error::REMEDY: fix the check. The failure follows.`);
+  if (err && (err.stack || String(err))) console.error(err.stack || String(err));
+  else console.error(`  (the rejection carried no value: ${Object.prototype.toString.call(err)})`);
+  process.exit(3);
+};
+process.on('uncaughtException', (e) => noVerdict('the check threw', e));
+process.on('unhandledRejection', (e) => noVerdict('a promise rejected unhandled', e));
 
 const failures = [];
 const ok = (m) => console.log(`  ok    ${m}`);
@@ -50,7 +89,46 @@ const stablePrefix = readOr(stableW, 'CACHE_PREFIX');
 const rootName = readOr(rootW, 'CACHE_NAME');
 const stableName = readOr(stableW, 'CACHE_NAME');
 
-if (rootPrefix === undefined || rootName === undefined) {
+/* ROUND 5 ADVERSARIAL PASS — THIS GUARD CHECKED TWO OF THE FOUR VALUES AND ONLY
+ * FOR `undefined`, AND BOTH GAPS TURNED A REAL VERDICT INTO A CRASH.
+ *   `var CACHE_PREFIX = null` is a legitimate thing for sw.js to end up with, and
+ *   `null === undefined` is false, so it sailed past — then `stableName.startsWith`
+ *   threw a TypeError twenty lines below. The run printed a genuine
+ *   "FAIL  the two deploy paths derive the SAME cache prefix" and then, one line
+ *   later, "::error::CHECK 5 COULD NOT REACH A VERDICT... Do NOT fast-forward" —
+ *   withdrawing the correct remedy from a correct finding.
+ *   stablePrefix and stableName were not checked AT ALL, so a worker whose prefix
+ *   derivation fails only at /stable/ — the realistic case, since sw.js branches on
+ *   scope — crashed with no FAIL line at all.
+ * Every value is now checked, for null as well as undefined, and a missing one is a
+ * VERDICT (exit 1) rather than a crash (exit 3). */
+const missing = Object.entries({ rootPrefix, rootName, stablePrefix, stableName })
+  .filter(([, v]) => v === undefined || v === null || typeof v !== 'string')
+  .map(([k]) => k);
+if (missing.length) {
+  /* And the message no longer fabricates its evidence. An EMPTY sw.js — a truncated
+   * archive, a failed copy — took this branch and asserted "predates PUP-WO-0102",
+   * quoting source it had never read. An empty file and the real 2952aa1 worker were
+   * indistinguishable to it. Distinguish them before diagnosing. */
+  /* Read the FILE, not the loaded worker: the harness object exposes no source, and
+   * an earlier draft of this guard used `rootW.source ?? ''` — always empty — which
+   * sent the GENUINE pre-0102 worker (the live refs/heads/stable) down the "not a
+   * service worker" branch and stripped the one remedy that actually applies to it.
+   * Caught by running the live case instead of trusting the branch. */
+  let swSource = '';
+  try { swSource = readFileSync(SW, 'utf8'); } catch { swSource = ''; }
+  const looksLikePre0102 = /caches\.keys\s*\(/.test(swSource) && /CACHE_NAME/.test(swSource);
+  console.error(`\nCHECK 5 FAILED — could not read ${missing.join(', ')} from this copy's sw.js.`);
+  if (!looksLikePre0102) {
+    console.error('  AND THIS DOES NOT LOOK LIKE A SERVICE WORKER AT ALL — no caches.keys(), no');
+    console.error('  CACHE_NAME. An empty or truncated sw.js reaches this branch too, and an');
+    console.error('  earlier version of this message asserted "predates PUP-WO-0102" for it,');
+    console.error('  quoting source it had never read.');
+    console.error('  REMEDY: check the file is non-empty and is the worker you think it is.');
+    console.error('  Do NOT fast-forward anything on the strength of this message.');
+    console.error('::error::CHECK 5 FAILED — this copy\'s sw.js is not a readable service worker.');
+    process.exit(1);
+  }
   console.error('\nCHECK 5 FAILED — this copy\'s sw.js defines no CACHE_PREFIX.');
   console.error('  That is the pre-PUP-WO-0102 worker, whose activate handler reaps by inequality:');
   console.error('      names.filter(function(name) { return name !== CACHE_NAME; })');
@@ -58,6 +136,7 @@ if (rootPrefix === undefined || rootName === undefined) {
   console.error('  means each deletes the other\'s cache on every activation — northstar invariants');
   console.error('  3 and 7 (architecture §6).');
   console.error('\n  If this is the PROMOTED copy: fast-forward `stable` before publishing it.');
+  console.error('::error::CHECK 5 FAILED — this copy\'s sw.js predates PUP-WO-0102 (no CACHE_PREFIX).');
   process.exit(1);
 }
 
@@ -106,6 +185,40 @@ for (const [name, why] of Object.entries(expectGone)) {
 for (const [name, why] of Object.entries(expectKept)) {
   if (survivors.includes(name)) ok(`reap preserved ${why}`);
   else bad(`reap DELETED ${why} — this is the origin-wide reap (architecture §6)`, name);
+}
+
+/* ---- 2a. F3: THE SAME MATRIX AT THE PROMOTED SCOPE ----
+ *
+ * Everything above dispatches at ROOT_SCOPE. The only activate ever run at
+ * STABLE_SCOPE was handed a two-entry store and asserted one thing — that the legacy
+ * literal survived. So a worker that reaps origin-wide ONLY when running at the
+ * promoted scope passed every assertion in this file, and §1.4's whole mechanism
+ * inherits that coverage. sw.js already branches on scope (IS_STABLE_WORKER, the
+ * legacy exception), so scope-conditional is the realistic shape of a defect here,
+ * not a contrived one — and the promoted copy is the one the child uses.
+ *
+ * (PUP-WO-0103 F3. This file is PUP-WO-0102's; touched here under the work order's
+ * documented seam exception, because §1.4 makes it 0103's mechanism and fixing a
+ * blind gate in a later work order means the gate stays blind meanwhile.) */
+const sAdjacent = stablePrefix.replace(/\|$/, 'x|') + 'v17';
+const sStale = stableName + '-stale-from-a-previous-build';
+const sStore = new FakeCacheStorage([stableName, sStale, rootName, sAdjacent, UNRELATED, LEGACY]);
+const sActivating = loadWorker(SW, STABLE_SCOPE, sStore);
+await sActivating.dispatch('activate');
+const sSurvivors = await sStore.keys();
+for (const [name, why] of Object.entries({ [sStale]: 'a stale cache of its OWN prefix' })) {
+  if (!sSurvivors.includes(name)) ok(`[stable scope] reap deleted ${why}`);
+  else bad(`[stable scope] reap did NOT delete ${why}`, name);
+}
+for (const [name, why] of Object.entries({
+  [stableName]: 'its own current cache',
+  [rootName]: "the ROOT deploy path's cache",
+  [sAdjacent]: 'an adjacent prefix it does not own',
+  [UNRELATED]: 'an unrelated cache on the same origin',
+  [LEGACY]: "the ROOT copy's legacy cache (the exception is the root worker's alone)",
+})) {
+  if (sSurvivors.includes(name)) ok(`[stable scope] reap preserved ${why}`);
+  else bad(`[stable scope] reap DELETED ${why} — an origin-wide reap on the PROMOTED copy`, name);
 }
 
 /* ---- 2b. F9: nothing may touch a cache AFTER activate's waitUntil settles ----
@@ -352,31 +465,36 @@ for (const p of ['/PupPad/stable', '/PupPad/stable?x=1']) {
  * owns" covers install as much as fetch and activate — a urlsToCache entry pointing
  * into the other deploy path writes the promoted copy's bytes under this prefix
  * before a single fetch happens. */
+for (const [scopeLabel, scopeUrl] of [['root', ROOT_SCOPE], ['stable', STABLE_SCOPE]]) {
 const preStore = new FakeCacheStorage();
-const installing = loadWorker(SW, ROOT_SCOPE, preStore);
+const installing = loadWorker(SW, scopeUrl, preStore);
 await installing.dispatch('install');
 const ownCache = await preStore.open(installing.get('CACHE_NAME'));
 /* cache.keys() yields Request-LIKE objects, as the real Cache API does. It used to
  * yield bare strings; PUP-WO-0105 corrected the fixture and this call site had to
  * follow, which check 7 caught by mispredicting A14 — the precache-escape defect went
  * GREEN because every key had become an object and the scope test silently passed.
- * That is what check 7 is for. */
+ * That is what check 7 is for. The normalisation below is therefore load-bearing for
+ * the scope test that follows, not cosmetic: without it every `new URL(u, scopeUrl)`
+ * stringifies an object and no path can ever start with scopePath. */
 const precached = (await ownCache.keys()).map((k) => (typeof k === 'string' ? k : k.url));
-if (precached.length) ok(`install precached ${precached.length} entr(ies) into its own cache`);
-else bad('install precached NOTHING — the worker has no offline capability at all (invariant 3)', 'urlsToCache is empty or addAll never ran');
+if (precached.length) ok(`[${scopeLabel}] install precached ${precached.length} entr(ies) into its own cache`);
+else bad(`[${scopeLabel}] install precached NOTHING — no offline capability at all (invariant 3)`, 'urlsToCache is empty or addAll never ran');
 
-const rootScopePath = new URL(ROOT_SCOPE).pathname;
+const scopePath = new URL(scopeUrl).pathname;
 const escaped = precached
-  .map((u) => { try { return new URL(u, ROOT_SCOPE).pathname; } catch (e) { return u; } })
-  .filter((path) => !path.startsWith(rootScopePath) || path.startsWith(rootScopePath + 'stable/'));
-if (escaped.length === 0) ok('every precached entry lies inside this worker\'s own scope');
-else bad('install precached OUTSIDE this worker\'s scope', escaped.join(', '));
+  .map((u) => { try { return new URL(u, scopeUrl).pathname; } catch (e) { return u; } })
+  .filter((path) => !path.startsWith(scopePath) || (scopeLabel === 'root' && path.startsWith(scopePath + 'stable/')));
+if (escaped.length === 0) ok(`[${scopeLabel}] every precached entry lies inside this worker's own scope`);
+else bad(`[${scopeLabel}] install precached OUTSIDE this worker's scope`, escaped.join(', '));
+}
 
 /* ---- verdict ---- */
 if (failures.length) {
   console.error(`\nCHECK 5 FAILED — ${failures.length} assertion(s):\n`);
   for (const f of failures) console.error(`  ${f.m}\n    ${f.detail}`);
   console.error('\n  northstar invariant 7: a device serves exactly one build\'s assets, never a mixture.');
+  console.error(`::error::CHECK 5 FAILED — ${failures.length} assertion(s); see the FAIL lines above.`);
   process.exit(1);
 }
 console.log('\nCHECK 5 PASSED — prefixes differ and do not nest; the reap is bounded to its own prefix;');
