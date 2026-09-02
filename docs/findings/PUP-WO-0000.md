@@ -1264,12 +1264,22 @@ game, **silently discarding `controlsOpen` and handing Gyre a closed drawer on a
 install** — the exact regression this ruling exists to prevent, arriving through the
 one-character change that looks like the ruling.
 
-**AND THERE ARE THREE `true`s, NOT ONE.** The initializer `var startOpen = true`
-(`index.html:2610`), the comparison `!== '0'` (`:2611`), **and `:2611`'s own `catch`,
-which also sets `true`** — so a `localStorage` throw in private mode opens the drawer
-too. A flip that changes only the comparison leaves a fresh install and a throwing
-storage both defaulting open. **All three resolve to the seam's answer, or two of them
-disagree with the ruling in silence.**
+**AND THERE ARE THREE `true`s, NOT ONE — BUT ONLY TWO ARE LIVE, AND THE CHANGE ITSELF
+PROMOTES THE THIRD.** The initializer `var startOpen = true` (`index.html:2610`), the
+comparison `!== '0'` (`:2611`), and **`:2611`'s own `catch`, which also sets `true`**.
+
+*(CC-B's refinement, verified: the initializer is **shadowed today** — the `try`
+assigns or the `catch` assigns, so its value is never observed. **It becomes
+observable the moment the `try` body gains a fall-through branch, which is exactly
+what "absent → `seam.controlsOpen`" introduces.** State it that way in the work order,
+because **"it is dead code" is the argument someone will use for leaving it**, and it
+is true right up until this change lands.)*
+
+**The live one that matters is the `catch`**: a `localStorage` throw — private mode,
+storage disabled, quota — opens the drawer regardless of what the seam said, **on the
+one device class nobody tests**. A green suite on every normal machine says nothing
+about it. *Same shape as the sticker agreeing at exactly 600px.* **All three resolve
+to the seam's answer, or two of them disagree with the ruling in silence.**
 
 **`controlsOpen` IS MODULE-SUPPLIED AND THEREFORE UNTRUSTED, exactly as the seam is.**
 `mountControlPanel`'s four guards already tolerate an absent seam, a wrong type and a
