@@ -430,6 +430,14 @@ reader inherits the queue instead of rediscovering it.*
 | *(publication concurrency)* | Serialised publication that cannot silently drop a promotion | `pages-publish` and `pages-deploy` are global groups and GitHub's pending queue has **depth 1**, so a pending promotion can be evicted with **no log line**. Not fixable by renaming a group. Mitigated today by the **post-condition**: promote, then verify `/stable/build-stamp.json` reports your sha — **re-fetch rather than concluding failure**, `cache-control: max-age=600`. **Needs a number.** | Behind P2 |
 | *(module-referenced assets)* | `check-assets` cannot see an asset referenced only from a game module | `img.src = './assets/ball.png'` absent from `urlsToCache` gives **CHECK 2 PASSED and a broken image on a cold offline device**. No game ships an asset yet. **Becomes load-bearing the moment one does** — `PUP-WO-0300` §7 flags it. | **P3, blocking** |
 
+| *(citation rot)* | `docs/` holds **108 distinct `index.html:NNNN` citations** and `index.html` is a mutable file. `PUP-WO-0200` added 296 lines and **`PUP-WO-0000` §1.6's three citations for the overlay trap all went stale** — `:1361` is now a colour-button loop, `:1368` is blank, `:1550` is `doSound('keyTap')`. Measured 2026-09-02: 7 citations land on blank lines, none past EOF, 101 on a line with content — **which is not the same as pointing at the right thing, and the 108 have NOT been audited semantically.** | Architecture §6.1 **member 4** at scale, on the project's own founding findings file. **The fix is not renumbering** — it is to stop citing derived positions: `PUP-WO-0106` cites symbols instead, and a check that refuses **new** `index.html:NNNN` citations in changed docs would stop the debt growing. **Enforcement is a rule change for everyone who writes docs and is deliberately NOT being imposed while the operator sleeps.** | **Needs a number** |
+
+**FOUR ITEMS ABOVE NEED NUMBERS** — tiles, CSP/iframe, publication concurrency, and
+citation rot. **Do not use `PUP-WO-0109`**: `docs/feedback/PUP-WO-0103.md` records it
+as one of three **invented citations** that occurred exactly once, in the sentence
+that invented them, and were struck and left unnumbered precisely because *a number
+reads as a reference*. Assigning it now would make that record ambiguous.
+
 **The rule that put this table here:** architecture §6.6 — *when a work order cites a
 ratified mechanism as existing, resolve it before dispatch.* A parked item recorded
 only in a message is the same defect one level up: **everyone believes it is queued
