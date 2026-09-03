@@ -67,6 +67,10 @@ which costs exactly what work not done costs.**
 - **Which code is older than the rule?** When a rule is extracted into a helper, the code
   that predates the helper is exactly the code that will not have it — **and it is never
   the code anyone re-reads.**
+- **A NEW CHECK MUST BE REGISTERED IN `ci.yml` IN THE SAME COMMIT THAT ADDS IT.** *A
+  missing check and a passing one are the same colour* — the file runs on your machine,
+  goes red on its plant, and does nothing for anyone else. **Four shipped unregistered
+  across three work orders before anyone noticed.**
 - **Where a claim needs hardware, build the check, state that it is UNVERIFIED, and
   stop.** A measurement that looks like a device result and is really a desktop result is
   worse than none. **Ask first whether the harness can even produce the symptom** —

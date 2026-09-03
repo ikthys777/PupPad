@@ -196,6 +196,30 @@ sw.js          asset manifest + cache identity
 a controlled target. PupPad publishes to GitHub Pages from a branch. §6 records how
 the firebreak is reconstructed rather than assumed.
 
+**A MISSING CHECK AND A PASSING ONE ARE THE SAME COLOUR.** *(Ruled 2026-09-03. **CC-B's
+finding, and CC-A merged every instance of it.**)*
+
+**Four checks sat on `main` registered nowhere** — `demo-radar.mjs`,
+`demo-radar-controls.mjs`, `demo-zoom.mjs`, `demo-zoom-controls.mjs`. **15 check files,
+11 registered.** The radar fix and the zoom hardening shipped **with no CI protection at
+all**, each written with its controls, each shown red against a planted defect, and **none
+of them able to catch a regression in anyone's build but the author's.**
+
+**THIS IS PASSES-BY-NOT-RUNNING IN THE REGISTRATION RATHER THAN THE ASSERTION, and every
+instinct built for the second one is blind to the first.** The check runs locally, goes
+red on the plant, does its whole job in front of you — **and the step that makes it exist
+for everyone else leaves no trace when it is skipped. Nothing fails. CI stays green.**
+
+**CC-A'S REVIEW HAS THE SAME HOLE AND IT IS WHY THIS REACHED `main` THREE TIMES.** The
+merge discipline verifies **the fence** — what was touched — **CI green**, and **the fix
+at source.** *It never asked whether an added check RUNS.* **Scope answers what changed;
+it does not answer what became active.**
+
+> **ADDED TO EVERY MERGE, ALONGSIDE THE FENCE CHECK: every `demo-*.mjs` added by the PR
+> must appear in `ci.yml`, and the count of check files must equal the count
+> registered.** One command, and it is now the only thing standing between a written
+> check and an ornamental one.
+
 **A HUMAN DECISION COSTS ONE THREAD, NOT THE LOOP.** *(Ruled 2026-09-03. **CC-A's
 defect, found by the co-architect when Scotty asked why the cycle kept stopping.**)*
 
