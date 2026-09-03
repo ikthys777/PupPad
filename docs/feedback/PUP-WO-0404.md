@@ -233,3 +233,27 @@ the work order's. If Scotty wants it shorter on the device, it is one constant
 
 **Flagged, not folded:** nothing in this work order touched the mandatory pan, `index.html`,
 or Gyre.
+
+---
+
+## 9. Verdict
+
+| | |
+|---|---|
+| check 1 (syntax) | **PASS** — `games/blockpop.js` parses as a module |
+| check 11 (games offline) | **PASS** — 3 modules scanned, no imports (see §4.1) |
+| check 12 (offline controls) | **PASS** — 48 controls |
+| check 21 | **PASS** at `fe9f7a8` — 19 sections |
+| check 21 controls | **PASS** — **70 of 70 planted defects red, every one for its own stated reason** |
+| gate 2, assets, mutations, cache-name, load, error-caching, cache-isolation | **PASS** |
+
+`check-two-trees` needs a built `dist/` from an earlier CI step and cannot run standalone;
+it is unrelated to this change.
+
+**Fence:** `git diff --stat origin/main --` against `index.html`, `sw.js`, `manifest.json`,
+`games/gyre.js`, `games/hello.js` and `icons/` returns **empty**.
+
+**One behaviour for Scotty to feel on the device rather than read here:** the perfect clear
+now stops play for up to 3.4 seconds. It is one tap to leave, and it leaves by itself, but
+it is a modal moment in a toy that had one. `CELEB_MS` is the constant if it wants to be
+shorter.
