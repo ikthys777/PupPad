@@ -610,7 +610,7 @@ function openCanvas() {
     +'</div>';
 
   /* bottom toolbar */
-  var toolbar = '<div style="display:flex;align-items:center;padding:5px 10px;background:rgba(255,255,255,0.03);gap:6px;overflow-x:auto">'
+  var toolbar = '<div style="display:flex;align-items:center;padding:5px 10px;background:rgba(255,255,255,0.03);gap:6px;overflow-x:auto;touch-action:pan-x">'
     +'<div style="display:flex;gap:3px;align-items:center;flex-shrink:0">'
     +'<div class="tool-pick" data-tool="pen" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\u270F\uFE0F</span>Pen</div>'
     +'<div class="tool-pick" data-tool="eraser" style="display:flex;align-items:center;gap:2px;padding:4px 7px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:all 0.15s"><span style="font-size:14px">\uD83E\uDDF9</span>Eraser</div>'
@@ -1075,7 +1075,13 @@ function openCamera() {
 
   var overlay = document.createElement('div');
   overlay.id = 'cameraOverlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+  /* touch-action:none — PUP-WO-0603 §2, DEFENCE IN DEPTH AND NOT THE FIX. A full-bleed
+   * positioned container that never scrolls. It was measured NOT to change zoom
+   * behaviour: `:17`'s root declaration already blocks a document-level pinch whatever
+   * this computes. It is here because `:17` is one line in a file that changes
+   * constantly, not because it was shown to stop anything. Its two horizontal strips
+   * carry their own pan-x and touch-action does not inherit, so they keep their gesture. */
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif;touch-action:none';
 
   /* top bar */
   var filterBtns = '';
@@ -1091,7 +1097,7 @@ function openCamera() {
     +pawSVG(14,'#F472B6')
     +'<span style="color:#F472B6;font-size:11px;font-weight:700;letter-spacing:1px">PAW CAM</span>'
     +'</div>'
-    +'<div style="display:flex;gap:3px;align-items:center;overflow-x:auto;flex:1;margin:0 8px">'+filterBtns+'</div>'
+    +'<div style="display:flex;gap:3px;align-items:center;overflow-x:auto;touch-action:pan-x;flex:1;margin:0 8px">'+filterBtns+'</div>'
     +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
     +'<div id="camFlipBtn" style="font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px;background:rgba(255,255,255,0.06)">\uD83D\uDD04</div>'
     +'<div id="camCloseBtn" style="color:rgba(148,197,255,0.5);font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,0.06);cursor:pointer">CLOSE</div>'
@@ -1107,8 +1113,8 @@ function openCamera() {
 
   /* bottom bar: gallery + shutter */
   var bottomBar = '<div style="display:flex;align-items:center;padding:6px 10px;background:rgba(255,255,255,0.03);gap:8px">'
-    +'<div id="camGalleryStrip" style="display:flex;gap:6px;align-items:center;flex:1;overflow-x:auto;min-height:68px"></div>'
-    +'<div id="camStickerBar" style="display:none;gap:4px;align-items:center;flex:1;overflow-x:auto"></div>'
+    +'<div id="camGalleryStrip" style="display:flex;gap:6px;align-items:center;flex:1;overflow-x:auto;touch-action:pan-x;min-height:68px"></div>'
+    +'<div id="camStickerBar" style="display:none;gap:4px;align-items:center;flex:1;overflow-x:auto;touch-action:pan-x"></div>'
     +'<div style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
     +'<div id="camRetakeBtn" style="display:none;color:#93C5FD;font-size:10px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(96,165,250,0.1);cursor:pointer">RETAKE</div>'
     +'<div id="camSaveBtn" style="display:none;color:#34D399;font-size:10px;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(52,211,153,0.1);cursor:pointer">DONE</div>'
@@ -1738,7 +1744,12 @@ function openTreasureMap() {
 
   var overlay = document.createElement('div');
   overlay.id = 'mapOverlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif';
+  /* touch-action:none — PUP-WO-0603 §2, defence in depth. FOUND BY THE CHECK, NOT BY ME:
+   * I derived the container set by hand as #root, #alertFlash and #cameraOverlay, and
+   * check 22 §2's DOM walk returned a fourth. That is the entire argument for deriving
+   * the set structurally rather than listing it — the list was already wrong on the day
+   * it was written. */
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;z-index:80;display:flex;flex-direction:column;font-family:Trebuchet MS,sans-serif;touch-action:none';
 
   /* top bar */
   var topBar = '<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 10px;background:rgba(255,255,255,0.03);z-index:10">'
@@ -1777,7 +1788,7 @@ function openTreasureMap() {
     emojiBtns += '<div class="map-emoji-pick" data-emoji="'+em+'" style="font-size:20px;cursor:pointer;padding:1px 2px;border-radius:4px;flex-shrink:0">'+em+'</div>';
   });
 
-  var toolStrip = '<div id="mapToolStrip" style="display:none;align-items:center;padding:4px 10px;background:rgba(255,255,255,0.03);gap:5px;overflow-x:auto;z-index:10">'
+  var toolStrip = '<div id="mapToolStrip" style="display:none;align-items:center;padding:4px 10px;background:rgba(255,255,255,0.03);gap:5px;overflow-x:auto;touch-action:pan-x;z-index:10">'
     +'<div style="display:flex;gap:3px;align-items:center;flex-shrink:0">'+toolBtns+'</div>'
     +'<div style="width:1px;height:18px;background:rgba(255,255,255,0.08);flex-shrink:0"></div>'
     +'<div id="mapColorArea" style="display:flex;gap:3px;align-items:center;flex-shrink:0">'+colorBtns+'</div>'
@@ -3215,7 +3226,7 @@ function render() {
   var syncDot = isSupabaseConfigured() ? '#34D399' : 'rgba(148,197,255,0.15)';
 
   document.getElementById('app').innerHTML = ''
-    +'<div id="root" style="--sc:'+gc+';--bc:'+bc+';position:fixed;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#1E3A5F,#172554 50%,#0F1D3A);font-family:Trebuchet MS,sans-serif;overflow:hidden;padding:8px">'
+    +'<div id="root" style="--sc:'+gc+';--bc:'+bc+';position:fixed;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#1E3A5F,#172554 50%,#0F1D3A);font-family:Trebuchet MS,sans-serif;overflow:hidden;padding:8px;touch-action:none">'
     +'<div style="position:absolute;top:6%;left:3%;opacity:0.04;animation:pfloat 6s ease-in-out infinite;pointer-events:none">'+pawSVG(45,'#8899bb')+'</div>'
     +'<div style="position:absolute;bottom:6%;right:3%;opacity:0.03;animation:pfloat 8s 2s ease-in-out infinite;pointer-events:none">'+pawSVG(35,'#8899bb')+'</div>'
     +'<div style="position:absolute;top:8%;right:8%;opacity:0.05;pointer-events:none">'+pawSVG(32,'#93C5FD')+'</div>'
@@ -3278,7 +3289,7 @@ function render() {
     +pawSVG(11,'rgba(56,189,248,0.2)')
     +'<div style="width:24px;height:2px;border-radius:1px;background:linear-gradient(90deg,rgba(56,189,248,0.25),transparent)"></div>'
     +'</div>'
-    +'<div id="alertFlash" style="position:fixed;top:0;left:0;right:0;bottom:0;background:radial-gradient(circle,#FF4444,#CC0000);opacity:0;pointer-events:none;z-index:90;transition:opacity 0.05s"></div>'
+    +'<div id="alertFlash" style="position:fixed;top:0;left:0;right:0;bottom:0;background:radial-gradient(circle,#FF4444,#CC0000);opacity:0;pointer-events:none;z-index:90;transition:opacity 0.05s;touch-action:none"></div>'
     +'</div>';
 
   attachEvents();
@@ -3554,9 +3565,115 @@ function closePinOverlay() {
   if (overlay) overlay.parentNode.removeChild(overlay);
 }
 
+/* === THE ZOOM LOCKOUT'S WAY BACK — PUP-WO-0603 §3 ==========================
+ * A PAGE CANNOT RESET ITS OWN ZOOM. There is no API, and pretending otherwise is how
+ * this ships looking fixed. What it CAN do is notice that the visual viewport has been
+ * panned away from the origin while zoomed, and bring it home — and BOTH ways out live
+ * at the top-left (`#gameBack` and `#pickerBack` are `left:max(10px,env(safe-area-inset-left))`
+ * at `top:calc(... + 52px)`), so the origin IS where the exit is. That satisfies
+ * northstar invariant 5 with the capability the platform actually gives us: the page
+ * stays zoomed, and the way out is back under the child's thumb.
+ *
+ * WHY IT ONLY ACTS WHEN THE VIEWPORT HAS BEEN PANNED, AND NOT ON EVERY ZOOM.
+ * A zoomed page whose origin is still on screen is not a lockout — the exit is visible
+ * and the tap exists. Snapping home in that case would fight an adult who deliberately
+ * zoomed to look at something, for no gain to the child. So the trigger is the LOCKOUT
+ * CONDITION, not the zoom: scaled up AND panned off the origin.
+ *
+ * AND IT IS DEBOUNCED, because the alternative is unusable. `scrollTo` on every
+ * `visualViewport` scroll event would cancel a pan mid-gesture and make a zoomed page
+ * impossible to move at all. 500ms after the last movement is long enough that a
+ * deliberate adult pan completes and short enough that a stuck child is not stuck.
+ *
+ * WHAT THIS CANNOT SEE, STATED BECAUSE A LIMIT LEFT UNSAID READS AS COVERAGE:
+ * `visualViewport.scale` reports PAGE zoom. Android's system MAGNIFICATION accessibility
+ * gesture magnifies the screen outside the page entirely — scale stays 1, no event
+ * fires, and nothing here can run. If a device is magnifying rather than zooming, this
+ * path is silent by construction and the remedy is an Android setting, not a commit. */
+function installZoomRecovery() {
+  var vv = window.visualViewport;
+  if (!vv) return null;
+  var timer = 0;
+  /* Not a constant shared with anything: it is a settle window for a human hand, and it
+   * is the only place it appears. */
+  var SETTLE_MS = 500;
+
+  function lockedOut() {
+    /* 1.01 rather than 1: scale is a float and pinch-to-1 lands on 1.0000001. */
+    if (!(vv.scale > 1.01)) return false;
+    return vv.offsetLeft > 1 || vv.offsetTop > 1 || (window.pageXOffset || 0) > 1 || (window.pageYOffset || 0) > 1;
+  }
+
+  function goHome() {
+    timer = 0;
+    if (!lockedOut()) return;
+    try { window.scrollTo(0, 0); } catch (e) {}
+    /* documentElement/body as well, because which one scrolls depends on the mode the
+     * document is in and this must not depend on guessing right. */
+    try { document.documentElement.scrollLeft = 0; document.documentElement.scrollTop = 0; } catch (e) {}
+    try { document.body.scrollLeft = 0; document.body.scrollTop = 0; } catch (e) {}
+  }
+
+  function schedule() {
+    if (!lockedOut()) { if (timer) { clearTimeout(timer); timer = 0; } return; }
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(goHome, SETTLE_MS);
+  }
+
+  vv.addEventListener('resize', schedule);
+  vv.addEventListener('scroll', schedule);
+  /* Exposed so a check can drive it without waiting out the settle window, and so this
+   * is observable at all — a recovery path with no handle is one nothing can assert. */
+  window.__zoomRecovery = { schedule: schedule, goHome: goHome, lockedOut: lockedOut, settleMs: SETTLE_MS };
+  return window.__zoomRecovery;
+}
+
+/* === THE MULTI-TOUCH GUARD — PUP-WO-0603 §2 ================================
+ * A THREE-YEAR-OLD ALWAYS HAS A SECOND CONTACT. His palm rests, his other hand arrives,
+ * and a one-finger press becomes a two-finger gesture the browser is entitled to read as
+ * a pinch. This cancels the browser's default for a multi-touch that begins on a surface
+ * that has nothing to scroll.
+ *
+ * IT IS NOT A BLANKET document-level preventDefault, WHICH §5 NAMES AS A FLAG-AND-STOP.
+ * The listener is document-level because panels are built and destroyed at runtime and a
+ * per-element listener would miss whichever one is added next — but it acts ONLY when
+ * the touch began outside every scrollable ancestor, so a two-finger gesture that starts
+ * on the drawer, the picker grid or any of the horizontal strips is left entirely alone.
+ * It also never touches single-finger events, so text selection, taps and drags on the
+ * adult surfaces are unaffected — selection is a one-finger gesture. */
+function installMultiTouchGuard() {
+  function scrollableAncestor(el) {
+    for (var n = el; n && n !== document.documentElement; n = n.parentNode) {
+      if (n.nodeType !== 1) continue;
+      var cs;
+      try { cs = getComputedStyle(n); } catch (e) { continue; }
+      var oy = cs.overflowY, ox = cs.overflowX;
+      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 2) return n;
+      if ((ox === 'auto' || ox === 'scroll') && n.scrollWidth > n.clientWidth + 2) return n;
+    }
+    return null;
+  }
+  function onTouchStart(ev) {
+    if (!ev.touches || ev.touches.length < 2) return;
+    var t = ev.target;
+    if (!t || t.nodeType !== 1) return;
+    if (scrollableAncestor(t)) return;
+    if (ev.cancelable) ev.preventDefault();
+  }
+  /* Capture, so it is reached before a panel's own handler can stop propagation, and
+   * NON-PASSIVE, because a passive listener cannot preventDefault and Chrome makes
+   * document-level touch listeners passive by default. Without that flag this whole
+   * function is a no-op that looks like a guard. */
+  document.addEventListener('touchstart', onTouchStart, { capture: true, passive: false });
+  window.__multiTouchGuard = { scrollableAncestor: scrollableAncestor };
+  return window.__multiTouchGuard;
+}
+
 /* === Init === */
 loadSupabaseConfig();
 render();
+installZoomRecovery();
+installMultiTouchGuard();
 startPolling();
 
 /* === Service Worker === */
