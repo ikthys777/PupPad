@@ -51,7 +51,17 @@ survived.**
    exists to clear `#gameBack`'s hit box. **The panel already solved this with a column
    rule; use the same shape.**
 
-   > **CORRECTED 2026-09-03, AND THE ERROR WAS MINE IN THE PARAGRAPH THAT CONDEMNS IT.**
+   > **CORRECTED TWICE, AND BOTH ERRORS WERE MINE IN THE PARAGRAPH THAT CONDEMNS THEM.**
+   >
+   > **SECOND ERROR: I NAMED THE WRONG ELEMENT ON THE WRONG SURFACE.** This clause cited
+   > `#gameBack`. **`#gameBack` (`index.html:2837`) belongs to `openGames` and does not
+   > exist while the picker is up.** The picker's exit is **`#pickerBack`**
+   > (`index.html:3071`). Same builder, same shape, different surface — and a clearance
+   > rule written against an element that is not on screen is a rule about nothing. *(CC-B
+   > found it while building. The two errors are the same mistake twice: I reasoned about
+   > the picker from what I had learned about the games host.)*
+   >
+   > **FIRST ERROR, BELOW.**
    > This clause first said *"a tile must not intersect x 10–74 — which no viewport can
    > invalidate."* **`x 10–74` is a hardcoded column, which is architecture §5's defect
    > one axis over from the `140px` it replaces.** `makeBackButton` sets
