@@ -51,6 +51,7 @@ const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 const failures = [];
 const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m, d) => { failures.push({ m, d }); console.log(`  FAIL  ${m}`); if (d) console.log(`        ${d}`); };
+const info = (m) => console.log(`  ....  ${m}`);
 
 const browser = await chromium.launch({ channel: 'chromium' });
 /* A TOUCH CONTEXT. `(pointer: coarse)` must match or this is measuring a device nobody
@@ -1152,6 +1153,19 @@ for (const vp of [{ width: 869, height: 412 }, { width: 915, height: 412 }, { wi
     d.scrollTop = 0;
     return hit;
   });
+  /* THE BAND IS ASSERTED NOW, NOT JUST PRINTED. This check MEASURED the drawer's share of
+   * the field and reported it in a sentence while asserting nothing about it, so the panel
+   * could have grown control by control until it owned the screen with nothing going red.
+   * A number a check computes and does not test is a number nobody is watching.
+   *
+   * AND THE PAN IS REPORTED AS THE SEPARATE FACT IT IS. A pan that WORKS is what the line
+   * below proves; a pan that is MANDATORY is a different claim, because a non-reader does
+   * not discover one. It is measured here rather than asserted, because closing it needs a
+   * decision about Gyre's two full-width swatch rows that belongs to PUP-WO-0301's surface
+   * and not to this work order — see FEEDBACK.md. */
+  if (geo.covers > 0.8) bad(`${vp.width}x${vp.height}: the drawer covers ${(geo.covers * 100).toFixed(0)}% of the field`,
+    'the panel is meant to sit under the toy, not replace it; over 80% there is no toy left to see');
+  else if (geo.scrollH > geo.clientH) info(`${vp.width}x${vp.height}: the pan is MANDATORY — ${geo.scrollH}px of content in ${geo.clientH}px. It works (below), but a non-reader does not discover one.`);
   if (!exitEats.length) ok(`${vp.width}x${vp.height}: the exit covers the centre of no control`);
   else bad(`${vp.width}x${vp.height}: #gameBack swallows a control — a tap on it closes the toy`, exitEats.join(' · '));
   const panOk = geo.scrollH <= geo.clientH || panned > 4;

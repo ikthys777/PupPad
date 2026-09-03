@@ -2314,13 +2314,26 @@ function mountControlPanel(chrome, host, entry) {
      * pushed the bar off the top. `flex:0 1 auto` with `min-height:0` says the thing that
      * is actually meant — TAKE WHAT IS LEFT AFTER THE BAR — and it holds at any height. */
     + 'flex:0 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;'
-    + 'padding:10px 10px calc(10px + env(safe-area-inset-bottom)) max(84px,calc(env(safe-area-inset-left) + 74px));'
-    /* 176, NOT 230. At 230 the fleet's 785px of usable width takes exactly THREE columns,
-     * which stacks sixteen controls into 406px of content inside a ~300px drawer — a pan
-     * that is MANDATORY rather than optional, and a non-reader does not discover a pan.
-     * 176 takes four columns there and the content fits without one. Wider screens simply
-     * get more columns, which is what auto-fit is for. */
-    + 'display:grid;grid-template-columns:repeat(auto-fit,minmax(176px,1fr));'
+    /* 4px OF SLACK AT THE BOTTOM, AND IT IS NOT COSMETIC. Rows are 48.76px and gaps 8px,
+     * so the last row's bottom lands on a fraction and overflowed the content box by
+     * 0.38px — check 19 correctly called two controls unreachable, because even fully
+     * panned they could not be brought entirely on screen. A third of a pixel is not a
+     * usability defect and it IS a real clip; the slack removes it rather than the
+     * assertion being loosened to tolerate it. */
+    + 'padding:10px 10px calc(14px + env(safe-area-inset-bottom)) max(84px,calc(env(safe-area-inset-left) + 74px));'
+    /* 132, NOT 230, AND THE NUMBER WAS MEASURED RATHER THAN REASONED. At 230 the fleet's
+     * 785px of usable width takes exactly THREE columns, stacking sixteen controls into
+     * 406px of content inside a ~300px drawer — a pan that is MANDATORY, and a non-reader
+     * does not discover a pan. Rows cannot shrink to pay for it: the buttons are already
+     * 48.76px against a 44px minimum touch target, so the room has to come from COLUMNS.
+     * 132 takes six columns, and it is the value the MEASUREMENT chose rather than the
+     * reasoning. buildChoice's row is `flex-wrap:wrap`, so at 132 the small choices wrap
+     * their icon onto one line and their options onto the next — 100px cells — and I
+     * moved to 176 on exactly that argument. 176 goes RED at five assertions and 132 goes
+     * green: the wrapped cells are taller and every control still lands on the glass,
+     * while at 176 they do not. THE PREDICTION WAS WRONG AND THE FLEET SAID SO. Wider
+     * screens get more columns, which is what auto-fit is for. */
+    + 'display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));'
     + 'gap:8px;align-content:safe start';
 
   /* Every control registers a repaint here. `randomize()` changes nine settings at once
@@ -2369,7 +2382,14 @@ function mountControlPanel(chrome, host, entry) {
      * inside a VERTICAL scroller: the browser keeps vertical panning and hands us
      * everything horizontal, which is the only direction this slider reads. */
     track.style.cssText = 'position:relative;flex:1 1 auto;height:50px;border-radius:14px;'
-      + 'background:rgba(255,255,255,0.10);border:2px solid rgba(255,255,255,0.20);'
+    /* THE RING IS AN INSET SHADOW, NOT A BORDER, AND THAT IS THE FIX RATHER THAN A STYLE
+     * CHOICE. A border gives the track TWO boxes: `fill`'s percentage width resolves
+     * against the PADDING box while every measurement of the track — the hit test, and
+     * check 19's own assertion — reads the BORDER box. Two denominators that differ by
+     * 4px, which is the family of defect this project has now been bitten by five times.
+     * An inset shadow paints the identical ring and leaves ONE box, so the painted
+     * position and the value cannot disagree at any width. */
+      + 'background:rgba(255,255,255,0.10);box-shadow:inset 0 0 0 2px rgba(255,255,255,0.20);'
       + 'overflow:hidden;touch-action:pan-y;cursor:pointer;min-width:0';
     var fill = document.createElement('div');
     fill.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:0;'
@@ -2403,7 +2423,24 @@ function mountControlPanel(chrome, host, entry) {
      * the setter rejects is still a no-op there rather than a reset here. */
     function valueAt(clientX) {
       var r = track.getBoundingClientRect();
-      var t = r.width > 0 ? (clientX - r.left) / r.width : 0;
+      /* THE PADDING BOX, BECAUSE THAT IS THE BOX THE PAINT USES — and until this line
+       * they were two different boxes. `fill.style.width` and `knob.style.left` are
+       * percentages on absolutely-positioned children, which resolve against the
+       * CONTAINING BLOCK'S PADDING BOX; this hit test read `getBoundingClientRect`, which
+       * is the BORDER box. The track has a 2px border, so the knob was painted up to 4px
+       * from where a tap at that same position would land — the slider showing a position
+       * that is not its value, at every width this panel has ever been drawn at.
+       *
+       * It was invisible because 4px of a 230px column is 1.7% and check 19's tolerance
+       * is 2%. Narrowing the column to 132 to make the panel fit a 412px phone pushed the
+       * same 4px to 2.8% and it went red. THE DEFECT DID NOT ARRIVE WITH THE NARROW
+       * COLUMN; the narrow column stopped hiding it.
+       *
+       * Derived from the element rather than written down, so a border change cannot
+       * reopen it: clientWidth is the padding box by definition. */
+      var pad = track.clientWidth;
+      var edge = (r.width - pad) / 2;
+      var t = pad > 0 ? (clientX - r.left - edge) / pad : 0;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
       var v = lo + t * (hi - lo);
       if (step > 0) v = Math.round(v / step) * step;
