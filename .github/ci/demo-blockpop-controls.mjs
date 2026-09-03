@@ -364,8 +364,15 @@ plan(12, 'the line clear is silent', {
   expectText: 'does not play the reward cue',
 });
 
+/* THE ANCHOR MOVED WHEN THE BUZZ JOINED THE LADDER. PUP-WO-0404 made the buzz's LENGTH
+ * one of the four dimensions the combo drives, so the flat `api.vibrate(18)` that used to
+ * sit beside the clear cue is now inside comboReact with the sparks, the flash and the
+ * pitch — one function owning the child's whole channel, so its dimensions cannot drift
+ * apart at separate call sites. The plant follows it. A stale anchor here does not fail
+ * quietly: the harness reports HARNESS-BROKE rather than counting the section green,
+ * which is the only reason this was found rather than silently stopping. */
 plan(12, 'the line clear does not buzz', {
-  mutate: (s) => sub(s, '      try { api.vibrate(18); } catch (e) {}', '      /* no buzz */'),
+  mutate: (s) => sub(s, '    try { api.vibrate(BUZZ_MS_BASE + BUZZ_MS_STEP * (rank - 1)); } catch (e) {}', '    /* no buzz */'),
   expectText: 'did not buzz',
 });
 
@@ -484,7 +491,6 @@ plan(14, 'the tray divides both axes by one span, as the source did', {
   expectText: 'half the slot',
 });
 
-console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time (the timing-sensitive ones alone, afterwards).\n`);
 {
   /* SECTIONS WITH REAL TIME IN THEM DO NOT SHARE THE MACHINE.
    * §6 lands a piece INSIDE a 280ms window and §13 samples a 620ms sweep — both are wall
@@ -512,7 +518,169 @@ plan(15, 'the hidden attribute is set but nothing is actually hidden', {
   expectText: 'still painted after',
 });
 
-const TIMED = new Set([6, 13]);
+
+/* ============================ PUP-WO-0404 ==================================
+ * Sixteen plants for sections 16-19. Every one is a REAL defect that PARSES —
+ * a constant that stops rising, a guard removed, a channel given an opposite —
+ * and every one is required to go red for its OWN stated reason. A plant that
+ * merely breaks the module proves nothing about the check that catches it.
+ * ========================================================================= */
+
+/* --- §16 the child's channel ------------------------------------------- */
+
+plan(16, 'the particle count stops rising with the combo', {
+  mutate: (s) => sub(s, '  var SPARKS_PER_CELL_STEP = 1;', '  var SPARKS_PER_CELL_STEP = 0;'),
+  expectText: 'particle count does not rise',
+});
+
+plan(16, 'the flash is the same brightness at every combo', {
+  mutate: (s) => sub(s, '  var FLASH_PEAK_STEP = 0.07;', '  var FLASH_PEAK_STEP = 0;'),
+  expectText: 'does not get brighter',
+});
+
+/* THE FAILURE THE LADDER IS BOUNDED AGAINST, and it is silent in the product: playTone
+ * pins hz into [40,3000], so a step this size makes ranks 4 and 5 the SAME note while
+ * every line of the module still reads as though they differ. */
+plan(16, 'the pitch ladder walks past the shell\'s 3000 Hz clamp', {
+  mutate: (s) => sub(s, '  var COMBO_HZ_STEP = 210;', '  var COMBO_HZ_STEP = 900;'),
+  expectText: 'clamp',
+});
+
+/* NORTHSTAR §5's WHOLE OBJECTION TO SCORES, BUILT: a placement that clears nothing is
+ * given a low note of its own, and the channel that could only say "good" and "better"
+ * can now say "bad". */
+plan(16, 'a placement that clears nothing is given a sad note', {
+  mutate: (s) => sub(s, '    } else {\n      cue(CUE.drop);\n    }',
+    '    } else {\n      cue(CUE.drop);\n      try { api.tone(180, 140, \'sine\'); } catch (e) {}\n    }'),
+  expectText: 'spoke in the child',
+});
+
+/* --- §17 the ruling's own falsification test ---------------------------- */
+
+/* THE FEATURE REDUCED TO WHAT IT REPLACED: the combo still rises, still scores, still
+ * plays its rising note — and the BOARD reacts identically at every multiplier, so the
+ * only thing that carries it to a person is the numeral a three-year-old cannot read. */
+plan(17, 'the combo reaches the child only as a digit', {
+  mutate: (s) => sub(sub(s, '  var SPARKS_PER_CELL_STEP = 1;', '  var SPARKS_PER_CELL_STEP = 0;'),
+    '  var FLASH_PEAK_STEP = 0.07;', '  var FLASH_PEAK_STEP = 0;'),
+  expectText: 'pixel-identical',
+});
+
+/* AND THE INSTRUMENT'S OWN NULL RESULT MUST STILL HOLD. If the module is made
+ * non-deterministic the two baseline captures stop matching, and §17 must say THAT
+ * rather than going on to report a difference it can no longer interpret. */
+plan(17, 'the burst is randomised, so no two frames are alike', {
+  mutate: (s) => sub(s, '      var dist = spread * (0.42 + 0.58 * (((i * 37) % 100) / 100));',
+    '      var dist = spread * (0.42 + 0.58 * ((Date.now() + i * 37) % 100) / 100);'),
+  expectText: 'cannot tell a real change from noise',
+});
+
+/* --- §18 the adult's readout -------------------------------------------- */
+
+plan(18, 'the readout is laid over the tray slots', {
+  mutate: (s) => sub(s, "    '.bp-score{flex:0 0 auto;pointer-events:none;text-align:right;padding:0 8px 4px 0;',",
+    "    '.bp-score{position:absolute;right:10px;top:50%;pointer-events:none;text-align:right;padding:0 8px 4px 0;',"),
+  expectText: 'overlaps',
+});
+
+plan(18, 'the readout sits in the exit\'s column', {
+  mutate: (s) => sub(s, "    '.bp-score{flex:0 0 auto;pointer-events:none;text-align:right;padding:0 8px 4px 0;',",
+    "    '.bp-score{position:fixed;left:12px;top:210px;pointer-events:none;text-align:right;padding:0 8px 4px 0;',"),
+  expectText: "exit's column",
+});
+
+plan(18, 'the readout takes pointer events and can eat a tap', {
+  mutate: (s) => sub(s, "    '.bp-score{flex:0 0 auto;pointer-events:none;text-align:right;padding:0 8px 4px 0;',",
+    "    '.bp-score{flex:0 0 auto;pointer-events:auto;text-align:right;padding:0 8px 4px 0;',"),
+  expectText: 'takes pointer events',
+});
+
+/* A NUMBER THAT IS PAINTED ONCE AND NEVER AGAIN. The readout exists, is the right size,
+ * is in the right place, and is wrong — which is exactly the shape a geometry-only
+ * check passes. */
+plan(18, 'the readout is painted once and never updated', {
+  mutate: (s) => sub(s, "    scoreEl.textContent = String(score);", "    scoreEl.textContent = scoreEl.textContent || '0';"),
+  expectText: 'not the score',
+});
+
+/* --- §19 the win --------------------------------------------------------- */
+
+plan(19, 'clearing the whole board is not detected at all', {
+  mutate: (s) => sub(s, '    var perfect = lines > 0 && boardEmpty(board);', '    var perfect = false;'),
+  expectText: 'passed unnoticed',
+});
+
+/* THE DEFECT THIS SECTION WAS WRITTEN AFTER FINDING, PLANTED AS THE HALF-FIX SOMEONE
+ * WOULD ACTUALLY WRITE. Deleting the guard outright is a worse plant than it looks: the
+ * celebration is then destroyed before the section's FIRST assertion samples it, so the
+ * check goes red saying "clearing the whole board passed unnoticed" and the settle-window
+ * assertion is never reached — red, for the wrong reason, proving nothing about the line
+ * it exists to defend. Measured, not guessed; that is what this control reported first.
+ *
+ * So plant the plausible mistake instead. "The problem is the synthesised CLICK, so guard
+ * the click" leaves a real finger's touchend dismissing the celebration instantly, which
+ * is the same bug for the child and invisible to a check that only watches for clicks. */
+plan(19, 'the settle window guards only the synthesised click, not a finger', {
+  mutate: (s) => sub(s, '      if (!fromTimer && (Date.now() - openedAt) < CELEB_ARM_MS) return;',
+    "      if (ev && ev.type === 'click' && (Date.now() - openedAt) < CELEB_ARM_MS) return;"),
+  expectText: 'settle window',
+});
+
+plan(19, 'the celebration never ends on its own', {
+  mutate: (s) => sub(s, '    fxAfter(reduced ? CELEB_MS_REDUCED : CELEB_MS, function () { leave(null, true); });',
+    '    void CELEB_MS_REDUCED; void CELEB_MS;'),
+  expectText: 'never ends on its own',
+});
+
+/* A WIN FIRED BY OPENING THE GAME. The board is empty because he won it yesterday. */
+plan(19, 'a resumed empty board celebrates on mount', {
+  mutate: (s) => sub(s, '  renderScore();\n  if (over) showOver();', '  renderScore();\n  if (boardEmpty(board)) celebrate();\n  if (over) showOver();'),
+  expectText: 'already empty fires a celebration',
+});
+
+/* THE FIRST VERSION OF THIS PLANT WAS A NO-OP AND THE HARNESS REPORTED IT GREEN, WHICH
+ * IS THE CORRECT VERDICT ON A CHECK THAT WAS NEVER GIVEN A DEFECT. It inserted
+ * `if (0) endCelebration();` and left the real call standing three lines below, so the
+ * module was unchanged and §19 rightly passed. A plant must remove the behaviour, not
+ * add a statement near it. */
+/* AND IT IS THE TIMERS THAT SURVIVE, NOT THE NODES — measured, after this control first
+ * reported RED-WRONG-REASON against `expectText: 'survived teardown'`. release() removes
+ * `root` from the document, and the celebration and the spark layer are inside it, so the
+ * NODES go whether or not endCelebration ran. What outlives the game is the staggered
+ * volley and the 3.4s self-return: "the game left 2 timer(s) and 0 interval(s) armed
+ * mid-celebration". Worth stating because it means §19's node assertion CANNOT catch this
+ * defect — it is there for a different one, an effect that escapes its container — and
+ * only the timer assertion stands between a teardown and a callback firing into a dead
+ * closure. Pointing this plant at the message it actually produces is what makes that
+ * visible instead of leaving two assertions that look interchangeable. */
+plan(19, 'teardown leaves the fireworks running', {
+  mutate: (s) => sub(s, 'body sweep to report. */\n    endCelebration();\n    if (ro) {', 'body sweep to report. */\n    if (ro) {'),
+  expectText: 'armed mid-celebration',
+});
+
+/* Anchored on the function header too: `if (dead || celebEl) return;` is armFxSweep's
+ * guard as well, and an anchor that matches twice plants nothing. */
+plan(19, 'reduced motion removes the win instead of stilling it', {
+  mutate: (s) => sub(s, '  function celebrate() {\n    if (dead || celebEl) return;',
+    '  function celebrate() {\n    if (dead || celebEl || reduced) return;'),
+  expectText: 'the win disappears',
+});
+
+/* RUN ALONE, AFTER THE REST. 6 and 13 land inside a 280ms window and sample a 620ms
+ * sweep; 16 counts particles and measures screenshot luminance; 17 compares whole frames
+ * for byte equality; 19 waits out a 3.4s self-return and a 350ms settle window. All of
+ * them are wall-clock assertions, and CI's runners are 2-core: three separate CI failures
+ * were bought learning that a browser-bound lane count is not a CPU count. */
+const TIMED = new Set([6, 13, 16, 17, 19]);
+
+/* THE BANNER MOVED, AND IT WAS WRONG WHERE IT WAS. It printed `QUEUE.length` from a
+ * position PART WAY DOWN THE LIST OF plan() CALLS, so it reported the number of defects
+ * declared ABOVE that line rather than the number about to run — 52 of 70 here, and it
+ * had been under-reporting before this work order added any. A count taken before the
+ * thing it counts is finished is the same defect as a count typed by hand: it reads as
+ * authoritative and rots without anyone touching it. Printed here, after the last
+ * plan(), where QUEUE is complete. */
+console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time (the timing-sensitive ones alone, afterwards).\n`);
   const parallel = QUEUE.map((q, i) => ({ q, i })).filter((x) => !TIMED.has(x.q.section));
   const serial = QUEUE.map((q, i) => ({ q, i })).filter((x) => TIMED.has(x.q.section));
   const ordered = new Array(QUEUE.length);

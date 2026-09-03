@@ -83,6 +83,21 @@ const ORIGIN = `http://127.0.0.1:${server.address().port}`;
  * clauses when they were two numbers. */
 const MIN_TOUCH = 44;
 
+/* ONE CELL PARKED IN THE FAR CORNER, AND EVERY FIXTURE THAT COMPLETES A WHOLE LINE
+ * NEEDS IT. A 6x6 board with only row 0 filled does not merely clear a line when that
+ * row completes — it clears the BOARD, and since PUP-WO-0404 that is the game's win
+ * condition. The celebration then covers the board and refuses play until it is left,
+ * which is correct behaviour and fatal to any fixture that goes on to place another
+ * piece: the placement lands on the overlay, nothing happens, and the assertion that
+ * follows is satisfied by a game that did nothing at all. Section 4's column-clear plant
+ * went GREEN that way — "column 0 did not clear" is trivially true of a column that was
+ * never built.
+ *
+ * These fixtures were ALWAYS perfect clears. Nothing existed to notice, so nothing did.
+ * That is worth stating plainly, because the alternative reading — that a test was bent
+ * to fit new code — is the one a reviewer should suspect and it is not what happened. */
+const PARKED_BOARD = [[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,1]];
+
 const PIN_DOT = 0;
 const PIN_TRI = 0.390625;
 
@@ -683,7 +698,12 @@ try {
   console.log('\n--- 4. a completed row clears, and the score rises by engine.ts:131-139\'s formula ---');
   {
     const s = await shape(FLEET[0]);
-    await s.openBlocks({ clearStorage: true });
+    /* PARKED CELL — see the note by PARKED_BOARD. Completing a line on an otherwise
+     * empty board is a WIN since PUP-WO-0404, and a win opens a celebration that
+     * correctly refuses further play until it is left. This section is not about the
+     * win, and without the parked cell its later placements land on the overlay and do
+     * nothing — which reads as a pass. */
+    await s.openBlocks({ clearStorage: true, seed: PARKED_BOARD });
     /* Every deal is a single dot (Math.random pinned to 0), so filling row 0 takes six
      * placements and the sixth completes the line. */
     let sc = null;
@@ -1616,7 +1636,12 @@ try {
   console.log('\n--- 13. the flair is PupPad\'s own, it is transient, and it spends no contrast ---');
   {
     const s = await shape(FLEET[0], PIN_DOT);
-    await s.openBlocks({ clearStorage: true });
+    /* PARKED CELL — see the note by PARKED_BOARD. Completing a line on an otherwise
+     * empty board is a WIN since PUP-WO-0404, and a win opens a celebration that
+     * correctly refuses further play until it is left. This section is not about the
+     * win, and without the parked cell its later placements land on the overlay and do
+     * nothing — which reads as a pass. */
+    await s.openBlocks({ clearStorage: true, seed: PARKED_BOARD });
     /* Baseline BEFORE any clear: the flair must not be sitting on the board. */
     const idle = await s.page.evaluate(() => ({
       sweeps: document.querySelectorAll('.bp-sweeparm').length,
@@ -1676,7 +1701,12 @@ try {
      * then look. */
     {
       const s2 = await shape(FLEET[0], PIN_DOT);
-      await s2.openBlocks({ clearStorage: true });
+    /* PARKED CELL — see the note by PARKED_BOARD. Completing a line on an otherwise
+     * empty board is a WIN since PUP-WO-0404, and a win opens a celebration that
+     * correctly refuses further play until it is left. This section is not about the
+     * win, and without the parked cell its later placements land on the overlay and do
+     * nothing — which reads as a pass. */
+      await s2.openBlocks({ clearStorage: true, seed: PARKED_BOARD });
       const slot0 = await s2.rect('.bp-slot[data-slot="0"]');
       const cell00 = await s2.rect('.bp-well[data-row="0"][data-col="0"]');
       for (let c = 0; c < 6; c++) await s2.placeAt(0, c);
@@ -2344,6 +2374,14 @@ try {
     return true;
   };
 
+  /* A deliberate tap on the board as soon as the win lands — the child's hand is already
+   * there, and this is the gesture the settle window exists to survive. */
+  const earlyTap = async () => {
+    const b = await s.rect('.bp-grid');
+    await s.touch('touchStart', [{ x: b.cx, y: b.cy, id: 1 }]);
+    await s.touch('touchEnd', []);
+  };
+
   const celebState = () => s.page.evaluate(() => {
     const c = document.querySelector('.bp-celeb');
     const cheer = document.querySelector('.bp-cheer');
@@ -2368,6 +2406,13 @@ try {
   await s.recordCues();
   if (!await quickPlace(0, 5)) bad('could not complete the last row');
   else {
+    /* THE GUARD PROBE HAPPENS FIRST, AND THAT ORDERING IS THE MEASUREMENT. The settle
+     * window is short by design, so a probe that runs after 200ms of assertions and a
+     * few CDP round trips is racing it — on a loaded 2-core runner the "early" tap lands
+     * LATE, the celebration goes away exactly as it should, and a correct build is
+     * reported broken. Tapping immediately puts the probe unambiguously inside any
+     * plausible window without this file naming the module's constant. */
+    await earlyTap();
     await s.wait(200);
     const st = await celebState();
     const c = await s.cues();
@@ -2390,27 +2435,20 @@ try {
    * ON-CELEB 936`, and every sample from 10ms onward found nothing on the glass. Remove
    * the settle window and this goes red for that reason. */
   {
-    const st0 = await celebState();
+    /* The state sampled above was taken AFTER the immediate tap. If the settle window is
+     * honoured the celebration is still there; if it is not, it is already gone. */
+    const guarded = await celebState();
     const b = await s.rect('.bp-grid');
-    const tapBoard = async () => {
+    if (!guarded.present) bad('a tap inside the settle window dismissed the celebration',
+      'the tap that wins the game arrives as a synthesised click on an element created under the finger — without the settle window the win flickers and vanishes');
+    else {
+      await s.wait(CELEB_ARM_MS_PROBE);
       await s.touch('touchStart', [{ x: b.cx, y: b.cy, id: 1 }]);
       await s.wait(20);
       await s.touch('touchEnd', []);
-    };
-    if (!st0.present) bad('cannot test the way out: no celebration was up');
-    else {
-      /* Inside the settle window: the gesture that won must not also dismiss. */
-      await tapBoard();
-      await s.wait(60);
-      const guarded = await celebState();
-      /* Outside it: one tap, and it is gone. */
-      await s.wait(420);
-      await tapBoard();
       await s.wait(240);
       const st1 = await celebState();
-      if (!guarded.present) bad('a tap inside the settle window dismissed the celebration',
-        'the tap that wins the game arrives as a synthesised click on an element created under the finger — the win would flicker and vanish');
-      else if (st1.present) bad('one tap did not leave the celebration — a three-year-old is stuck admiring fireworks');
+      if (st1.present) bad('one tap did not leave the celebration — a three-year-old is stuck admiring fireworks');
       else ok('the winning gesture cannot dismiss its own celebration, and one tap after it can');
     }
   }
