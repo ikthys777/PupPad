@@ -556,6 +556,20 @@ export default function mount(host, api) {
      * contains drawn cells and that their union is the box it measures. */
     '.bp-drag{position:absolute;left:0;top:0;display:grid;pointer-events:none;z-index:5;',
     'will-change:transform;filter:drop-shadow(0 6px 10px rgb(0 0 0 / .35))}',
+    /* AND THE THIRD ONE, WHICH THIS FILE ALREADY KNEW IT NEEDED TWICE.
+     * `hidden` is a UA-stylesheet rule — [hidden]{display:none} — and ANY author `display`
+     * beats it. So `dragEl.hidden = true` did nothing once .bp-drag gained display:grid,
+     * and THE PIECE STAYED PAINTED ON THE BOARD AFTER THE CHILD LET GO. Scotty found it on
+     * the device.
+     *
+     * The display:grid was the fix for the OPPOSITE defect one work order earlier — the
+     * dragged piece drawing at 0x0 because its grid template was inert. Same property,
+     * mirrored failure, one WO apart. And `.bp-candy[hidden]` and `.bp-stamp[hidden]`
+     * above exist for exactly this reason: WHEN YOU GIVE AN ELEMENT A `display`, CHECK
+     * WHETHER THE FILE ALREADY COMPENSATES FOR THAT PROPERTY ELSEWHERE — because if it
+     * does, you have just created the case it compensates for. I applied it to two
+     * elements and did not go back for the third. */
+    '.bp-drag[hidden]{display:none}',
 
     /* THE TERMINAL STATE'S ONE WAY BACK. §8.5 and invariant 5: a single affordance
      * INSIDE host that resumes play. It does NOT call api.close() — the shell's own exit
@@ -1232,7 +1246,15 @@ export default function mount(host, api) {
 
   function onUp(ev) {
     if (!drag || dead) return;
-    if (drag.pointerId !== undefined && ev.pointerId !== undefined && ev.pointerId !== drag.pointerId) return;
+    if (drag.pointerId !== undefined && ev.pointerId !== undefined && ev.pointerId !== drag.pointerId) {
+      /* NOT THIS DRAG'S FINGER — so the drag stays live, correctly, because the finger
+       * that owns it is still down. But the lifting finger may still hold a pointer
+       * capture from its own grab, and returning here left it held until teardown. A
+       * three-year-old plays with both hands; that is how #gameBack died. Release what
+       * the departing pointer owns and touch nothing else. */
+      releaseCaptures(ev.pointerId);
+      return;
+    }
     var d = drag;
     drag = null;
     dragEl.hidden = true;
