@@ -33,6 +33,13 @@
  * result was taken first: an all-`auto` fixture zooms 1 → 5 under it (§1's own control),
  * so a "blocked" reading is a fact about the page rather than about the harness.
  *
+ * AND THE GAP IS NOT INCIDENTAL — IT IS THE PROPERTY UNDER TEST. The one thing that makes
+ * Android Chrome behave differently here is that it IGNORES `user-scalable=no` as an
+ * accessibility policy. This harness appears to honour it. A test bed that honours the
+ * directive cannot reproduce a defect whose cause is the directive being ignored, which
+ * is why five separate plants below leave §1 green and why no amount of harness work will
+ * change that. It is not a bug in the plants.
+ *
  * WHAT IT CANNOT DO: THIS IS A DESKTOP, NOT THE S10+. The reported symptom has never been
  * reproduced off-device, and `PUP-WO-0603` §5 makes a desktop result dressed as a device
  * result a flag-and-stop. Nothing here claims the S10+ is fixed. It claims the page does
@@ -192,10 +199,13 @@ if (want(1)) {
        * reported rather than trusted, and the controls file carries no §1 plant because
        * there is none to carry. PUP-WO-0603 §5 calls a check you cannot show going red a
        * flag-and-stop; this is that, declared at the point of the claim. */
-      info('NOT FALSIFIED — no plant could make this section fail: removing the root touch-action, the');
-      info('   #root declaration, user-scalable=no and the multi-touch guard, singly and all together, all');
-      info('   leave the app unzoomable while the control fixture zooms. A green here is an observation,');
-      info('   not a proof, and the reason the app refuses is not yet known.');
+      info('NOT FALSIFIED, AND THE REASON IS UNKNOWN — not a weak property, an unexplained one. The page');
+      info('   genuinely does not zoom here. No plant could make this section fail: the root touch-action,');
+      info('   #root\'s declaration, user-scalable=no and the multi-touch guard, removed singly and ALL FOUR');
+      info('   TOGETHER, each leave the app unzoomable while the control fixture zooms 1 -> 5 in the same run.');
+      info('   AND THE HARNESS DIFFERS FROM THE DEVICE IN EXACTLY THE PROPERTY UNDER TEST: Chromium here');
+      info('   honours user-scalable=no; Android Chrome IGNORES it, which is the whole of Scotty\'s defect.');
+      info('   A test bed that honours the directive cannot reproduce a defect caused by it being ignored.');
     }
 
     /* And on a panel, because a panel is a different hit-test target and the whole of the
