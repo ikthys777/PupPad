@@ -64,3 +64,71 @@ goes through `wireTap`; `audioCtx.close()` is never called.
   pairs are instrument artefacts, not perception. This needs acceptance item 5.
 - **The real size of finding 2's race window on Samsung hardware.** The defect was
   unconditional and is now closed; only its former firing rate was device-dependent.
+
+---
+
+# ROUND 2 — CC-A's review of PR #65
+
+**Reviewed at `dc0e26c`. Every claim was verified at source before I acted on it; all
+eight reproduce exactly as described.** Fixed at `d2b63f7`. Freeze for the follow-up
+pass: `d2b63f7`, `index.html` sha256
+`e97b45783e2fcb0950950b7d7b48f7e409e2052b6d0469df39f1b272b3ee769b`.
+
+## The five product findings
+
+| # | finding | disposition |
+|---|---|---|
+| P1 | **`voicePending` was not generation-scoped**, so a dead panel's grant unlocked a live panel's guard. `voicePending = false` ran at the *top* of the `.then`, before the generation check; the `.catch` had no generation check at all. **This is round 1's finding 2 surviving its own fix**, reached by a longer gesture and most reachable on first use, where the first request waits on a permission bubble. | **FIXED.** A stale continuation now touches nothing belonging to the current generation — its only business is stopping the tracks it was handed. §15 stages a grant *across* a teardown, which §12 never did. |
+| P2 | **`VOICE_MAX_INBOUND` counted clips that were SOUNDING, not clips that were ALLOCATING.** Nothing joins `voiceInbound` until a decode succeeds, so a burst all read zero, all passed, and all called `decodeAudioData` at once. **The same defect as the byte cap bounding the string, surviving its own fix in the one dimension the fix did not consider.** | **FIXED** — concurrent decodes counted. §16 floods 40 messages and watches decodes in flight. |
+| P3 | **The one sink whose amplitude a stranger chooses was the one sink with no attenuator.** Local cave headroom was derived and lands at 0.84; inbound went to the destination at unity, up to three summing. | **FIXED** — a shared attenuated + limited bus. |
+| P4 | **Two expressions of "is this panel busy" that did not agree.** `voiceSetStage` gated play/send on the stage; tiles and slider asked whether a buffer existed. Tapping a preset mid-record **played the old clip into the open microphone** and froze the ring while the timer ran. | **FIXED** — one `voiceCapturing()`, used by the painting *and* the handlers. |
+| P5 | **An overlay check is not a generation check** — after close-then-reopen the overlay is back, so the previous session's clip installed into the fresh panel. `sendVoice`'s `finish()` and `fr.onload` had no guard at all. | **FIXED** — generation-scoped throughout. §18 asserts it. |
+
+## The three about my instruments — and C1 is the sharpest thing in the review
+
+**C1. The one assertion in this repo for *"a requirement and its backstop must not be the
+same number"* could not fire.** It was an `else if` behind `rec !== 15000`, so reaching it
+required `MAX_INBOUND_BYTES === 15000`. **The rule this project repeats most had its only
+guard written unfalsifiable, and its plant demonstrated the other branch.** Now four
+independent assertions — and every named bound is *asserted* rather than interpolated,
+because deleting `MAX_INBOUND_BYTES` used to print "is undefined bytes" and pass.
+
+**C2. `MAX_INBOUND_SECONDS` was asserted by nothing** — deleting the line left the whole
+suite green. It is the half of the inbound bound I had argued is the only one that stays
+true across codecs. §19 asserts it by making the decoder return an over-long buffer, which
+is the only way to test the property without depending on one encoder's bitrate.
+
+**C3. §9's abstention gate was `padTofu > 0`**, so one odd glyph would disable the
+comparison on an otherwise fully-fonted machine; and a **missing** baseline read as a
+licence to judge rather than as unresolved. Both abstain now, separately. **And the pixel
+branch finally has a plant** — Latin `A` against Greek `Α`, different code points that
+render identically, which is the ASCII form of the exact case the design exists to avoid.
+
+## The cheaper ones, all taken
+
+- **Check 24 had no controls file**, so its first four sections had never been shown red.
+  Writing them **found another defect**: §1 called `safeMediaUrl` *itself* and only then
+  invoked the sink, so it proved the validator refuses a URL — never in doubt — while
+  saying nothing about **whether the sink is gated**. Deleting the gate from the real
+  handler left it green. It now drives the app's own registered callback. **9 of 9 red.**
+- **Check 25 counted a filename in a comment as a registration** — the
+  described-bug-reads-like-a-fixed-one shape *inside the check built to stop it*, in a repo
+  whose comments name files constantly. Comment lines dropped; the name must sit on a line
+  that invokes `node`. Demonstrated with a commented-out run line.
+- **`releaseChannel`'s fallback was a `catch` where it should be an `else`** — a client
+  merely *lacking* `removeChannel` released nothing and threw nothing, across all four
+  panels at once.
+- **`ci.yml`'s hand-maintained "15 planted defects"** removed rather than corrected. No
+  derived counts.
+- **Two `boundingBox()` calls** given the treatment §6 already had — code that predates the
+  helper, in the same file.
+- **`did` dropped from the voice payload.** Eight send sites broadcast a stable device id
+  and **zero read one**, verified by grep. The other seven are pre-existing and named in
+  `FEEDBACK.md` rather than changed from inside a voice work order.
+
+## One correction to my own round-1 record
+
+CC-A adopted both deviations and ruled §S2.2 — the instruction to make three inline copies
+— **their error, not mine**: the paragraph prescribing the copies justified the work by
+saying a rule expressed in many places rots. I had recorded it as a deviation I might be
+asked to revert. It is not; it ships.

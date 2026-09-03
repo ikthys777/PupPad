@@ -119,8 +119,7 @@ plan(4, 'teardown closes the shared AudioContext', {
 /* §5 — THE RACE. getUserMedia resolves asynchronously, so closeVoice can run BEFORE the
  * track exists. Removing the on-arrival guard is the whole defect. */
 plan(5, 'the on-arrival guard is removed — a grant that lands after teardown', {
-  mutate: (s) => sub(s, "    if (gen !== voiceGen || !document.getElementById('voiceOverlay')) {\n      stream.getTracks().forEach(function(t) { t.stop(); });\n      return;\n    }",
-                        "    /* PLANT: nothing checks whether the panel is still there. */"),
+  mutate: (s) => sub(s, "    if (gen !== voiceGen || !document.getElementById('voiceOverlay')) {", "    if (false) {"),
   expectText: 'LIVE after closing the panel',
 });
 
@@ -153,7 +152,7 @@ plan(7, 'the duration cap is derived from the byte cap', {
 /* §8 — DEGRADATION. A panel that throws with Supabase unconfigured is a panel that is
  * broken for every device that was never paired. */
 plan(8, 'send throws when there is no client', {
-  mutate: (s) => sub(s, "  if (!voiceChannel) return;\n  voiceChannel.send(", "  voiceChannel.send("),
+  mutate: (s) => sub(s, "  if (!voiceChannel) return;", "  /* PLANT: no guard. */"),
   expectText: 'throws',
 });
 
@@ -321,12 +320,17 @@ plan(9, 'the pixel comparison is made reachable, and two presets are given one s
                   '\\uD83D\\uDD27', '\\u26C5', '\\uD83D\\uDCF7', '\\uD83C\\uDFAE'];
     const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
     pads.forEach((g, i) => { out = sub(out, "emoji:'" + g + "'", "emoji:'" + letters[i] + "'"); });
-    /* DIFFERENT CODE POINTS THAT RENDER IDENTICALLY -- Latin A and Greek capital Alpha.
-     * Two copies of the same character would trip the earlier STRING check and never reach
-     * the pixel branch, which is the branch this plant exists to demonstrate. This pair is
-     * the ASCII stand-in for the dog-face-against-dog case the design says it avoids. */
+    /* DIFFERENT CODE POINTS THAT RENDER IDENTICALLY -- Latin A (U+0041) and CYRILLIC A
+     * (U+0410). Two copies of one character would trip the earlier STRING check and never
+     * reach the pixel branch, which is the branch this plant exists to demonstrate.
+     *
+     * THE PAIR WAS MEASURED, NOT ASSUMED. My first choice was Greek capital Alpha and it
+     * renders DIFFERENTLY from Latin A in this font stack, so the plant came out green and
+     * I would have concluded the branch worked. Latin/Cyrillic A are pixel-identical here;
+     * Latin A against B is not, which is the null control for the same measurement. This
+     * pair is the ASCII form of the dog-face-against-dog case the design exists to avoid. */
     out = sub(out, "{ id:'up',    icon:'\\uD83D\\uDC2D'", "{ id:'up',    icon:'A'");
-    out = sub(out, "{ id:'down',  icon:'\\uD83D\\uDC18'", "{ id:'down',  icon:'\\u0391'");
+    out = sub(out, "{ id:'down',  icon:'\\uD83D\\uDC18'", "{ id:'down',  icon:'\\u0410'");
     out = sub(out, "{ id:'robot', icon:'\\uD83E\\uDD16'", "{ id:'robot', icon:'Y'");
     out = sub(out, "{ id:'cave',  icon:'\\uD83C\\uDFD4\\uFE0F'", "{ id:'cave',  icon:'X'");
     return out;
@@ -342,14 +346,17 @@ plan(20, 'openVoice stops guarding against a second panel', {
 
 /* §20 — and the fallback that was a `catch` where it should have been an `else`. */
 plan(20, 'the channel release fallback goes back into the catch', {
-  mutate: (s) => sub(s, "  var released = false;
-  try {
-    var c = getSupabaseClient();
-    if (c && c.removeChannel) { c.removeChannel(ch); released = true; }
-  } catch (e) { released = false; }
-  if (!released) { try { ch.unsubscribe(); } catch (e2) {} }",
-    "  try { var c = getSupabaseClient(); if (c && c.removeChannel) c.removeChannel(ch); }
-  catch (e) { try { ch.unsubscribe(); } catch (e2) {} }"),
+  mutate: (s) => sub(s, [
+    '  var released = false;',
+    '  try {',
+    '    var c = getSupabaseClient();',
+    '    if (c && c.removeChannel) { c.removeChannel(ch); released = true; }',
+    '  } catch (e) { released = false; }',
+    '  if (!released) { try { ch.unsubscribe(); } catch (e2) {} }',
+  ].join('\n'), [
+    '  try { var c = getSupabaseClient(); if (c && c.removeChannel) c.removeChannel(ch); }',
+    '  catch (e) { try { ch.unsubscribe(); } catch (e2) {} }',
+  ].join('\n')),
   expectText: 'released NOTHING and threw nothing',
 });
 

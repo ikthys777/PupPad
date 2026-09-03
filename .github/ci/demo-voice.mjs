@@ -901,10 +901,19 @@ try {
     const r = await page.evaluate(async () => {
       const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       const all = [];
-      let delay = 900;
+      /* PER-CALL DELAYS, BECAUSE THE ORPHAN NEEDS A SPECIFIC INTERLEAVING AND A SINGLE
+       * SHARED DELAY CANNOT PRODUCE IT. The stale grant (A) must settle WHILE the live
+       * one (B) is still in flight — that is the moment it wrongly clears the guard — and
+       * the third tap (C) must land before B settles, so that B's stream is the one
+       * overwritten and orphaned. With one delay for all three, B always completed before
+       * A and the third tap became a STOP instead of a new request: the plant applied
+       * cleanly and the section still went green, because the scenario could not reach the
+       * defect. A PLANT THAT APPLIES IS NOT A PLANT THAT REPRODUCES. */
+      const delays = [700, 2600, 2600];
+      let nth = 0;
       navigator.mediaDevices.getUserMedia = (c) => real(c).then((st) => {
         all.push(st);
-        const d = delay;
+        const d = delays[Math.min(nth++, delays.length - 1)];
         return new Promise((res) => setTimeout(() => res(st), d));
       });
       const tap = () => {
@@ -918,11 +927,10 @@ try {
         await new Promise((r2) => setTimeout(r2, 80));
         closeVoice();                            /* back, while A is still in flight */
         openVoice();                             /* Voice again */
-        delay = 500;
-        tap();                                   /* B issued */
-        await new Promise((r2) => setTimeout(r2, 900));  /* A settles here */
+        tap();                                   /* B issued, still in flight */
+        await new Promise((r2) => setTimeout(r2, 900));  /* A settles here, B does not */
         tap();                                   /* C — only possible if A unlocked the guard */
-        await new Promise((r2) => setTimeout(r2, 1600));
+        await new Promise((r2) => setTimeout(r2, 3200));  /* B then C settle */
         closeVoice();
         await new Promise((r2) => setTimeout(r2, 600));
         return {

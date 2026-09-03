@@ -230,3 +230,58 @@ measured, a no-op plant, and an assertion that read the very variable its own pl
 I did not — I fixed the send defect mid-pass. The freeze is untouched and every finding was
 re-verified against the current tree, but the pass graded `4646927` and the disposition is
 against a later commit. Recorded in the findings file as well.
+
+---
+
+# ROUND 2 — after CC-A's review of PR #65
+
+**Eight findings, all verified at source before acting, all reproduced.** Full disposition
+in `docs/findings/PUP-WO-0701-adversarial.md`.
+
+## The two that would have shipped
+
+**A stale microphone grant unlocked the live panel's guard.** This is round 1's orphaned-
+microphone finding **surviving its own fix**: I closed the window where a grant arrives
+after teardown, and left open the window where a *dead* panel's grant clears the *current*
+panel's `voicePending`. The gesture is ordinary and it is worst on first use, when the
+first request is waiting on a permission bubble for as long as the adult takes.
+
+**The previous session's clip installed itself into the next panel.** I guarded the decode
+with an overlay check, and after close-then-reopen the overlay is back. That contradicts
+§S.1 — *the clip dies with the panel* — on the only identifying data this app handles.
+
+**Both are the same class: an async continuation checked the wrong thing.** A generation
+token existed and I did not apply it consistently. Every async continuation in the voice
+code is now generation-scoped.
+
+## THE ASSERTION FOR THIS PROJECT'S MOST-REPEATED RULE COULD NOT FIRE
+
+`if (rec !== 15000) bad(...) else if (rec === inbound) bad('the requirement and its
+backstop are the same number')`. The second branch needs `rec === 15000` **and**
+`rec === inbound`, i.e. `MAX_INBOUND_BYTES === 15000`. It is 3145728. **The rule we quote
+most often had its only guard written so that it can never go red**, and its plant
+demonstrated the neighbouring branch instead. That is the passes-by-not-running family
+again, one level in: not an unregistered check, not an unrun assertion, but a **reachable
+line in a running assertion that no input can satisfy.**
+
+`MAX_INBOUND_SECONDS` was asserted by nothing at all — deleting it left the suite green.
+
+## The pattern across both rounds, since it is the useful part
+
+**Nine defects this work order. Eight were found by an instrument or a reviewer, not by
+reading.** And the instruments were wrong six more times — including one that compared a
+number to itself, one that read the variable its own plant removed, one that performed the
+validation whose absence it was meant to detect, and one whose branch no input could reach.
+
+**Every one of those instrument defects was found by planting, not by inspection.** That is
+the argument for controls files, and it is why check 24 — which had none — was hiding a
+defect in its first section for two work orders.
+
+## Still open, still not mine
+
+- **The audience.** Unchanged and unchanged deliberately; CC-A is putting it to Scotty as
+  its own numbered item.
+- **`did` on the other seven broadcast sites.** A stable device id travels with every
+  canvas stroke, map stamp and photo, and **nothing anywhere reads one**. Dropped from
+  voice; the rest is a one-line change per site in panels this work order does not own.
+- **Acceptance item 5.** Unchanged: needs Scotty and a person who has not seen the app.
