@@ -1184,6 +1184,11 @@ export default function mount(host, api) {
   });
 
   host.gyre = Object.freeze({
+    /* GYRE OPTS IN, EXPLICITLY, IN THE SAME CHANGE THAT FLIPS THE SHELL'S FALLBACK TO
+     * CLOSED. Its panel IS the toy — "his engagement is the controls; he likes moving a
+     * slider and SEEING what changed" — so it opens on a fresh install where a game whose
+     * panel is incidental does not. The child's stored choice still outranks this. */
+    controlsOpen: true,
     get: read,
     set: (key, value) => { if (dead) return false; const changed = set(key, value); if (changed) announce(); return changed; },
     randomize: () => { if (dead) return read(); const next = randomize(); announce(); return next; },

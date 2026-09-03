@@ -121,7 +121,10 @@ const SPY = () => {
   };
 };
 
-const ctx0 = await browser.newContext({ viewport: { width: 1024, height: 640 }, hasTouch: true,
+/* THE FLEET (architecture §3) — this file ran 1024x640 / 780x560 / 1920x500 and the
+ * shortest it had seen was 500. See demo-controls.mjs's note: 412 is where the panel's
+ * cap binds, and no measurement here had ever been taken there. */
+const ctx0 = await browser.newContext({ viewport: { width: 869, height: 412 }, hasTouch: true,
   permissions: ['camera'] });
 await ctx0.addInitScript(SPY);
 const page = await ctx0.newPage();
@@ -186,8 +189,8 @@ console.log('\n--- 2. the sticker lands where it was placed, MEASURED ON SCREEN,
  * same box. One space, no denominators to choose, nothing that can cancel. */
 const X_PCT = 32, Y_PCT = 41;
 const rows = [];
-for (const vp of [{ width: 1024, height: 640 }, { width: 780, height: 560 },
-                  { width: 1920, height: 500 }]) {
+for (const vp of [{ width: 869, height: 412 }, { width: 915, height: 412 },
+                  { width: 883, height: 412 }]) {
   await page.setViewportSize(vp);
   await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.pad-btn[data-id="6"]', { timeout: 15000 });
@@ -279,7 +282,7 @@ if (rows.length < 3) {
 }
 
 /* A TAP ON THE BLACK BAR IS REFUSED, not silently moved onto the photograph. */
-await page.setViewportSize({ width: 1920, height: 500 });
+await page.setViewportSize({ width: 883, height: 412 });
 await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.pad-btn[data-id="6"]', { timeout: 15000 });
 await fingerTap('.pad-btn[data-id="6"]');
@@ -303,11 +306,11 @@ if (!bar.hasBar) {
 }
 await fingerTap('#camCloseBtn');
 await wait(200);
-await page.setViewportSize({ width: 1024, height: 640 });
+await page.setViewportSize({ width: 869, height: 412 });
 
 /* ================= 3. THE TWO BUTTONS, BY FINGER ================= */
 console.log('\n--- 3. CAPTURE and RESHARE, one tap, pressed with a finger ---');
-await page.setViewportSize({ width: 1024, height: 640 });
+await page.setViewportSize({ width: 869, height: 412 });
 await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.pad-btn[data-id="6"]', { timeout: 15000 });
 /* Supabase configured, without a network: the gate reads config, and broadcastPhoto
