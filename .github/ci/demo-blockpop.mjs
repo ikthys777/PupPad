@@ -1798,6 +1798,150 @@ try {
   }
   });
 
+  /* ------------------------------------------------------------------ */
+  await section(15, async () => {
+  console.log('\n--- 15. when he lets go, the piece is GONE — every way of letting go ---');
+  {
+    /* THE PROPERTY NOTHING STATED. §11 measures the dragged piece DURING the drag and
+     * proves it is visible; it was written for that and does it faithfully. THE OPPOSITE
+     * PROPERTY WAS NEVER ASSERTED, and a live defect lived in the gap between them: giving
+     * .bp-drag a `display` to fix the invisible-piece bug defeated `hidden` — a UA rule any
+     * author display beats — so the piece stayed painted on the board after the child let
+     * go. A check that proves a thing appears is not a check that it disappears.
+     *
+     * AND IT MEASURES PAINT, NOT THE ATTRIBUTE. `dragEl.hidden === true` is precisely the
+     * assertion that would have passed throughout this defect: the attribute was set, and
+     * the element rendered anyway. A rect comes from style, not from ink — and so does an
+     * attribute. */
+    const s = await shape(FLEET[0], PIN_TRI);
+    await s.openBlocks({ clearStorage: true });
+    const painted = () => s.page.evaluate(() => {
+      const d = document.querySelector('.bp-drag');
+      if (!d) return { present: false };
+      const cs = getComputedStyle(d);
+      const r = d.getBoundingClientRect();
+      const cells = [...d.querySelectorAll('.bp-piececell')]
+        .map((e) => e.getBoundingClientRect()).filter((b) => b.width > 0 && b.height > 0);
+      return {
+        present: true, attr: d.hidden, display: cs.display, visibility: cs.visibility,
+        opacity: +cs.opacity, w: r.width, h: r.height, ink: cells.length,
+        /* The question a child's eye asks: is there anything of it on the glass? */
+        onGlass: cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0.01
+          && r.width > 0 && r.height > 0 && cells.length > 0,
+      };
+    });
+    const grab = async () => {
+      const i = Math.max(0, await s.firstFullSlot());
+      return s.page.evaluate((k) => {
+        const r = document.querySelector(`.bp-slot[data-slot="${k}"] .bp-piece`).getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }, i);
+    };
+    const moveTo = async (g, tx, ty, steps = 6) => {
+      for (let i = 1; i <= steps; i++) {
+        await s.touch('touchMove', [{ x: g.x + (tx - g.x) * (i / steps), y: g.y + (ty - g.y) * (i / steps), id: 1 }]);
+        await s.wait(12);
+      }
+    };
+    const geom = await s.page.evaluate(() => {
+      const gr = document.querySelector('.bp-grid').getBoundingClientRect();
+      const tr = document.querySelector('.bp-tray').getBoundingClientRect();
+      const w = document.querySelector('.bp-well[data-row="3"][data-col="2"]').getBoundingClientRect();
+      return { cell: gr.width / 6, gridTop: gr.y, gridBottom: gr.y + gr.height,
+        trayX: tr.x + tr.width / 2, trayY: tr.y + tr.height - 14,
+        cellX: w.x + w.width / 2, cellY: w.y + w.height / 2, vh: innerHeight, vw: innerWidth };
+    });
+    const LIFT = 57.6 * 0; /* unused — every aim below is measured, never predicted */
+    void LIFT;
+
+    const kinds = [];
+    /* 1. a legal drop */
+    let g = await grab();
+    await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+    await moveTo(g, geom.cellX, geom.cellY + geom.cell);
+    await s.touch('touchEnd', []);
+    await s.wait(200);
+    kinds.push(['a legal drop', await painted()]);
+
+    /* 2. a drop onto an occupied cell */
+    g = await grab();
+    await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+    await moveTo(g, geom.cellX, geom.cellY + geom.cell);
+    await s.touch('touchEnd', []);
+    await s.wait(200);
+    kinds.push(['a drop onto an occupied cell', await painted()]);
+
+    /* 3. released completely off the board — Scotty's screenshot */
+    g = await grab();
+    await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+    await moveTo(g, Math.max(6, geom.vw - 8), Math.max(6, geom.gridTop - 40));
+    await s.touch('touchEnd', []);
+    await s.wait(200);
+    kinds.push(['released off the board entirely', await painted()]);
+
+    /* 4. released over the tray */
+    g = await grab();
+    await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+    await moveTo(g, geom.trayX, geom.trayY);
+    await s.touch('touchEnd', []);
+    await s.wait(200);
+    kinds.push(['released over the tray', await painted()]);
+
+    /* 5. a tap that never moved */
+    g = await grab();
+    await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+    await s.wait(40);
+    await s.touch('touchEnd', []);
+    await s.wait(200);
+    kinds.push(['a tap that never moved', await painted()]);
+
+    /* 6. a second finger's pointerup while the first still drags, then the first lifts */
+    g = await grab();
+    await s.touch('touchStart', [{ x: g.x, y: g.y, id: 1 }]);
+    await moveTo(g, geom.cellX, geom.cellY);
+    await s.touch('touchStart', [{ x: geom.cellX, y: geom.cellY, id: 1 }, { x: geom.trayX, y: geom.trayY, id: 2 }]);
+    await s.wait(40);
+    await s.touch('touchEnd', [{ x: geom.trayX, y: geom.trayY, id: 2 }]);
+    await s.wait(80);
+    const midTwo = await painted();
+    await s.touch('touchEnd', []);
+    await s.wait(220);
+    kinds.push(["a second finger's release, then the first", await painted()]);
+
+    const stuck = kinds.filter(([, p]) => p.present && p.onGlass);
+    if (!midTwo.present) bad('the drag element vanished from the DOM entirely — this section cannot measure it');
+    else if (stuck.length) bad(`the piece is still painted after ${stuck.length} of ${kinds.length} ways of letting go`,
+      stuck.map(([k, p]) => `${k}: display ${p.display}, ${p.w.toFixed(0)}x${p.h.toFixed(0)}, ${p.ink} cell(s) of ink, hidden attribute ${p.attr}`).join(' · ')
+        + ' — the attribute is set and the element renders anyway');
+    else ok(`the piece is off the glass after all ${kinds.length} ways of letting go: ${kinds.map(([k]) => k).join(', ')}`);
+
+    /* AND THE SYMPTOM SCOTTY SAW SECOND: a stuck ghost released over the tray OVERLAPS a
+     * slot, which reads as a slot showing the wrong shape. Confirm it is the same defect
+     * and not a tray-render bug of its own. */
+    const trayTruth = await s.page.evaluate(() => {
+      const out = [];
+      for (const sl of document.querySelectorAll('.bp-slot')) {
+        const r = sl.getBoundingClientRect();
+        const kinds2 = new Set();
+        for (const c of sl.querySelectorAll('.bp-piececell')) kinds2.add('own');
+        for (const d of document.querySelectorAll('.bp-drag')) {
+          if (d.hidden) continue;
+          const dr = d.getBoundingClientRect();
+          if (dr.width && dr.height && dr.x < r.x + r.width && dr.x + dr.width > r.x
+            && dr.y < r.y + r.height && dr.y + dr.height > r.y) kinds2.add('overlapped by the drag proxy');
+        }
+        out.push({ slot: sl.getAttribute('data-slot'), kinds: [...kinds2] });
+      }
+      return out;
+    });
+    const overlapped = trayTruth.filter((t) => t.kinds.indexOf('overlapped by the drag proxy') >= 0);
+    if (overlapped.length) bad(`${overlapped.length} tray slot(s) have the drag proxy sitting over them`,
+      'a slot showing a shape it does not hold is this defect, not a tray-render bug');
+    else ok('no tray slot has anything of the drag proxy over it — the wrong-shape-in-a-slot symptom is the same defect');
+    await s.ctx.close();
+  }
+  });
+
 } finally {
   await browser.close();
   server.close();
