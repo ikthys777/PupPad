@@ -87,6 +87,15 @@ mean anything**:
 | root `none`, panel explicitly `auto` | 1 → 1 blocked |
 | root `auto`, panel `none` | 1 → 1 blocked |
 
+**WHAT IS AND IS NOT ESTABLISHED, STATED PRECISELY BECAUSE A THIRD PARTY HAS ALREADY
+MISREAD IT.** *(Grok's review reported that "the work order measured that `touch-action`
+blocks document-level zoom." It does not.)* **Verified by CC-A at source:** `:17` carries
+`touch-action:none`. **Reported by CC-B from their own fixtures and NOT re-run by CC-A:**
+the four rows above. **NOT established:** a check in CI that asserts a document-level
+pinch does not zoom **and has been watched go red**. §4 specifies that as work to be
+done. **Until it exists and has failed once, document-level blocking is a measurement
+someone took, not a property this project holds.**
+
 **So adding `touch-action:none` to panel containers is INERT FOR ZOOM in the only
 environment we can measure — which is precisely what §1 forbids: it would look like a
 fix, change nothing, and close the ticket.** *That trap caught its own author.*
@@ -137,6 +146,37 @@ actually gives us.
 **Prevention that is 99% correct still locks him out on the hundredth time, and he cannot
 tell anyone what happened.** Build both, and treat a zoom that slips through as a case
 the app must survive rather than one it must prevent.
+
+**THE EXITS ARE TOP-LEFT — VERIFIED, AND THE GREP THAT MISSES THEM IS ITSELF A TRAP.**
+`back.id = 'gameBack'` (`index.html:2926`) and `back.id = 'pickerBack'` (`:3192`), both
+from `makeBackButton`: `position:fixed`, `top: calc(max(10px, env(safe-area-inset-top)) +
+52px)`, `left: max(10px, env(safe-area-inset-left))`, 64×64. *(A grep for the ids in
+markup returns NOTHING — **they are assigned in JS, never written as literal attributes**.
+The co-architect's grep came back empty for exactly that reason. **An absence found by
+grepping the wrong form is not an absence.**)*
+
+**SO THE PREMISE HOLDS: both exits are at the origin, and reaching the origin reveals
+them. BUT THE MECHANISM MUST BE PROVEN BEFORE IT IS BUILT, FOR THE SAME REASON §2 WAS
+REFUTED.**
+
+> **`scrollTo(0,0)` MAY BE INERT HERE AND THAT MUST BE MEASURED FIRST.** `html, body`
+> carry **`overflow:hidden`** (`index.html:17`), so **there is nothing to scroll** —
+> `window.scrollTo` moves the **layout** viewport, and under pinch-zoom what has moved is
+> the **visual** viewport. `visualViewport.offsetLeft`/`offsetTop` are **read-only**, and
+> the exits are `position:fixed`, which pins them to the layout viewport rather than the
+> visual one.
+>
+> **This is the third candidate in one work order that would look like a fix and change
+> nothing** — after `maximum-scale` and after §2's panel declarations. **Do not build it
+> on the strength of the premise being true.**
+>
+> **REQUIRED: measure the recovery the way §2's prevention was measured, null result
+> first.** Zoom the real app with `Input.synthesizePinchGesture`, pan the visual viewport
+> away from the exit, run the candidate recovery, and report **whether the exit's rect
+> came back inside the visual viewport**. If `scrollTo(0,0)` does not move it, say so and
+> try the alternatives — `exit.scrollIntoView()`, focusing the exit — **and if none of
+> them works, REPORT THAT AND STOP.** A recovery that cannot fire is worse than an
+> absent one, because it closes the question.
 
 **Assert the property, not the mechanism:** after a synthetic zoom, **the exit's rect
 intersects the visual viewport** and **a tap at its centre still hits it.** A check that
