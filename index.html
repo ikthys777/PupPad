@@ -2047,7 +2047,26 @@ function sendVoice() {
   rec.onstop = function() {
     try { g.out.disconnect(); } catch (e) {}
     if (!chunks.length) { finish(); doSound('error'); return; }
-    var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
+    /* THE SENDER MUST SPEAK THE GRAMMAR ITS OWN GATE ACCEPTS, and it did not.
+     *
+     * MediaRecorder labels its output `audio/webm;codecs=opus`, so FileReader produced
+     * `data:audio/webm;codecs=opus;base64,...` -- and safeMediaUrl's pattern has NO ROOM
+     * FOR A MEDIA-TYPE PARAMETER between the type and `;base64`. Every clip this panel
+     * rendered was refused by its own gate, on the sending device, before it ever reached
+     * the wire. The child got an error beep and nothing crossed. TWO EXPRESSIONS THAT MUST
+     * AGREE: the recorder's MIME label and the gate's grammar, and nothing made them.
+     *
+     * FIXED AT THE SENDER, NOT AT THE GATE, and that direction is deliberate. Widening
+     * safeMediaUrl would widen what this device accepts FROM A STRANGER in order to fix
+     * what it sends -- paying on the untrusted side for a problem on the trusted one. The
+     * parameter is dropped instead: the BYTES are untouched, only the label is normalised,
+     * and the far side sniffs the container rather than trusting the label anyway.
+     *
+     * Check 26 §11 now runs the outgoing payload through safeMediaUrl ITSELF rather than
+     * a regex of its own -- the check that would have caught this is the one that asks
+     * the shipping gate. */
+    var rawType = (chunks[0].type || 'audio/webm').split(';')[0];
+    var blob = new Blob(chunks, { type: /^audio\//i.test(rawType) ? rawType : 'audio/webm' });
     var fr = new FileReader();
     fr.onload = function() {
       /* THE WIRE IS A data: URL, because that is the ONLY shape safeMediaUrl accepts --

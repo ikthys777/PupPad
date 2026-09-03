@@ -462,6 +462,101 @@ try {
       await page.evaluate(() => closeVoice());
     }
   }
+  /* ---- §11. ACCEPTANCE 4 — A SENT CLIP ARRIVES ON A SECOND DEVICE ------
+   *
+   * TWO PAGES, AND NEITHER SIDE IS SIMULATED WHERE IT MATTERS. Page A records through a
+   * fake microphone and calls the real sendVoice, which renders the chosen effect and
+   * produces the bytes it would broadcast. Page B stands a fake CLIENT in front of
+   * joinVoiceChannel — so the app registers ITS OWN inbound handler on it — and that
+   * captured handler is then invoked with page A's actual payload.
+   *
+   * What is stubbed is Supabase's delivery. What is exercised is everything this work
+   * order is responsible for: render, encode, gate, decode, play. Feeding a payload to a
+   * function the check chose would prove nothing about which function the app listens
+   * with; this drives the callback the app itself installed.
+   *
+   * AND THE NEGATIVE CONTROL RUNS THROUGH THE SAME DOOR. A hostile payload delivered to
+   * that same handler must produce nothing. An arrival test with no refusal test cannot
+   * tell "it works" from "it accepts anything". */
+  if (run(11)) {
+    const sent = await page.evaluate(async () => {
+      if (!document.getElementById('voiceOverlay')) openVoice();
+      let captured = null;
+      const realGet = window.getSupabaseClient;
+      window.getSupabaseClient = () => ({
+        channel: () => ({ on() { return this; }, subscribe() { return this; },
+                          send(m) { captured = m && m.payload && m.payload.dataUrl; } }),
+        removeChannel() {},
+      });
+      try {
+        window.voiceChannel = null;
+        joinVoiceChannel();
+        document.getElementById('voiceRecBtn').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        document.getElementById('voiceRecBtn').dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 700));
+        stopVoiceRecording();
+        await new Promise((r) => setTimeout(r, 700));
+        if (!window.__voice.state().stage || window.__voice.state().stage !== 'ready') return { noClip: true };
+        sendVoice();
+        await new Promise((r) => setTimeout(r, 2500));
+        closeVoice();
+        return { url: captured, len: captured ? captured.length : 0,
+                 passesOwnGate: !!(captured && safeMediaUrl(captured, 'audio')) };
+      } finally { window.getSupabaseClient = realGet; }
+    });
+
+    if (sent.noClip) bad('page A never produced a clip to send', 'this section proved nothing');
+    else if (!sent.url) bad('sendVoice broadcast nothing at all',
+      'it rendered, encoded, and then refused its own payload — check the media type against the gate');
+    else if (!sent.passesOwnGate)
+      /* ASKED OF THE SHIPPING GATE, NOT OF A REGEX WRITTEN HERE. The first version of
+       * this line carried its own looser pattern and would have passed the very payload
+       * safeMediaUrl was rejecting — a check disagreeing with the code it checks, in the
+       * direction that hides the defect. */
+      bad('the payload this device SENDS is refused by the gate this device RUNS',
+        `type ${JSON.stringify(sent.url.slice(0, 48))} — every clip is refused on the sending side and nothing ever crosses`);
+    else {
+      ok(`page A rendered and broadcast a ${Math.round(sent.len / 1024)} KiB data:audio payload`);
+
+      const page2 = await ctx.newPage();
+      try {
+        await page2.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+        await page2.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+        const got = await page2.evaluate(async (url) => {
+          let handler = null;
+          const realGet = window.getSupabaseClient;
+          window.getSupabaseClient = () => ({
+            channel: () => ({ on(_t, _f, cb) { handler = cb; return this; }, subscribe() { return this; }, send() {} }),
+            removeChannel() {},
+          });
+          try {
+            window.voiceChannel = null;
+            joinVoiceChannel();
+            if (!handler) return { noHandler: true };
+            const count = () => document.querySelectorAll('body > div').length;
+            /* The negative control FIRST, so a popup that was already there cannot be
+             * mistaken for the real arrival. */
+            const base = count();
+            handler({ payload: { dataUrl: 'https://example.invalid/evil.mp3' } });
+            handler({ payload: { dataUrl: 'data:image/png;base64,iVBORw0KGgo=' } });
+            await new Promise((r) => setTimeout(r, 500));
+            const afterHostile = count();
+            handler({ payload: { dataUrl: url } });
+            await new Promise((r) => setTimeout(r, 1200));
+            return { base, afterHostile, afterReal: count() };
+          } finally { window.getSupabaseClient = realGet; }
+        }, sent.url);
+
+        if (got.noHandler) bad('the second device registered no inbound handler', 'joinVoiceChannel never called .on()');
+        else if (got.afterHostile > got.base) bad('a hostile payload produced a reaction on the second device',
+          'a remote URL and an image offered as audio must both be refused at the gate');
+        else if (got.afterReal <= got.afterHostile) bad('the real clip produced NOTHING on the second device',
+          'it was sent, it passed the gate, and nothing played — acceptance item 4 is not met');
+        else ok('the clip arrives on a second device and plays, while a remote URL and an image-as-audio are both refused at the same door');
+      } finally { await page2.close(); }
+    }
+  }
+
 } finally { await browser.close(); server.close(); }
 
 if (failures.length) {
@@ -470,4 +565,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, four glyphs are distinct, and the slider's knob lands under the finger.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, four glyphs are distinct, the slider's knob lands under the finger, and a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused.`);

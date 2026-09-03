@@ -177,6 +177,39 @@ plan(10, 'the hit test reads the border box while the paint uses the padding box
   expectText: 'from the finger',
 });
 
+/* §11 — THE DEFECT THIS SECTION WAS WRITTEN AND THEN IMMEDIATELY CAUGHT. Restoring the
+ * un-normalised MediaRecorder label puts `;codecs=opus` back between the media type and
+ * `;base64`, which safeMediaUrl's pattern has no room for -- so the device refuses its
+ * own clip before it reaches the wire, and nothing ever crosses. */
+const UNNORMALISE = (s) => sub(s, "    var rawType = (chunks[0].type || 'audio/webm').split(';')[0];\n    var blob = new Blob(chunks, { type: /^audio\\//i.test(rawType) ? rawType : 'audio/webm' });",
+                                    "    var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });");
+
+plan(11, "the sender stops normalising its own media type", {
+  mutate: UNNORMALISE,
+  expectText: 'refused its own payload',
+});
+
+/* THE SECOND BRANCH NEEDS ITS OWN PLANT, because the first one can never reach it:
+ * sendVoice gates before broadcasting, so an unacceptable payload stops there and
+ * `captured` stays null. Remove that guard as well and the bad payload reaches the wire,
+ * which is the arrangement `passesOwnGate` exists for. A BRANCH NEVER SEEN RED IS NOT A
+ * BRANCH -- both of this section's failure paths are demonstrated, not just the reachable
+ * one. */
+plan(11, 'an unacceptable payload reaches the wire because sendVoice stops gating too', {
+  mutate: (s) => sub(UNNORMALISE(s),
+    "      if (safeMediaUrl(url, 'audio')) { broadcastVoice(url); doSound('powerUp'); }\n      else doSound('error');",
+    "      broadcastVoice(url); doSound('powerUp');"),
+  expectText: 'refused by the gate this device RUNS',
+});
+
+/* AND THE ARRIVAL ITSELF -- a gate that refuses everything satisfies every "hostile
+ * payload was refused" assertion in this section while breaking the feature entirely. */
+plan(11, 'the inbound handler drops every payload', {
+  mutate: (s) => sub(s, "    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'audio');\n    if (!url) return;\n    playRemoteVoice(url);",
+                        "    return;"),
+  expectText: 'produced NOTHING on the second device',
+});
+
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);
 const results = [];
 for (const q of QUEUE) results.push(await scenario(q.section, q.label, q.spec));
