@@ -51,7 +51,17 @@ survived.**
    exists to clear `#gameBack`'s hit box. **The panel already solved this with a column
    rule; use the same shape.**
 
-   > **CORRECTED 2026-09-03, AND THE ERROR WAS MINE IN THE PARAGRAPH THAT CONDEMNS IT.**
+   > **CORRECTED TWICE, AND BOTH ERRORS WERE MINE IN THE PARAGRAPH THAT CONDEMNS THEM.**
+   >
+   > **SECOND ERROR: I NAMED THE WRONG ELEMENT ON THE WRONG SURFACE.** This clause cited
+   > `#gameBack`. **`#gameBack` (`index.html:2837`) belongs to `openGames` and does not
+   > exist while the picker is up.** The picker's exit is **`#pickerBack`**
+   > (`index.html:3071`). Same builder, same shape, different surface — and a clearance
+   > rule written against an element that is not on screen is a rule about nothing. *(CC-B
+   > found it while building. The two errors are the same mistake twice: I reasoned about
+   > the picker from what I had learned about the games host.)*
+   >
+   > **FIRST ERROR, BELOW.**
    > This clause first said *"a tile must not intersect x 10–74 — which no viewport can
    > invalidate."* **`x 10–74` is a hardcoded column, which is architecture §5's defect
    > one axis over from the `140px` it replaces.** `makeBackButton` sets
@@ -67,6 +77,34 @@ survived.**
    > built `max(94px, calc(env(safe-area-inset-left) + 84px))`, which holds a uniform
    > 20px margin past the exit's right edge at every inset. **Any expression that
    > mentions a column position as a literal is wrong here.**
+2a. **THE 150px TILE FLOOR MOVES TO 96px, AND THE BASIS GOES AT THE LINE.**
+   *(Ruled 2026-09-03 after check 17 went red on the halved tiles. **This is replacing an
+   unmeasured number with a stated one, not lowering a bar to pass** — and the difference
+   has to be visible in the record or it reads as the latter.)*
+
+   **`demo-picker.mjs:139` is `t.w < 150 || t.h < 150` — a BARE LITERAL with no comment,
+   no derivation and no measurement**, whose failure message asserts *"below a
+   three-year-old's aim."* **It names a property it never established.** The tile CSS
+   carried the same 150 as `min-width`/`min-height`: two expressions holding one
+   unjustified number.
+
+   **What this project HAS measured, and it is all on the low side of 150:**
+
+   | | |
+   |---|---|
+   | `MIN_TOUCH` (`demo-blockpop.mjs:84`) | **44px** — the platform floor, named and used |
+   | Block Pop board cell | **64px** — and **Buddy plays it on the S10+**, confirmed on the device |
+   | the halved tile | **132px** |
+
+   **A picker tile is an EASIER target than a board cell** — isolated, no neighbour
+   inside the gap, no drag, no adjacent legal/illegal distinction. **So a floor of 96px
+   is 1.5× a target he demonstrably hits and better than 2× the platform minimum**, and
+   132 clears it with room, so the check keeps its teeth against a genuinely small tile.
+
+   **Write the basis at the line.** A floor whose justification lives in a work order is
+   the same defect as the one being replaced. And **reconcile the CSS `min-width` /
+   `min-height` to the same source** — one number, one place, or it is the family again.
+
 3. **Keep `align-content:safe` and `justify-content:safe`.** They are what stop a centred
    overflowing grid pushing rows above `scrollTop: 0` where no gesture reaches them.
    **That is invariant 6 — the adversarial pass measured it breaking at the fifth entry
