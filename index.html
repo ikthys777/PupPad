@@ -191,7 +191,7 @@ function doSound(type) {
 
 /* === Button Data === */
 var BTNS_LEFT=[
-  {id:0,label:'Comms',color:'#3B82F6',glow:'#60A5FA',emoji:'\uD83D\uDCE1',sound:'ping',msg:'Signal locked!',bg:'#1e3a8a'},
+  {id:0,label:'Voice',color:'#3B82F6',glow:'#60A5FA',emoji:'\uD83C\uDFA4',sound:'ping',msg:'Say something!',bg:'#1e3a8a'},
   {id:1,label:'Map',color:'#10B981',glow:'#34D399',emoji:'\uD83D\uDDFA',sound:'chime',msg:'Treasure map loaded!',bg:'#064e3b'},
   {id:2,label:'Draw',color:'#F59E0B',glow:'#FBBF24',emoji:'\uD83C\uDFA8',sound:'scan',msg:'Canvas open!',bg:'#78350f'},
   {id:3,label:'Alert',color:'#EF4444',glow:'#F87171',emoji:'\uD83D\uDEA8',sound:'alert',msg:'Alert sent!',bg:'#7f1d1d'}
@@ -1656,6 +1656,690 @@ function closeCamera() {
   if (overlay) overlay.parentNode.removeChild(overlay);
   doSound('blip');
 }
+
+/* ============================ THE VOICE PANEL — PUP-WO-0701 §S2 =============
+ * Record a short clip, change the voice, hear it back, send it. The pieces were all
+ * present: getUserMedia is live in the camera path, ONE AudioContext is live for the
+ * console cues, and the broadcast transport shipped in part 1. This is composition.
+ *
+ * §S.1 RULED THAT NOTHING IS STORED. There is no table, no Cache API entry and no
+ * localStorage key here, and that is the whole retention mechanism: NOTHING DELETES IT
+ * BECAUSE NOTHING STORES IT. A broadcast is transport. The clip lives as an AudioBuffer
+ * in this closure and dies with the page — §1.0a's "process death cannot fail to
+ * happen", one layer out.
+ *
+ * THE PANEL HOLDS THE ONLY IDENTIFYING DATA THIS APP HAS EVER HANDLED. A coordinate is
+ * not identifying; a three-year-old's voice is. Every bound below is designed rather
+ * than lucky, and each one says which failure it is for. */
+var voiceChannel = null;
+var voiceStream = null;
+var voiceRecorder = null;
+var voiceBuffer = null;      /* the raw clip, decoded. Never a base64 string. */
+var voiceNodes = [];         /* every live node, so teardown can disconnect each one. */
+var voiceTimers = [];
+var voiceRaf = 0;
+var voicePreset = 'up';
+var voiceSending = false;
+
+/* THE REQUIREMENT. A three-year-old WILL hold the button down, so the recorder is
+ * stopped by a timer rather than by the child lifting a finger.
+ *
+ * A REQUIREMENT AND ITS BACKSTOP MUST NOT BE THE SAME NUMBER, and these are not even the
+ * same UNIT: this is a duration and `MAX_INBOUND_BYTES` is a size. They fail differently
+ * on purpose. A clip that somehow exceeds 3 MiB is refused at the sink whatever its
+ * length, and a clip that runs long is cut here whatever its size. Deriving one from the
+ * other — bytes = ms * bitrate — would collapse two independent guards into one, which
+ * is this project's most expensive recurring defect wearing a different hat. */
+var MAX_RECORD_MS = 15000;
+
+/* Bounds are a child's ears, exactly as TONE_WAVES / TONE_MAX_VOICES already record for
+ * api.tone. An unclamped playbackRate is a shriek; a feedback gain >= 1 is a delay line
+ * that NEVER DECAYS -- it grows without limit until it clips, and it does not stop when
+ * the clip ends. Every value that reaches an AudioParam goes through clampNum first. */
+var VOICE_RATE_MIN = 0.55, VOICE_RATE_MAX = 2.20;
+var RING_HZ_MIN = 20, RING_HZ_MAX = 220;
+var CAVE_DELAY_MIN = 0.06, CAVE_DELAY_MAX = 0.40;
+var CAVE_FEEDBACK = 0.45;    /* CONSTANT, and never exposed to a slider. See above. */
+var VOICE_MAX_INBOUND = 3;   /* concurrently audible inbound clips, so a flood cannot stack. */
+var voiceInboundLive = 0;
+
+function clampNum(v, lo, hi) {
+  v = Number(v);
+  if (!isFinite(v)) return lo;
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
+/* INVARIANT 1 IS THE ONLY FILTER ON THIS TABLE: a preset a non-reader cannot identify
+ * from its icon is not a preset.
+ *
+ * The directive named these puppy / big dog / robot / cave. Robot and cave are taken as
+ * written. THE FIRST TWO ARE NOT, and the reason is invariant 1 rather than taste: a dog
+ * face and a dog are the same silhouette at 34px, so "puppy" and "big dog" would have
+ * been the one thing the fence forbids -- two presets a non-reader cannot tell apart.
+ * A mouse and an elephant are unmistakable AND they encode the axis itself: the small
+ * animal is the high voice and the big animal is the low one, which is a mapping a
+ * three-year-old already owns and does not have to be taught.
+ *
+ * `label` is for aria only. Nothing here paints a word at a child. */
+var VOICE_PRESETS = [
+  { id:'up',    icon:'\uD83D\uDC2D', label:'Squeaky voice', color:'#FBBF24',
+    min:1.25, max:VOICE_RATE_MAX, def:1.70 },
+  { id:'down',  icon:'\uD83D\uDC18', label:'Rumbly voice',  color:'#60A5FA',
+    min:VOICE_RATE_MIN, max:0.92, def:0.72 },
+  { id:'robot', icon:'\uD83E\uDD16', label:'Robot voice',   color:'#A78BFA',
+    min:RING_HZ_MIN, max:RING_HZ_MAX, def:70 },
+  { id:'cave',  icon:'\uD83C\uDFD4', label:'Cave voice',    color:'#34D399',
+    min:CAVE_DELAY_MIN, max:CAVE_DELAY_MAX, def:0.20 }
+];
+var voiceSlider = {};
+VOICE_PRESETS.forEach(function(p) { voiceSlider[p.id] = p.def; });
+
+function voicePresetById(id) {
+  for (var i = 0; i < VOICE_PRESETS.length; i++) if (VOICE_PRESETS[i].id === id) return VOICE_PRESETS[i];
+  return VOICE_PRESETS[0];
+}
+
+/* ONE EXPRESSION FOR THE GRAPH, USED BY ALL THREE CONSUMERS.
+ *
+ * Live playback, the render that produces the bytes to send, and check 26's offline
+ * spectral measurement ALL call this. That is deliberate and it is the whole reason the
+ * function exists: acceptance item 3 asks for proof that four presets are AUDIBLY
+ * DISTINCT, and a check that measured a SECOND copy of the graph would be agreeing with
+ * itself rather than with the app. A check that recomputes the formula agrees with a
+ * wrong formula. Here the check drives the shipping code.
+ *
+ * `ctx` is a parameter, never a captured global, so an OfflineAudioContext can be handed
+ * in. It builds nodes; it starts nothing except the ring carrier, which must run for the
+ * modulation to exist at all. */
+function buildVoiceGraph(ctx, buffer, presetId, value) {
+  var src = ctx.createBufferSource();
+  src.buffer = buffer;
+  var out = ctx.createGain();
+  out.gain.value = 1;
+  var nodes = [src, out];
+
+  if (presetId === 'up' || presetId === 'down') {
+    /* Resampling: pitch and tempo move together. That IS the chipmunk/monster effect. */
+    src.playbackRate.value = clampNum(value, VOICE_RATE_MIN, VOICE_RATE_MAX);
+    src.connect(out);
+
+  } else if (presetId === 'robot') {
+    /* Ring modulation. The carrier drives the GAIN of a gain node whose own gain rests
+     * at 0, so the output is signal * carrier -- sum and difference sidebands, which is
+     * the metallic voice. Connecting an oscillator to an AudioParam rather than to an
+     * input is the whole trick. */
+    var ring = ctx.createGain();
+    ring.gain.value = 0;
+    var osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = clampNum(value, RING_HZ_MIN, RING_HZ_MAX);
+    osc.connect(ring.gain);
+    src.connect(ring);
+    ring.connect(out);
+    osc.start();
+    nodes.push(ring, osc);
+
+  } else if (presetId === 'cave') {
+    /* Dry + a delay line fed back on itself at a CONSTANT gain below 1, so it decays. */
+    var dly = ctx.createDelay(CAVE_DELAY_MAX);
+    dly.delayTime.value = clampNum(value, CAVE_DELAY_MIN, CAVE_DELAY_MAX);
+    var fb = ctx.createGain();
+    fb.gain.value = CAVE_FEEDBACK;
+    dly.connect(fb); fb.connect(dly);
+    src.connect(out);
+    src.connect(dly); dly.connect(out);
+    nodes.push(dly, fb);
+
+  } else {
+    src.connect(out);
+  }
+  return { source: src, out: out, nodes: nodes };
+}
+
+/* How long the rendered result runs, given that `up`/`down` change the clip's duration
+ * and `cave` adds a decaying tail. Used by the send render and by check 26. */
+function voiceRenderSeconds(buffer, presetId, value) {
+  var d = buffer.duration;
+  if (presetId === 'up' || presetId === 'down') {
+    return d / clampNum(value, VOICE_RATE_MIN, VOICE_RATE_MAX) + 0.05;
+  }
+  if (presetId === 'cave') {
+    return d + clampNum(value, CAVE_DELAY_MIN, CAVE_DELAY_MAX) * 8 + 0.05;
+  }
+  return d + 0.05;
+}
+
+function voiceTrack(node) { voiceNodes.push(node); return node; }
+
+/* Stop and disconnect everything currently making sound, WITHOUT touching audioCtx.
+ *
+ * NEVER audioCtx.close(). It is ONE context shared with every console cue. getAudioCtx()
+ * re-creates on 'closed' so closing it is not fatal -- but every node still connected to
+ * the old context dies with it, including a clip that is mid-playback and including the
+ * cue the close itself is about to try to play. Disconnect nodes; leave the context. */
+function stopVoicePlayback() {
+  if (voiceRaf) { cancelAnimationFrame(voiceRaf); voiceRaf = 0; }
+  voiceNodes.forEach(function(n) {
+    try { if (n.stop) n.stop(); } catch (e) {}
+    try { n.disconnect(); } catch (e) {}
+  });
+  voiceNodes = [];
+}
+
+function clearVoiceTimers() {
+  voiceTimers.forEach(function(t) { clearTimeout(t); });
+  voiceTimers = [];
+}
+
+/* === TRANSPORT — the part-1 mechanism, reused rather than rebuilt ========== */
+function joinVoiceChannel() {
+  var client = getSupabaseClient();
+  if (!client) return;
+  if (voiceChannel) return;
+  voiceChannel = client.channel('puppad-voice', { config: { broadcast: { self: false } } });
+  voiceChannel.on('broadcast', { event: 'clip' }, function(payload) {
+    /* THE GATE FIRST, BEFORE ANY SINK -- part 1's safeMediaUrl, the audio half of which
+     * was built ahead of this panel. There is not a second gate here on purpose: two
+     * expressions that must agree is exactly how a validation drifts out of true. */
+    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'audio');
+    if (!url) return;
+    playRemoteVoice(url);
+  });
+  voiceChannel.subscribe(function(status) {
+    if (status === 'SUBSCRIBED') console.log('Voice channel joined');
+  });
+}
+
+/* Base64 -> bytes -> decodeAudioData. NO NETWORK PRIMITIVE IS TOUCHED AT ALL.
+ *
+ * The directive says gate the string before it reaches `audio.src`, because assignment
+ * still fetches -- that is part 1's finding and it stands. This goes one step further and
+ * never creates the sink: no <audio>, no img, no fetch, no XHR. The gate still runs first
+ * and is still load-bearing, because it is also what bounds the SIZE and pins the TYPE.
+ * Strictly fewer ways for an inbound byte to reach the network than the ruling required. */
+function playRemoteVoice(dataUrl) {
+  if (voiceInboundLive >= VOICE_MAX_INBOUND) return;
+  var comma = dataUrl.indexOf(',');
+  if (comma < 0) return;
+  var bytes;
+  try {
+    var bin = atob(dataUrl.slice(comma + 1));
+    bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  } catch (e) { return; }
+
+  var ctx = getAudioCtx();
+  voiceInboundLive++;
+  var done = false;
+  function release() { if (!done) { done = true; voiceInboundLive--; } }
+  ctx.decodeAudioData(bytes.buffer, function(buf) {
+    var s = ctx.createBufferSource();
+    s.buffer = buf;
+    s.connect(ctx.destination);
+    s.onended = function() { try { s.disconnect(); } catch (e) {} release(); };
+    s.start();
+    showIncomingWoof(buf.duration);
+  }, function() { release(); });
+}
+
+/* A picture, not a word. Same shape as the camera's INCOMING SNAP popup. */
+function showIncomingWoof(seconds) {
+  var popup = document.createElement('div');
+  popup.style.cssText = 'position:fixed;top:12%;left:50%;transform:translateX(-50%);z-index:200;'
+    + 'border-radius:16px;padding:10px 16px;background:#1a1a2e;display:flex;align-items:center;gap:8px;'
+    + 'box-shadow:0 0 30px rgba(167,139,250,0.4),0 0 0 2px rgba(167,139,250,0.3);animation:fadeUp 0.3s ease-out';
+  popup.innerHTML = pawSVG(16, '#A78BFA') + '<span style="font-size:22px">\uD83C\uDF99</span>';
+  document.body.appendChild(popup);
+  setTimeout(function() { if (popup.parentNode) popup.parentNode.removeChild(popup); },
+             Math.min(6000, (seconds || 1) * 1000 + 900));
+}
+
+function broadcastVoice(dataUrl) {
+  /* Degrades exactly as broadcastPhoto does: no channel, no send, no throw. */
+  if (!voiceChannel) return;
+  voiceChannel.send({ type: 'broadcast', event: 'clip',
+                      payload: { dataUrl: dataUrl, did: deviceId } });
+}
+
+/* === THE RECORDER ========================================================= */
+function voiceSetStage(stage) {
+  var overlay = document.getElementById('voiceOverlay');
+  if (!overlay) return;
+  overlay.dataset.stage = stage;
+  var recBtn = document.getElementById('voiceRecBtn');
+  var playBtn = document.getElementById('voicePlayBtn');
+  var sendBtn = document.getElementById('voiceSendBtn');
+  var ready = (stage === 'ready');
+  if (recBtn) {
+    recBtn.style.background = stage === 'recording'
+      ? 'radial-gradient(circle,#FCA5A5,#EF4444)' : 'radial-gradient(circle,#F472B6,#EC4899)';
+  }
+  /* Dimmed, never removed: a control that appears and disappears is a control a child
+   * has to re-find. `pointer-events` is what actually disables it -- opacity alone would
+   * leave a live button that merely looks dead. */
+  [[playBtn, ready], [sendBtn, ready]].forEach(function(pair) {
+    if (!pair[0]) return;
+    pair[0].style.opacity = pair[1] ? '1' : '0.25';
+    pair[0].style.pointerEvents = pair[1] ? 'auto' : 'none';
+  });
+}
+
+/* The countdown. NO TEXT -- a ring that empties, so the child can SEE the end coming.
+ * Driven off Date.now() rather than a frame count, because a dropped frame on a low-end
+ * tablet must not make the ring disagree with the timer that actually stops the
+ * recorder. Two expressions that must agree, closed by having only one clock. */
+function voiceRingTick(startedAt) {
+  var ring = document.getElementById('voiceRing');
+  if (!ring) return;
+  var circ = 2 * Math.PI * 30;
+  function frame() {
+    var el = document.getElementById('voiceRing');
+    if (!el) { voiceRaf = 0; return; }
+    var t = (Date.now() - startedAt) / MAX_RECORD_MS;
+    if (t < 0) t = 0; if (t > 1) t = 1;
+    el.style.strokeDashoffset = String(circ * t);
+    if (t >= 1) { voiceRaf = 0; return; }
+    voiceRaf = requestAnimationFrame(frame);
+  }
+  ring.style.strokeDasharray = String(circ);
+  ring.style.strokeDashoffset = '0';
+  voiceRaf = requestAnimationFrame(frame);
+}
+
+function startVoiceRecording() {
+  if (voiceRecorder) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    doSound('error'); return;
+  }
+  stopVoicePlayback();
+  doSound('ping');
+  navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(function(stream) {
+    /* THE RACE THIS WORK ORDER CARES MOST ABOUT. getUserMedia resolves ASYNCHRONOUSLY,
+     * so the panel can be closed -- or the permission prompt answered after closing it --
+     * between the request and the grant. closeVoice cannot stop tracks that did not exist
+     * when it ran, so the ONLY place this can be caught is here, on arrival: if the panel
+     * is gone, stop every track immediately and return. Without this, one tap on the
+     * microphone followed by a fast exit leaves a LIVE MICROPHONE with no panel attached
+     * to it and nothing left that holds a reference to turn it off. */
+    if (!document.getElementById('voiceOverlay')) {
+      stream.getTracks().forEach(function(t) { t.stop(); });
+      return;
+    }
+    voiceStream = stream;
+    var chunks = [];
+    var rec;
+    try { rec = new MediaRecorder(stream); }
+    catch (e) { stream.getTracks().forEach(function(t) { t.stop(); }); voiceStream = null; doSound('error'); return; }
+    voiceRecorder = rec;
+    rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = function() {
+      voiceRecorder = null;
+      /* Tracks are released the moment the clip is captured, not merely at teardown.
+       * The shortest live-microphone window that still records is the correct one. */
+      if (voiceStream) { voiceStream.getTracks().forEach(function(t) { t.stop(); }); voiceStream = null; }
+      if (voiceRaf) { cancelAnimationFrame(voiceRaf); voiceRaf = 0; }
+      if (!chunks.length) { voiceSetStage('empty'); return; }
+      var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
+      blob.arrayBuffer().then(function(ab) {
+        return getAudioCtx().decodeAudioData(ab);
+      }).then(function(buf) {
+        if (!document.getElementById('voiceOverlay')) return;
+        voiceBuffer = buf;
+        voiceSetStage('ready');
+        doSound('chime');
+      }).catch(function() { voiceSetStage('empty'); doSound('error'); });
+    };
+    rec.start();
+    voiceSetStage('recording');
+    voiceRingTick(Date.now());
+    /* THE HARD STOP. A three-year-old will hold the button; the timer does not care. */
+    voiceTimers.push(setTimeout(function() { stopVoiceRecording(); }, MAX_RECORD_MS));
+  }).catch(function() { doSound('error'); });
+}
+
+function stopVoiceRecording() {
+  if (!voiceRecorder) return;
+  try { voiceRecorder.stop(); } catch (e) { voiceRecorder = null; }
+}
+
+/* === PLAYBACK — the effect is applied HERE, never at capture =============== */
+function playVoice() {
+  if (!voiceBuffer) return;
+  stopVoicePlayback();
+  var ctx = getAudioCtx();
+  var g = buildVoiceGraph(ctx, voiceBuffer, voicePreset, voiceSlider[voicePreset]);
+  g.out.connect(ctx.destination);
+  g.nodes.forEach(voiceTrack);
+  voiceTrack(g.out);
+  g.source.start();
+}
+
+/* === SEND: RENDER AUDIO, NEVER PARAMETERS ================================= */
+function sendVoice() {
+  if (!voiceBuffer || voiceSending) return;
+  /* Broadcasting {preset, value} and letting the far device apply it would put a
+   * STRANGER'S NUMBERS into a live AudioContext on Buddy's device -- the precise hazard
+   * api.tone's clamp comment already names -- and it would open a SECOND inbound surface
+   * beside safeMediaUrl, when the whole ruling is that the transport is one mechanism.
+   * So the effect is applied here and only BYTES go on the wire. */
+  var ctx = getAudioCtx();
+  if (!ctx.createMediaStreamDestination || !window.MediaRecorder) { doSound('error'); return; }
+  voiceSending = true;
+  var sendBtn = document.getElementById('voiceSendBtn');
+  if (sendBtn) sendBtn.style.opacity = '0.4';
+
+  var dest = ctx.createMediaStreamDestination();
+  var g = buildVoiceGraph(ctx, voiceBuffer, voicePreset, voiceSlider[voicePreset]);
+  g.out.connect(dest);
+  g.nodes.forEach(voiceTrack);
+  voiceTrack(g.out);
+
+  var chunks = [];
+  var rec;
+  try { rec = new MediaRecorder(dest.stream); }
+  catch (e) { voiceSending = false; voiceSetStage('ready'); doSound('error'); return; }
+
+  function finish() {
+    voiceSending = false;
+    voiceSetStage('ready');
+  }
+  rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = function() {
+    try { g.out.disconnect(); } catch (e) {}
+    if (!chunks.length) { finish(); doSound('error'); return; }
+    var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
+    var fr = new FileReader();
+    fr.onload = function() {
+      /* THE WIRE IS A data: URL, because that is the ONLY shape safeMediaUrl accepts --
+       * two representations on purpose. Local playback never becomes a string at all. */
+      var url = typeof fr.result === 'string' ? fr.result : '';
+      if (safeMediaUrl(url, 'audio')) { broadcastVoice(url); doSound('powerUp'); }
+      else doSound('error');
+      finish();
+    };
+    fr.onerror = function() { finish(); doSound('error'); };
+    fr.readAsDataURL(blob);
+  };
+  /* Real-time re-record, which the directive rules acceptable at a 15-second cap. */
+  rec.start();
+  g.source.start();
+  var ms = voiceRenderSeconds(voiceBuffer, voicePreset, voiceSlider[voicePreset]) * 1000 + 150;
+  voiceTimers.push(setTimeout(function() { try { rec.stop(); } catch (e) { finish(); } }, ms));
+}
+
+/* === THE PANEL ============================================================ */
+var VOICE_Z = 80;
+
+/* THE SLIDER IS THE POINT, NOT A GARNISH -- Scotty, from watching him: he likes moving a
+ * control and hearing what changed. So it is live DURING playback: dragging restarts the
+ * clip through the new graph rather than waiting for the next press.
+ *
+ * THE GEOMETRY IS TRANSFERRED FROM buildSlider, NOT GUESSED, and the transfer is the
+ * mechanism rather than the numbers:
+ *   - the whole 50px bar is the target, because a three-year-old cannot catch a thumb;
+ *   - the hit test reads clientWidth (THE PADDING BOX), which is the box the percentage
+ *     paint resolves against -- reading getBoundingClientRect there is what once put the
+ *     knob up to 4px from where a tap at that same position landed;
+ *   - the ring is an INSET SHADOW, not a border, so there is only ever ONE box;
+ *   - one pointer owns the track, so a second finger cannot fight the first.
+ *
+ * IT IS A SECOND COPY AND THAT IS A KNOWN COST, STATED RATHER THAN HIDDEN. buildSlider
+ * is a closure inside mountControlPanel, bound to that panel's seam, syncs and write --
+ * hoisting it would mean refactoring PUP-WO-0301's reviewed surface from inside a voice
+ * work order, which is a worse trade than one duplicated widget. What must not drift is
+ * the CLIENTWIDTH RULE, and it cannot drift silently: check 26 asserts the painted
+ * position against the value on this slider directly. */
+function buildVoiceSlider(preset) {
+  var track = document.createElement('div');
+  track.id = 'voiceSlider';
+  track.setAttribute('role', 'slider');
+  track.setAttribute('tabindex', '0');
+  track.setAttribute('aria-label', preset.label);
+  track.setAttribute('aria-valuemin', String(preset.min));
+  track.setAttribute('aria-valuemax', String(preset.max));
+  track.style.cssText = 'position:relative;flex:1 1 auto;height:50px;border-radius:14px;'
+    + 'background:rgba(255,255,255,0.10);box-shadow:inset 0 0 0 2px rgba(255,255,255,0.20);'
+    + 'overflow:hidden;touch-action:none;cursor:pointer;min-width:0';
+  var fill = document.createElement('div');
+  fill.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:0;pointer-events:none;'
+    + 'background:linear-gradient(90deg,' + preset.color + '55,' + preset.color + ')';
+  var knob = document.createElement('div');
+  knob.style.cssText = 'position:absolute;top:5px;bottom:5px;width:12px;border-radius:7px;'
+    + 'background:#ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.7);pointer-events:none;'
+    + 'margin-left:-6px;left:0';
+  track.appendChild(fill); track.appendChild(knob);
+
+  function paint() {
+    var p = voicePresetById(voicePreset);
+    var v = clampNum(voiceSlider[p.id], p.min, p.max);
+    var t = (v - p.min) / (p.max - p.min);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    fill.style.width = (t * 100) + '%';
+    knob.style.left = (t * 100) + '%';
+    fill.style.background = 'linear-gradient(90deg,' + p.color + '55,' + p.color + ')';
+    track.setAttribute('aria-label', p.label);
+    track.setAttribute('aria-valuemin', String(p.min));
+    track.setAttribute('aria-valuemax', String(p.max));
+    track.setAttribute('aria-valuenow', String(v));
+  }
+  track.__paint = paint;
+
+  function valueAt(clientX) {
+    var p = voicePresetById(voicePreset);
+    var r = track.getBoundingClientRect();
+    var pad = track.clientWidth;                 /* the padding box, by definition. */
+    var edge = (r.width - pad) / 2;
+    var t = pad > 0 ? (clientX - r.left - edge) / pad : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return Number((p.min + t * (p.max - p.min)).toFixed(6));
+  }
+
+  var dragging = -1;
+  track.addEventListener('pointerdown', function(e) {
+    if (dragging !== -1) return;
+    dragging = e.pointerId;
+    try { track.setPointerCapture(e.pointerId); } catch (err) {}
+    voiceSlider[voicePreset] = valueAt(e.clientX);
+    paint();
+  });
+  track.addEventListener('pointermove', function(e) {
+    if (e.pointerId !== dragging) return;
+    voiceSlider[voicePreset] = valueAt(e.clientX);
+    paint();
+  });
+  function endDrag(e) {
+    if (e.pointerId !== dragging) return;
+    dragging = -1;
+    try { track.releasePointerCapture(e.pointerId); } catch (err) {}
+    /* Hear it immediately. This is the whole reason the slider exists. */
+    if (voiceBuffer) playVoice();
+  }
+  track.addEventListener('pointerup', endDrag);
+  track.addEventListener('pointercancel', endDrag);
+  paint();
+  return track;
+}
+
+function openVoice() {
+  voicePreset = 'up';
+  voiceBuffer = null;
+  voiceSending = false;
+  joinVoiceChannel();
+  doSound('ping');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'voiceOverlay';
+  overlay.dataset.stage = 'empty';
+  /* touch-action:none -- PUP-WO-0603 §2, defence in depth on a full-bleed container that
+   * never scrolls, exactly as cameraOverlay carries it. */
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;'
+    + 'z-index:' + VOICE_Z + ';display:flex;flex-direction:column;align-items:center;'
+    + 'justify-content:center;gap:10px;font-family:Trebuchet MS,sans-serif;touch-action:none';
+
+  var title = document.createElement('div');
+  title.style.cssText = 'display:flex;align-items:center;gap:8px;position:absolute;top:8px;left:50%;transform:translateX(-50%)';
+  title.innerHTML = pawSVG(14, '#A78BFA')
+    + '<span style="color:#A78BFA;font-size:11px;font-weight:700;letter-spacing:1px">PAW TALK</span>';
+  overlay.appendChild(title);
+
+  /* PRESETS. Four glyphs, no words, sized for a three-year-old's aim. */
+  var presetRow = document.createElement('div');
+  presetRow.style.cssText = 'display:flex;gap:14px;align-items:center;justify-content:center';
+  var sliderEl = null;
+  VOICE_PRESETS.forEach(function(p) {
+    var tile = document.createElement('button');
+    tile.className = 'voice-preset';
+    tile.dataset.preset = p.id;
+    tile.setAttribute('aria-label', p.label);
+    tile.style.cssText = 'width:76px;height:76px;border-radius:18px;border:0;cursor:pointer;'
+      + 'display:flex;align-items:center;justify-content:center;font-size:38px;line-height:1;'
+      + 'background:rgba(255,255,255,0.05);box-shadow:inset 0 0 0 2px transparent;padding:0';
+    tile.textContent = p.icon;
+    /* wireTap, never bare click. A synthetic click is not a finger: multi-touch and a tap
+     * that slides emit no click at all, and this panel is pressed with two hands.
+     * `repeat` because a preset is chosen over and over -- the panel survives the press. */
+    wireTap(tile, function() {
+      voicePreset = p.id;
+      paintPresets();
+      if (sliderEl && sliderEl.__paint) sliderEl.__paint();
+      doSound('tap');
+      if (voiceBuffer) playVoice();
+    }, { repeat: true });
+    presetRow.appendChild(tile);
+  });
+  overlay.appendChild(presetRow);
+
+  function paintPresets() {
+    var els = overlay.querySelectorAll('.voice-preset');
+    for (var i = 0; i < els.length; i++) {
+      var on = els[i].dataset.preset === voicePreset;
+      var p = voicePresetById(els[i].dataset.preset);
+      els[i].style.background = on ? p.color + '2A' : 'rgba(255,255,255,0.05)';
+      els[i].style.boxShadow = on ? 'inset 0 0 0 3px ' + p.color : 'inset 0 0 0 2px transparent';
+      els[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  }
+  paintPresets();
+
+  var sliderRow = document.createElement('div');
+  sliderRow.style.cssText = 'display:flex;align-items:center;gap:10px;width:min(560px,86vw)';
+  sliderEl = buildVoiceSlider(voicePresetById(voicePreset));
+  sliderRow.appendChild(sliderEl);
+  overlay.appendChild(sliderRow);
+
+  /* TRANSPORT ROW: play — record — send. Record is centre and biggest; it is the one
+   * control the child reaches for first. */
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:26px;justify-content:center';
+
+  var playBtn = document.createElement('button');
+  playBtn.id = 'voicePlayBtn';
+  playBtn.setAttribute('aria-label', 'Hear it back');
+  playBtn.style.cssText = 'width:64px;height:64px;border-radius:50%;border:0;cursor:pointer;'
+    + 'background:rgba(52,211,153,0.14);box-shadow:inset 0 0 0 3px #34D399;'
+    + 'display:flex;align-items:center;justify-content:center;padding:0';
+  playBtn.innerHTML = '<div style="width:0;height:0;border-left:22px solid #34D399;'
+    + 'border-top:14px solid transparent;border-bottom:14px solid transparent;margin-left:6px;pointer-events:none"></div>';
+  wireTap(playBtn, function() { playVoice(); }, { repeat: true });
+
+  var recWrap = document.createElement('div');
+  recWrap.style.cssText = 'position:relative;width:92px;height:92px;flex-shrink:0';
+  /* The countdown ring: an SVG stroke that empties. No text, no number, no word. */
+  recWrap.innerHTML = '<svg width="92" height="92" viewBox="0 0 92 92" '
+    + 'style="position:absolute;top:0;left:0;pointer-events:none;transform:rotate(-90deg)">'
+    + '<circle cx="46" cy="46" r="30" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="5"></circle>'
+    + '<circle id="voiceRing" cx="46" cy="46" r="30" fill="none" stroke="#F472B6" stroke-width="5" '
+    + 'stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5"></circle></svg>';
+  var recBtn = document.createElement('button');
+  recBtn.id = 'voiceRecBtn';
+  recBtn.setAttribute('aria-label', 'Record');
+  recBtn.style.cssText = 'position:absolute;top:14px;left:14px;width:64px;height:64px;'
+    + 'border-radius:50%;border:0;cursor:pointer;padding:0;font-size:30px;line-height:1;'
+    + 'background:radial-gradient(circle,#F472B6,#EC4899);box-shadow:0 4px 12px rgba(0,0,0,0.5);'
+    + 'display:flex;align-items:center;justify-content:center';
+  recBtn.textContent = '\uD83C\uDFA4';
+  /* ONE CONTROL, TWO MEANINGS, AND THE STATE DECIDES -- not a second button the child
+   * has to find while a red ring is counting down. Press to start; press to stop early. */
+  wireTap(recBtn, function() {
+    if (voiceRecorder) stopVoiceRecording(); else startVoiceRecording();
+  }, { repeat: true });
+  recWrap.appendChild(recBtn);
+
+  var sendBtn = document.createElement('button');
+  sendBtn.id = 'voiceSendBtn';
+  sendBtn.setAttribute('aria-label', 'Send it');
+  sendBtn.style.cssText = 'width:64px;height:64px;border-radius:50%;border:0;cursor:pointer;'
+    + 'background:rgba(96,165,250,0.14);box-shadow:inset 0 0 0 3px #60A5FA;padding:0;'
+    + 'display:flex;align-items:center;justify-content:center;font-size:28px;line-height:1';
+  sendBtn.textContent = '\uD83D\uDCE1';
+  wireTap(sendBtn, function() { sendVoice(); }, { repeat: true });
+
+  row.appendChild(playBtn); row.appendChild(recWrap); row.appendChild(sendBtn);
+  overlay.appendChild(row);
+
+  /* The shell's own exit: a 64px hit box, already wireTap'd, and appended INSIDE the
+   * overlay -- as the picker does -- so removing the panel cannot leave the exit behind.
+   * `position:fixed` means it takes no part in the flex layout above it.
+   * ONE TAP BACK FROM EVERY STATE, including mid-record and mid-playback: closeVoice does
+   * not care which state it is called in, which is why there is only one of it. */
+  var back = makeBackButton(VOICE_Z + 1, function() { closeVoice(); });
+  back.id = 'voiceBack';
+  overlay.appendChild(back);
+  document.body.appendChild(overlay);
+  voiceSetStage('empty');
+}
+
+/* === TEARDOWN — the flag-and-stop surface this work order cares most about == */
+function closeVoice() {
+  /* ORDER MATTERS AND IT IS NOT ALPHABETICAL. The recorder is stopped FIRST so its
+   * onstop cannot resurrect a track after the tracks are gone, and the tracks are stopped
+   * UNCONDITIONALLY AFTERWARDS rather than inside that handler -- because a recorder that
+   * never started, or one that threw, still leaves a live stream behind. */
+  if (voiceRecorder) { try { voiceRecorder.stop(); } catch (e) {} voiceRecorder = null; }
+  if (voiceStream) {
+    /* Individually, exactly as startCameraStream does. Dropping the reference does NOT
+     * turn a microphone off; only stopping each track does, and the recording indicator
+     * stays lit until it happens. */
+    voiceStream.getTracks().forEach(function(t) { t.stop(); });
+    voiceStream = null;
+  }
+  clearVoiceTimers();
+  stopVoicePlayback();          /* disconnects nodes. NEVER audioCtx.close(). */
+  voiceBuffer = null;           /* the clip dies with the panel -- §S.1. */
+  voiceSending = false;
+  voiceInboundLive = 0;
+  releaseChannel(voiceChannel);
+  voiceChannel = null;
+  var overlay = document.getElementById('voiceOverlay');
+  if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  doSound('blip');
+}
+
+/* The check drives the shipping graph rather than a copy of it — see buildVoiceGraph. */
+window.__voice = {
+  buildGraph: buildVoiceGraph,
+  renderSeconds: voiceRenderSeconds,
+  presets: VOICE_PRESETS,
+  clamp: clampNum,
+  MAX_RECORD_MS: MAX_RECORD_MS,
+  state: function() {
+    return {
+      open: !!document.getElementById('voiceOverlay'),
+      stage: (document.getElementById('voiceOverlay') || {}).dataset
+             ? document.getElementById('voiceOverlay').dataset.stage : null,
+      recorder: !!voiceRecorder,
+      liveTracks: voiceStream ? voiceStream.getTracks().filter(function(t) {
+        return t.readyState === 'live';
+      }).length : 0,
+      nodes: voiceNodes.length,
+      timers: voiceTimers.length,
+      channel: !!voiceChannel,
+      preset: voicePreset,
+      value: voiceSlider[voicePreset],
+      ctxState: audioCtx ? audioCtx.state : 'none'
+    };
+  }
+};
 
 /* === Treasure Map System === */
 var mapChannel = null;
@@ -3410,6 +4094,11 @@ function attachEvents() {
       if (!btn) return;
       doSound(btn.sound);
       if (btn.id === 3) { triggerAlertEffect(); pushAlert(); }
+      /* PUP-WO-0701 §S2.1. Comms was decorative -- doSound plus a toast -- so this
+       * makes an existing button real rather than adding a ninth. The pad is 4+4 at a
+       * 412px CSS viewport and a ninth button re-flows the grid on the only device that
+       * counts. Returns early exactly as Map, Draw and Camera do. */
+      if (btn.id === 0) { openVoice(); return; }
       if (btn.id === 1) { openTreasureMap(); return; }
       if (btn.id === 2) { openCanvas(); return; }
       if (btn.id === 6) { openCamera(); return; }

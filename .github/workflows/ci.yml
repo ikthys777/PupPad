@@ -550,6 +550,26 @@ jobs:
         # from the child's phone; unregistered, a future change reopens it in silence.
         run: node .github/ci/demo-inbound.mjs .
 
+      - name: "Check 26 — the voice panel"
+        # PUP-WO-0701 §S2, acceptance items 3, 6, 7 and 8. Four of these are the work
+        # order's flag-and-stop surface, and the one it names as mattering most is a live
+        # microphone that outlives the panel — which cannot be read out of closeVoice,
+        # because a track is stopped or it is not and only readyState knows.
+        #
+        # §2 renders four presets through THE SHIPPING GRAPH BUILDER rather than a copy,
+        # with the null result first: a preset compared against itself must come out
+        # identical, because an instrument that has never reported "same" has not shown it
+        # can tell the difference.
+        run: node .github/ci/demo-voice.mjs .
+
+      - name: "Check 26 controls — every section of the voice check, shown red"
+        # 15 planted defects, each REMOVING A BEHAVIOUR rather than editing a string the
+        # assertion happens to read. Three of them found defects in the check itself
+        # before they found anything else: an unclamped value that THREW instead of
+        # failing, a closed AudioContext the shell silently healed, and a slider
+        # assertion that compared the paint against the value — the same number twice.
+        run: node .github/ci/demo-voice-controls.mjs
+
       - name: "Check 25 — every demonstration in .github/ci/ actually runs"
         # PUP-WO-0701 §6. FOUR check files reached main across three work orders without
         # ever being added here; each was written with its controls and shown red, and
