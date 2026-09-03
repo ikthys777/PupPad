@@ -967,6 +967,47 @@ try {
         return { peak, max: window.VOICE_MAX_INBOUND };
       } finally { ctx.decodeAudioData = realDecode; closeVoice(); }
     });
+    /* AND THE COUNTER MUST SURVIVE A TEARDOWN, WHICH THIS SECTION'S OWN SETUP WAS HIDING.
+     *
+     * §16 opened with `closeVoice(); openVoice();` — and that closeVoice is exactly what
+     * resets voiceDecoding. So the flood above always ran from a freshly zeroed counter,
+     * which is not the state the app is in after the child has used it. A decode in flight
+     * at teardown used to decrement a counter closeVoice had already zeroed, leaving it
+     * NEGATIVE for the life of the page and the cap permanently loosened.
+     *
+     * The probe is the ordinary gesture: a clip arrives, the child taps back while it is
+     * still decoding. Then the counter is read directly. */
+    const drift = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const url = 'data:audio/webm;base64,' + 'A'.repeat(4096);
+      for (let cycle = 0; cycle < 3; cycle++) {
+        openVoice();
+        for (let i = 0; i < 3; i++) playRemoteVoice(url);
+        /* Back, WHILE the decodes are in flight — no await before this. */
+        closeVoice();
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      const after = window.__voice.state().decoding;
+      openVoice();
+      let peak = 0, live = 0;
+      const ctx = getAudioCtx();
+      const realDecode = ctx.decodeAudioData.bind(ctx);
+      ctx.decodeAudioData = function (b, ok2, err) {
+        live++; if (live > peak) peak = live;
+        const done = () => { live--; };
+        return realDecode(b, (x) => { done(); if (ok2) ok2(x); }, (e) => { done(); if (err) err(e); });
+      };
+      try {
+        for (let i = 0; i < 20; i++) playRemoteVoice(url);
+        await new Promise((r) => setTimeout(r, 600));
+        return { counter: after, peak, max: window.VOICE_MAX_INBOUND };
+      } finally { ctx.decodeAudioData = realDecode; closeVoice(); }
+    });
+    if (drift.counter !== 0) bad(`the concurrent-decode counter drifted to ${drift.counter} across three teardowns`,
+      'closeVoice zeroes it for the whole generation, so a decode still in flight decrements a counter that no longer owes it anything — and the cap loosens permanently');
+    else if (drift.peak > drift.max) bad(`after teardowns, ${drift.peak} decodes ran at once against a cap of ${drift.max}`);
+    else ok(`the decode counter returns to 0 across teardowns and the cap still holds (${drift.peak} concurrent, cap ${drift.max})`);
+
     if (flood.peak === 0) bad('no decode was ever started', 'this section proved nothing');
     else if (flood.peak > flood.max) bad(`${flood.peak} decodes ran at once against a cap of ${flood.max}`,
       'the guard counted clips that were SOUNDING, and nothing joins that list until a decode SUCCEEDS — so a burst all read zero, all passed, and all allocated. The multiplier is the message rate, which nothing bounds');
@@ -1009,6 +1050,45 @@ try {
       `${lock.before} playback node(s) before, ${lock.after} after — the old clip plays out of the speakers INTO the open microphone, and cancelling the animation frame freezes the countdown ring while the 15s timer keeps running`);
     else if (lock.pe !== 'none') bad('the preset tiles are still live during a recording', `pointer-events is ${lock.pe}`);
     else ok(`the preset tiles and slider are inert while the microphone is open (pointer-events ${lock.pe}, no playback started)`);
+
+    /* AND THE SAME INCOHERENCE ON A DIFFERENT EDGE. A capture that fails must not paint
+     * 'empty' over a clip that is STILL THERE: play and send dim on the stage while the
+     * preset tiles ask only whether a buffer exists, so the panel says "nothing recorded"
+     * and a tile still plays the previous clip. The getUserMedia catch already asked
+     * `voiceBuffer ? 'ready' : 'empty'`; the two recording-failure transitions did not. */
+    const failed = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const b = document.getElementById('voiceRecBtn');
+      const tap = (el) => { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+                            el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); };
+      tap(b); await new Promise((r) => setTimeout(r, 900));
+      tap(b); await new Promise((r) => setTimeout(r, 900));
+      if (window.__voice.state().stage !== 'ready') return { noClip: true };
+      const kept = window.voiceBuffer;
+      const ctx = getAudioCtx();
+      const realDecode = ctx.decodeAudioData.bind(ctx);
+      ctx.decodeAudioData = () => Promise.reject(new Error('planted decode failure'));
+      try {
+        tap(b); await new Promise((r) => setTimeout(r, 700));
+        tap(b); await new Promise((r) => setTimeout(r, 1200));
+        const st = window.__voice.state();
+        const tile = document.querySelectorAll('.voice-preset')[1];
+        const pe = getComputedStyle(tile).pointerEvents;
+        const before = window.__voice.state().nodes;
+        tap(tile);
+        await new Promise((r) => setTimeout(r, 250));
+        const after = window.__voice.state().nodes;
+        return { stage: st.stage, stillHave: window.voiceBuffer === kept, pe, before, after };
+      } finally { ctx.decodeAudioData = realDecode; closeVoice(); }
+    });
+    if (failed.noClip) bad('no first clip for the failed-decode probe', 'this section proved nothing');
+    else if (!failed.stillHave) ok('a failed decode discards the previous clip outright — nothing to be incoherent about');
+    else if (failed.stage === 'empty' && failed.after > failed.before)
+      bad('after a failed capture the panel says EMPTY and a preset still plays the old clip',
+        `stage=${failed.stage}, tiles pointer-events=${failed.pe}, playback nodes ${failed.before} -> ${failed.after} — the stage and the tiles disagree about whether a clip exists`);
+    else if (failed.stage === 'empty')
+      bad('after a failed capture the panel says EMPTY while a clip is still loaded', `voiceBuffer survived but stage=${failed.stage}`);
+    else ok(`a failed capture leaves the panel coherent — stage ${failed.stage} with the previous clip still loaded`);
   }
 
   /* ---- §18. THE CLIP DIES WITH THE PANEL -- §S.1, on identifying data --- */
@@ -1104,6 +1184,111 @@ try {
     else ok('a client without removeChannel falls back to unsubscribe — the fallback is an else, not a catch');
   }
 
+  /* ---- §21. A REJECTION CROSSING A TEARDOWN --------------------------- */
+  if (run(21)) {
+    /* §15 stages a race in which every grant SUCCEEDS, so the `.catch` half of the
+     * generation guard was load-bearing and asserted by nothing: deleting it left the
+     * whole suite green while reintroducing a live orphaned microphone. And a REJECTION is
+     * the likelier first-use path -- the adult reads the bubble and denies it. */
+    const r = await page.evaluate(async () => {
+      const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      const all = [];
+      let nth = 0;
+      navigator.mediaDevices.getUserMedia = (c) => {
+        const which = nth++;
+        if (which === 0) {
+          /* A: denied, slowly — the adult looking at the permission bubble. */
+          return new Promise((_res, rej) => setTimeout(() => rej(new Error('NotAllowedError')), 700));
+        }
+        return real(c).then((st) => { all.push(st); return new Promise((res) => setTimeout(() => res(st), 2600)); });
+      };
+      const tap = () => {
+        const b = document.getElementById('voiceRecBtn');
+        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      };
+      try {
+        closeVoice(); openVoice();
+        tap();                                   /* A — will be denied at t=700 */
+        await new Promise((r2) => setTimeout(r2, 80));
+        closeVoice(); openVoice();
+        tap();                                   /* B — in flight */
+        await new Promise((r2) => setTimeout(r2, 900));  /* A's REJECTION lands here */
+        tap();                                   /* C — only issues if the rejection unlocked the guard */
+        await new Promise((r2) => setTimeout(r2, 3200));
+        closeVoice();
+        await new Promise((r2) => setTimeout(r2, 600));
+        return { requests: nth, granted: all.length,
+                 live: all.reduce((n, st) => n + st.getTracks().filter((t) => t.readyState === 'live').length, 0) };
+      } finally { navigator.mediaDevices.getUserMedia = real; }
+    });
+    if (r.requests < 2) bad(`the rejection race could not be staged — ${r.requests} request(s)`, 'this section proved nothing');
+    else if (r.live > 0) bad(`${r.live} microphone track(s) LIVE after a REJECTED grant crossed a teardown`,
+      `${r.requests} requests issued — a denied permission belonging to a dead panel cleared the live panel's guard, which is the likeliest first-use path of all`);
+    else ok(`a rejected grant belonging to a torn-down panel leaves no live track (${r.requests} requests, ${r.granted} granted)`);
+  }
+
+  /* ---- §22. A CLIP MUST NOT BE SENT BY THE PANEL THAT REPLACED ITS OWNER - */
+  if (run(22)) {
+    /* §13 asserts the render's recorder is stopped; §18 covers the RECORD decode chain.
+     * Nothing asserted the send's own late continuation, and deleting that one guard
+     * broadcast a dead panel's clip on the new panel's channel while the suite stayed
+     * green. This is the child's recorded voice leaving the device after he has left. */
+    const sent = await page.evaluate(async () => {
+      const sends = [];
+      const realGet = window.getSupabaseClient;
+      window.getSupabaseClient = () => ({
+        channel: () => ({ on() { return this; }, subscribe() { return this; },
+                          send(m) { sends.push(m && m.payload && m.payload.dataUrl); } }),
+        removeChannel() {},
+      });
+      /* Hold the FileReader open so the teardown lands inside the read — the window the
+       * guard exists for, made deterministic rather than raced for. */
+      const realRead = FileReader.prototype.readAsDataURL;
+      /* HELD UNTIL EXPLICITLY RELEASED, not for a guessed number of milliseconds. The
+       * first version delayed the read by 700ms and closed the panel at 2200ms — so the
+       * read finished FIRST and the section flagged an ordinary, correct send. A timing
+       * probe that races the thing it is timing measures nothing. */
+      let release = null;
+      FileReader.prototype.readAsDataURL = function (blob) {
+        if (release) return realRead.call(this, blob);
+        release = () => realRead.call(this, blob);
+        return undefined;
+      };
+      try {
+        closeVoice(); openVoice(); window.voiceChannel = null; joinVoiceChannel();
+        const b = document.getElementById('voiceRecBtn');
+        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 1300));
+        stopVoiceRecording();
+        await new Promise((r) => setTimeout(r, 800));
+        if (window.__voice.state().stage !== 'ready') return { noClip: true };
+        sendVoice();
+        /* Wait until the render's bytes are actually sitting in the reader. */
+        for (let i = 0; i < 60 && !release; i++) await new Promise((r) => setTimeout(r, 100));
+        if (!release) return { neverRead: true };
+        const sentBeforeLeaving = sends.length;
+        closeVoice();                                     /* the child leaves */
+        openVoice(); window.voiceChannel = null; joinVoiceChannel();
+        release();                                        /* only now does the read finish */
+        await new Promise((r) => setTimeout(r, 800));
+        const out = { sends: sends.length, sentBeforeLeaving };
+        closeVoice();
+        return out;
+      } finally {
+        window.getSupabaseClient = realGet;
+        FileReader.prototype.readAsDataURL = realRead;
+      }
+    });
+    if (sent.noClip) bad('no clip was produced', 'this section proved nothing');
+    else if (sent.neverRead) bad('the render never reached the FileReader', 'this section proved nothing');
+    else if (sent.sentBeforeLeaving > 0) bad('the clip was already broadcast before the teardown', 'the probe raced the thing it was timing and proved nothing');
+    else if (sent.sends > 0) bad(`a clip was BROADCAST by the panel that replaced the one that recorded it (${sent.sends} send(s))`,
+      'the child left, and his voice went out anyway — against "the clip dies with the panel", on the only identifying data this app handles');
+    else ok('a clip whose owner was torn down mid-send is never broadcast by the panel that replaced it');
+  }
+
 } finally { await browser.close(); server.close(); }
 
 if (failures.length) {
@@ -1112,4 +1297,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, the four preset glyphs are distinct code points (whether they render distinctly is UNRESOLVED wherever the pad's own glyphs do not), nothing clips or goes silent across 36 preset/slider positions, no orphaned microphone survives repeated taps, a send survives a playback tap and does not survive the exit, a remote clip is stopped by the exit, the slider's knob lands under the finger, a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused, a grant crossing a teardown leaves no live track, a 40-message burst cannot exceed the concurrent-decode cap, an open microphone locks out playback, an abandoned clip does not appear in the next panel, an over-long decoded clip is refused before it sounds, a second openVoice is a no-op, and a client without removeChannel still falls back to unsubscribe.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, the four preset glyphs are distinct code points (whether they render distinctly is UNRESOLVED wherever the pad's own glyphs do not), nothing clips or goes silent across 36 preset/slider positions, no orphaned microphone survives repeated taps, a send survives a playback tap and does not survive the exit, a remote clip is stopped by the exit, the slider's knob lands under the finger, a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused, a grant crossing a teardown leaves no live track, a 40-message burst cannot exceed the concurrent-decode cap, an open microphone locks out playback, an abandoned clip does not appear in the next panel, an over-long decoded clip is refused before it sounds, a second openVoice is a no-op, a client without removeChannel still falls back to unsubscribe, the decode counter survives teardowns, a REJECTED grant crossing a teardown leaves no live track, and a clip is never broadcast by the panel that replaced its owner.`);

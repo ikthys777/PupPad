@@ -1964,7 +1964,25 @@ function playRemoteVoice(dataUrl) {
   var gen = voiceGen;
   voiceDecoding++;
   var settled = false;
-  function decodeDone() { if (!settled) { settled = true; voiceDecoding--; } }
+  /* THE DECREMENT IS GENERATION-SCOPED TOO, AND LEAVING IT OUT MADE THE COUNTER GO
+   * PERMANENTLY NEGATIVE.
+   *
+   * `closeVoice` sets voiceDecoding = 0 for the whole generation. A decode still in flight
+   * then settled and decremented a counter that no longer owed it anything -- so one
+   * ordinary gesture (a clip arrives, the child taps back while it is decoding) left the
+   * counter at -1 FOR THE LIFE OF THE PAGE, and every repeat drove it further down. The
+   * cap whose entire stated purpose is to bound the ALLOCATION became arbitrarily
+   * permissive: measured 4 concurrent decodes against a cap of 3 after one cycle, and 24
+   * after seven.
+   *
+   * The comment in closeVoice asserted the opposite -- "their callbacks check gen and will
+   * not sound, so the counter is simply reset with them." They checked `gen` for SOUNDING.
+   * They did not check it for DECREMENTING. A guard applied to one of two effects. */
+  function decodeDone() {
+    if (settled) return;
+    settled = true;
+    if (gen === voiceGen) voiceDecoding--;
+  }
   ctx.decodeAudioData(bytes.buffer, function(buf) {
     decodeDone();
     /* The second layer: whatever the encoder's expansion ratio turns out to be, a clip
@@ -2155,12 +2173,26 @@ function startVoiceRecording() {
     voiceRecorder = rec;
     rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
     rec.onstop = function() {
-      voiceRecorder = null;
-      /* Tracks are released the moment the clip is captured, not merely at teardown.
-       * The shortest live-microphone window that still records is the correct one. */
-      if (voiceStream) { voiceStream.getTracks().forEach(function(t) { t.stop(); }); voiceStream = null; }
+      /* STOP THE STREAM THIS RECORDER OWNS, NOT WHATEVER `voiceStream` NOW POINTS AT.
+       *
+       * These four mutations used to run before any generation check. Forced ordering
+       * showed the cost: a stale onstop landing after a reopen stopped THE NEW PANEL'S
+       * microphone and dropped the reference to its recorder, leaving the stage painted
+       * 'recording' over a dead capture. It was measured NOT to be reachable by a finger
+       * in this Chromium -- onstop's task is queued before the second getUserMedia is even
+       * issued, and the shortest human gap between "back" and "record" is over 200 ms --
+       * so this is closing a latent path, not a live defect. It costs two lines, and it is
+       * the same class as the two the reviewer asked me to close. */
+      if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); }
+      if (gen !== voiceGen) return;
+      if (voiceRecorder === rec) voiceRecorder = null;
+      if (voiceStream === stream) voiceStream = null;
       if (voiceRaf) { cancelAnimationFrame(voiceRaf); voiceRaf = 0; }
-      if (!chunks.length) { voiceSetStage('empty'); return; }
+      /* F6: a failed capture must not paint over a clip that is still there. The
+       * getUserMedia catch already got this right; these two transitions did not, and
+       * `stage 'empty'` with a live voiceBuffer is §17's defect on a different edge --
+       * play and send dim while the preset tiles stay live and will still play it. */
+      if (!chunks.length) { voiceSetStage(voiceBuffer ? 'ready' : 'empty'); return; }
       var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
       blob.arrayBuffer().then(function(ab) {
         return getAudioCtx().decodeAudioData(ab);
@@ -2176,7 +2208,7 @@ function startVoiceRecording() {
         doSound('chime');
       }).catch(function() {
         if (gen !== voiceGen) return;
-        voiceSetStage('empty'); doSound('error');
+        voiceSetStage(voiceBuffer ? 'ready' : 'empty'); doSound('error');
       });
     };
     rec.start();

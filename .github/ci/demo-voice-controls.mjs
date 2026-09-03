@@ -102,9 +102,16 @@ plan(3, 'the cave feedback gain is raised to 1.2', {
 
 /* §4 — THE FLAG-AND-STOP THIS WORK ORDER CARES MOST ABOUT. Dropping the reference does
  * NOT turn a microphone off. This is the plant that matters. */
-plan(4, 'teardown drops the stream reference without stopping its tracks', {
-  mutate: (s) => sub(s, "    voiceStream.getTracks().forEach(function(t) { t.stop(); });\n    voiceStream = null;\n  }\n  clearVoiceTimers();",
-                        "    voiceStream = null;\n  }\n  clearVoiceTimers();"),
+/* BOTH HALVES, BECAUSE THE PROPERTY IS NOW JOINTLY HELD. Since rec.onstop stops the
+ * stream IT owns rather than whatever voiceStream points at, removing closeVoice's stop
+ * alone no longer leaks -- the recorder's own path releases it. That is defence in depth
+ * working, and a plant that removes one half of it correctly reports green. Removing both
+ * is what demonstrates the property is asserted at all. */
+plan(4, 'nothing stops the microphone tracks — neither teardown nor the recorder', {
+  mutate: (s) => sub(sub(s,
+      "    voiceStream.getTracks().forEach(function(t) { t.stop(); });\n    voiceStream = null;\n  }\n  clearVoiceTimers();",
+      "    voiceStream = null;\n  }\n  clearVoiceTimers();"),
+      "      if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); }\n", ""),
   expectText: 'SURVIVED teardown',
 });
 
@@ -272,9 +279,15 @@ plan(17, 'the preset tiles stop asking whether the microphone is open', {
 });
 
 /* §18 — an overlay check standing in for a generation check. */
-plan(18, "the recording's decode chain checks the overlay instead of the generation", {
-  mutate: (s) => sub(s, "        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;",
-                        "        if (!document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;"),
+/* BOTH GENERATION CHECKS ON THE RECORD PATH. rec.onstop now returns early for a stale
+ * generation, so reverting only the inner check leaves the outer one protecting -- green,
+ * and correctly so. The plant restores the state the defect actually had: an overlay check
+ * standing in for a generation check, with nothing above it. */
+plan(18, "the record path checks the overlay instead of the generation", {
+  mutate: (s) => sub(sub(s,
+      "      if (gen !== voiceGen) return;\n      if (voiceRecorder === rec) voiceRecorder = null;", "      voiceRecorder = null;"),
+      "        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;",
+      "        if (!document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;"),
   expectText: "PREVIOUS session's clip was installed",
 });
 
@@ -358,6 +371,39 @@ plan(20, 'the channel release fallback goes back into the catch', {
     '  catch (e) { try { ch.unsubscribe(); } catch (e2) {} }',
   ].join('\n')),
   expectText: 'released NOTHING and threw nothing',
+});
+
+/* §16 — THE DECREMENT THAT WAS NOT GENERATION-SCOPED. One guard applied to one of two
+ * effects: the callbacks checked `gen` before SOUNDING and not before DECREMENTING, so a
+ * decode in flight at teardown decremented a counter closeVoice had already zeroed. */
+plan(16, 'the decode counter is decremented without checking the generation', {
+  mutate: (s) => sub(s, "    if (gen === voiceGen) voiceDecoding--;", "    voiceDecoding--;"),
+  expectText: 'drifted to',
+});
+
+/* §21 — THE `.catch` HALF OF THE GENERATION GUARD, which the whole suite left unasserted:
+ * deleting it stayed green while reintroducing a live orphaned microphone. A DENIED
+ * permission is the likeliest first-use path of all. */
+plan(21, 'a rejected grant stops checking its generation', {
+  mutate: (s) => sub(s, "    /* Same rule on the failure path, which had no generation check at all. */\n    if (gen !== voiceGen) return;\n    voicePending = false;",
+                        "    voicePending = false;"),
+  expectText: 'LIVE after a REJECTED grant',
+});
+
+/* §22 — the send's own late continuation. Deleting this one line broadcast a dead panel's
+ * clip on the new panel's channel, with the suite green. */
+plan(22, "fr.onload stops checking whether its panel still exists", {
+  mutate: (s) => sub(s, "      /* Still ours? A clip must not be broadcast by the panel that replaced the one that\n       * recorded it. */\n      if (gen !== voiceGen) return;\n", ""),
+  expectText: 'BROADCAST by the panel that replaced',
+});
+
+/* §17 — F6: a failed capture painting over a clip that is still there. The getUserMedia
+ * catch already asked `voiceBuffer ? 'ready' : 'empty'`; these two transitions did not,
+ * and a stage of 'empty' with a live buffer leaves the tiles able to play it. */
+plan(17, 'a failed decode paints empty over a surviving clip', {
+  mutate: (s) => sub(s, "        voiceSetStage(voiceBuffer ? 'ready' : 'empty'); doSound('error');",
+                        "        voiceSetStage('empty'); doSound('error');"),
+  expectText: 'says EMPTY',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);

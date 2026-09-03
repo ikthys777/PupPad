@@ -285,3 +285,69 @@ defect in its first section for two work orders.
   canvas stroke, map stamp and photo, and **nothing anywhere reads one**. Dropped from
   voice; the rest is a one-line change per site in panels this work order does not own.
 - **Acceptance item 5.** Unchanged: needs Scotty and a person who has not seen the app.
+
+---
+
+# ROUND 3 — the targeted pass on the P1/P5 fixes
+
+CC-A asked for one more pass aimed at those two fixes because both are the same class:
+**an async continuation checked the wrong thing.** It found a third instance of that
+class **that I introduced with the P2 fix**, and two guards that nothing in the suite
+asserted.
+
+## The new defect is mine, and my own comment asserted it away
+
+`closeVoice` zeroes `voiceDecoding` for the whole generation. A decode still in flight
+then settled and **decremented a counter that no longer owed it anything** — so the
+ordinary gesture of tapping back while a clip is decoding left the counter at −1 **for
+the life of the page**, and every repeat drove it lower. Measured: 4 concurrent decodes
+against a cap of 3 after one cycle, **24 after seven**. The bound whose entire stated
+purpose is to stop the allocation stopped bounding it.
+
+**And the comment I wrote in `closeVoice` said the opposite:** *"their callbacks check
+`gen` and will not sound, so the counter is simply reset with them."* They checked `gen`
+for **sounding**. They did not check it for **decrementing**. **One guard, applied to one
+of two effects, with a comment that read as though it covered both.**
+
+**The check could not see it because its own setup created the state that hides it.**
+§16 opened with `closeVoice(); openVoice();` — and that `closeVoice` is exactly what
+resets the counter. Run the same flood without the leading teardown and the peak doubles.
+Its pass line was true only of a state its own setup manufactured.
+
+## Two guards the whole suite left unasserted
+
+Deleting either left **35 assertions green and exit 0**, while:
+
+- **the rejected-permission path reintroduced a live orphaned microphone.** §15 stages a
+  race in which every grant *succeeds*. A **denied** permission is the likeliest first-use
+  path there is — the adult reads the bubble and says no — and nothing tested it.
+- **a dead panel's clip was broadcast on the new panel's channel.** The child's recorded
+  voice leaving the device after he has left the panel, which is precisely what §S.1
+  forbids, on the only identifying data this app handles.
+
+Both are now asserted, each with a plant. **The code was right; the evidence for it did
+not exist.**
+
+## One finding I am NOT fixing, and one I fixed anyway
+
+- **`finish()`'s guard is unasserted and every route into it is blocked upstream.** The
+  pass could not construct a reachable harm. **Asserting it would be asserting the
+  installation rather than an effect** — there is no effect to observe. Recorded as
+  defence in depth rather than papered over with a check that proves nothing.
+- **`rec.onstop`'s prefix was measured UNREACHABLE** — `onstop` is queued before the second
+  `getUserMedia` is even issued, and the shortest human gap between "back" and "record" is
+  over 200 ms; zero clobbers in every trial. **Fixed anyway**, two lines, because it is the
+  same class CC-A asked me to close and the cost of leaving it is a future reader having to
+  re-derive that it is safe.
+
+## The count, since it is the honest summary of this work order
+
+**Twelve real defects. One I found by reading. Eleven found by an instrument, a reviewer,
+or an adversarial pass.** And the instruments were themselves wrong **eleven** times —
+including one that compared a number to itself, one that read the variable its own plant
+removed, one that performed the validation whose absence it was meant to detect, one whose
+branch no input could reach, one whose setup created the state that hid the defect, and
+one that raced the thing it was timing.
+
+**Every single one of those instrument defects was found by planting.** Not one was found
+by reading the check.

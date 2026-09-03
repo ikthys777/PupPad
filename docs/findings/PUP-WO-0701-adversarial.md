@@ -132,3 +132,49 @@ CC-A adopted both deviations and ruled §S2.2 — the instruction to make three 
 — **their error, not mine**: the paragraph prescribing the copies justified the work by
 saying a rule expressed in many places rots. I had recorded it as a deviation I might be
 asked to revert. It is not; it ships.
+
+---
+
+# ROUND 3 — the targeted pass CC-A asked for, on the P1 and P5 fixes
+
+**Freeze `d2b63f7`, `index.html` sha256 `e97b457…3ee769b` — verified unchanged before and
+after by the pass, and unchanged by me: the two commits between the freeze and this
+disposition touched only check files and docs.** The protocol held this time.
+
+CC-A's instruction was to re-attack P1 and P5 specifically, because both are *an async
+continuation checked the wrong thing*. It found a third instance of that class **that I
+introduced with the P2 fix**, and two guards the whole suite left unasserted.
+
+| # | finding | verdict | disposition |
+|---|---|---|---|
+| F1 | **`voiceDecoding` goes permanently NEGATIVE across a teardown.** `decodeDone()` decremented before its generation check while `closeVoice` had already zeroed the counter, so one ordinary gesture — a clip arrives, the child taps back while it decodes — left it at −1 **for the life of the page**, and each repeat drove it lower. Measured 4 concurrent decodes against a cap of 3 after one cycle and **24 after seven**. | **REAL, and mine.** The cap whose entire stated purpose is to bound the *allocation* stopped bounding it. | **FIXED** — the decrement is generation-scoped too. **My comment in `closeVoice` asserted the opposite of what happened**: *"their callbacks check `gen` and will not sound"* — they checked it for **sounding**, not for **decrementing**. One guard applied to one of two effects. |
+| F2 | **The `.catch` half of the generation guard was asserted by nothing.** Deleting `if (gen !== voiceGen) return;` from the `getUserMedia` failure path left the entire suite green **and reintroduced a live orphaned microphone**. §15 stages a race in which every grant *succeeds*. | **REAL coverage gap; the code was correct.** | **FIXED** — §21 stages a **denied** permission crossing a teardown, which is the likeliest first-use path of all, plus its plant. |
+| F3 | **`fr.onload`'s guard was asserted by nothing.** Deleting it **broadcast a dead panel's clip on the new panel's channel**, suite green. §13 asserts the recorder stops; §18 covers only the record decode chain. | **REAL coverage gap.** The child's voice leaving after he has left is the exact thing §S.1 forbids. | **FIXED** — §22, plus its plant. |
+| F4 | `finish()`'s guard is unasserted, but every cross-generation route into it is blocked upstream and **the pass could not construct a reachable harm**. | **Defence in depth.** | **LEFT, AND SAID SO.** Asserting it would be asserting the installation rather than an effect — there is no effect to observe. Recorded rather than papered over with a check that proves nothing. |
+| F5 | `rec.onstop` ran four global mutations before any generation check; forced ordering showed a stale handler **stopping the new panel's microphone**. **But the pass measured it unreachable**: `onstop` is queued before the second `getUserMedia` is even issued, and the shortest human gap between "back" and "record" is >200 ms. 0 clobbers in every trial. | **LATENT, not live.** | **FIXED ANYWAY** — two lines, and it stops the recorder's *own* stream rather than whatever `voiceStream` now points at. Same class as the two CC-A asked me to close. |
+| F6 | A failed decode painted `'empty'` over a **surviving** `voiceBuffer`; play and send dim, **the preset tiles stay live and will still play it**. §17's defect on a different edge. Reachability low — the pass had to stub the decoder. | **REAL incoherence.** | **FIXED** — both transitions now ask `voiceBuffer ? 'ready' : 'empty'`, which the `getUserMedia` catch already did. |
+
+## And §16's own setup was hiding F1
+
+**`§16` opened with `closeVoice(); openVoice();` — and that `closeVoice` is exactly what
+resets `voiceDecoding`.** So its flood always ran from a freshly zeroed counter, which is
+not the state the app is in after a child has used it. Run the same flood without the
+leading teardown and the peak doubles. **The section's pass line was true only of a state
+its own setup created.** It now probes the drift directly across three teardowns.
+
+## What the pass found CLEAN — kept, because null results are results
+
+Fix 1 under the documented gesture (75 grants at a 40 ms mash, **0 live tracks**, asking
+the tracks rather than the app's reporter); the send half end-to-end across a teardown;
+`voicePending` cannot get stuck in either direction, and the exit clears it;
+`stopVoiceRecording`'s catch is dead code in Chromium (a redundant `stop()` does not
+throw — 10 trials); `openVoice` cannot run without a preceding `closeVoice`; `closeVoice`
+cannot half-tear-down past its `voiceGen++`; `ondataavailable`, `s.onended`, every timer
+and the rAF loop are all clean; and an **8-cycle soak** ended with every counter at zero
+and the AudioContext still running — **Fix 2 does not leak in the other direction.**
+
+## Could not determine
+
+Whether a Supabase broadcast can be delivered *after* `releaseChannel` — `removeChannel`
+is asynchronous and the pass had no live project. **It changes F1's reachability, not its
+existence**, and F1 is fixed regardless.
