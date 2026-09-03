@@ -467,6 +467,52 @@ Stated because folding it into either was the obvious move and both are wrong.
 5. No credential renders into the DOM in a state reachable without an adult action
    whose containment is specified.
 
+## 4·RESUME — the position as of 2026-09-03, `main` = `7741b9f`
+
+*Written for a context-less reader picking this up cold. **This section is the queue.**
+If it disagrees with anything remembered, this wins.*
+
+**`/stable/` is `80bc634` and has not moved. Nothing built since P1 has reached Buddy.
+Promotion is Scotty's alone.**
+
+### THE QUEUE, in order, with what each is blocked on
+
+| # | work | state | blocked on |
+|---|---|---|---|
+| 1 | **`PUP-WO-0701` part 2 — the voice panel** | **authored, part 1 MERGED**, acceptance items **3–8 open**: recorder, presets, sliders, playback, send | nobody |
+| 2 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
+| 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
+| 4 | `PUP-WO-0112` — the CI job split | scoped, no file | nobody |
+| 5 | `PUP-WO-0113` — check 11 fires on English prose | scoped in §4a, no file | nobody |
+| 6 | *(unnumbered)* the camera panel's bare `click` controls | ruled to its own number, not issued | nobody |
+| 7 | *(unnumbered)* the mandatory drawer pan | §4a, **CC-A's to rule** — needs a Gyre manifest decision | CC-A |
+
+### WHAT NEEDS A HUMAN, and cannot be simulated
+
+- **`PUP-WO-0603` §4 is UNVERIFIED.** Scotty confirmed it is **page zoom** (only the app
+  magnifies), so the recovery **can** fire — but **nobody has watched it fire**, and the
+  harness cannot zoom `index.html`. *Relevant and effective are different claims.*
+  **Needs the S10+.**
+- **`PUP-WO-0602` acceptance item 1** — that an Android long press no longer opens the
+  context menu. The suppression is fully verified; **the trigger is not, because Chromium
+  cannot raise one.** **Needs the S10+.**
+- **Roadmap gate 3 and gate 8** remain open and are not simulable.
+- **A play session with Buddy.** The drag now shows him the piece, the picker fits, tiles
+  are the size Scotty asked for, and there is a perfect-clear celebration to win.
+  **`CELEB_MS` is one constant if 3.4s is too long.**
+
+### THE STANDING RULES A RESUMING SESSION MUST NOT REDISCOVER
+
+**`docs/work-orders/TEMPLATE.md` is the authority — copy it, do not reproduce it from
+memory.** The two that cost the most this cycle:
+
+- **A human decision costs ONE THREAD, not the loop.** Ask, then **dispatch the next
+  unblocked work order.** Three sat idle while one question waited. *Before idling, open
+  this section and name the next item out loud.*
+- **A missing check and a passing one are the same colour.** Four checks sat on `main`
+  registered nowhere. **Every merge now verifies that added `demo-*.mjs` files appear in
+  `ci.yml`** — check 25 enforces it, and the count must equal the registration count.
+
 ## 4a. Parked work — carried past a phase gate, and where each one goes
 
 *Added 2026-09-02. **Every item below has been living in chat messages and nowhere
