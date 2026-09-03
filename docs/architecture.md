@@ -196,6 +196,23 @@ sw.js          asset manifest + cache identity
 a controlled target. PupPad publishes to GitHub Pages from a branch. §6 records how
 the firebreak is reconstructed rather than assumed.
 
+**A HUMAN DECISION COSTS ONE THREAD, NOT THE LOOP.** *(Ruled 2026-09-03. **CC-A's
+defect, found by the co-architect when Scotty asked why the cycle kept stopping.**)*
+
+**Stopping for a human answer is correct. Stopping EVERYTHING is the defect.** When
+`PUP-WO-0603` reached a question only the device could settle, the whole loop idled —
+while **three work orders sat authored and unbuilt and blocked on nobody**: `PUP-WO-0104`,
+`PUP-WO-0602`, `PUP-WO-0701`.
+
+> **WHEN BLOCKED ON A HUMAN ANSWER: ASK THE QUESTION, THEN DISPATCH THE NEXT UNBLOCKED
+> WORK ORDER. Do not idle waiting.** The answer arrives asynchronously and merges into
+> whichever thread it belongs to.
+
+**The failure is structural, not attention.** A blocking question *feels* like a stop
+because the thread it blocks is the one in hand — and the queue is in a document nobody
+re-reads while waiting. **Before idling, open the roadmap and name the next unblocked
+item out loud.**
+
 **A REQUIREMENT AND ITS BACKSTOP MUST NOT BE THE SAME NUMBER.** *(Ruled 2026-09-03.
 **CC-B's, and it REFINES §6.1's two-expressions family rather than contradicting it.**
 They refused half a CC-A ruling and measured before deciding.)*

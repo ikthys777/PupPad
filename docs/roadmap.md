@@ -583,6 +583,15 @@ was scoped against.
   been dropped? Has any ratified change reached the code but not these documents?
   This is cheap here and expensive at launch — it is the failure mode that most
   reliably goes unnoticed, because nothing announces it.
+- **CLOSING A BUILD IS FOUR NUMBERED STEPS, AND THE FOURTH IS THE ONE THAT DECAYS.**
+  *(Added 2026-09-03. **`SendMessage` appears ONCE in all of `docs/` — a line in
+  `architecture.md`, not a step anywhere — so the park-then-notify handoff is a
+  CONVENTION, and this project's whole history is conventions decaying.**)*
+  **1.** push · **2.** open the PR · **3.** **VERIFY THE NUMBER RESOLVES** — a PR that
+  did not open is indistinguishable from one nobody read · **4.** **`SendMessage` citing
+  that number, as the LAST ACTION OF THE TURN.** *A parked PR that does not wake the
+  reviewer is work that is finished and invisible, which is the same cost as work not
+  done.*
 - **Every work order: the builder's `docs/feedback/<WO-id>.md` is read for findings that belong
   upward** — a superseded ruling becomes an architecture amendment, a changed
   constraint goes to the northstar and is re-ratified, an uncheckable gate is fixed
