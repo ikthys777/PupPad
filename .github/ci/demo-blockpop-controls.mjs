@@ -493,7 +493,26 @@ console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time (the timing-s
    * scenarios, and CI failed on a third combination while CHECK 21 ITSELF PASSED. That is
    * a harness defect, not a build one, and a gate that is red at random is one people
    * learn to ignore. Everything else runs in lanes; these run alone, afterwards. */
-  const TIMED = new Set([6, 13]);
+  /* ------------------------------------------------------------------------
+ * PUP-WO-0403 — the regression PUP-WO-0402 introduced, found on the device.
+ * ---------------------------------------------------------------------- */
+
+/* THE DEFECT ITSELF: remove the third [hidden] rule and display:grid beats the UA
+ * stylesheet again, so dragEl.hidden = true does nothing and the piece stays on the board
+ * after the child lets go. This is the state Scotty photographed. */
+plan(15, 'display:grid defeats [hidden] and the piece stays painted after release', {
+  mutate: (s) => sub(s, "    '.bp-drag[hidden]{display:none}',", ''),
+  expectText: 'still painted after',
+});
+
+/* And the assertion must not be satisfiable by the ATTRIBUTE, which was set throughout
+ * the defect. Set it and hide nothing: still red. */
+plan(15, 'the hidden attribute is set but nothing is actually hidden', {
+  mutate: (s) => sub(s, "    '.bp-drag[hidden]{display:none}',", "    '.bp-drag[hidden]{display:grid}',"),
+  expectText: 'still painted after',
+});
+
+const TIMED = new Set([6, 13]);
   const parallel = QUEUE.map((q, i) => ({ q, i })).filter((x) => !TIMED.has(x.q.section));
   const serial = QUEUE.map((q, i) => ({ q, i })).filter((x) => TIMED.has(x.q.section));
   const ordered = new Array(QUEUE.length);
