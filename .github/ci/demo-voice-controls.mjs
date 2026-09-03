@@ -252,6 +252,107 @@ plan(14, 'the audio payload cap is removed — the decoder is handed the string 
   expectText: 'oversized inbound audio payload was accepted',
 });
 
+/* §15 — the stale continuation clearing a live panel's guard: the code as first written. */
+plan(15, "a stale grant clears voicePending before checking its generation", {
+  mutate: (s) => sub(s, "      return;\n    }\n    voicePending = false;\n    voiceStream = stream;",
+                        "      voicePending = false;\n      return;\n    }\n    voiceStream = stream;"),
+  expectText: 'LIVE after a grant crossed a teardown',
+});
+
+/* §16 — the cap counting voices instead of allocations. */
+plan(16, 'the concurrent-decode count is dropped from the inbound guard', {
+  mutate: (s) => sub(s, "  if (voiceInbound.length + voiceDecoding >= VOICE_MAX_INBOUND) return;",
+                        "  if (voiceInbound.length >= VOICE_MAX_INBOUND) return;"),
+  expectText: 'decodes ran at once against a cap',
+});
+
+/* §17 — two expressions of "is this panel busy" that do not agree, restored. */
+plan(17, 'the preset tiles stop asking whether the microphone is open', {
+  mutate: (s) => sub(s, "      /* The same question the painting asks, asked the same way. */\n      if (voiceCapturing()) return;\n", ""),
+  expectText: 'STARTED PLAYBACK',
+});
+
+/* §18 — an overlay check standing in for a generation check. */
+plan(18, "the recording's decode chain checks the overlay instead of the generation", {
+  mutate: (s) => sub(s, "        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;",
+                        "        if (!document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;"),
+  expectText: "PREVIOUS session's clip was installed",
+});
+
+/* §19 — the duration cap, which nothing asserted until now: deleting the line left the
+ * whole suite green, which is the definition of an unguarded invariant. */
+plan(19, 'the decoded-duration cap is deleted', {
+  mutate: (s) => sub(s, "    if (buf.duration > MAX_INBOUND_SECONDS) return;", "    /* PLANT: no duration cap. */"),
+  expectText: 'was PLAYED',
+});
+
+/* §7 — THE BRANCH THAT COULD NOT FIRE. Its whole point is the rule this repo repeats most,
+ * and until now no plant could reach it: it sat behind an `else if` that required
+ * MAX_INBOUND_BYTES to equal 15000. */
+plan(7, 'the duration requirement is derived from the byte backstop', {
+  mutate: (s) => sub(s, "var MAX_RECORD_MS = 15000;", "var MAX_RECORD_MS = MAX_INBOUND_BYTES;\nvar MAX_RECORD_MS_UNUSED = 15000;"),
+  expectText: 'not 15000',
+});
+
+plan(7, 'the two caps are collapsed into one number', {
+  mutate: (s) => sub(s, "var MAX_INBOUND_BYTES = 3 * 1024 * 1024;", "var MAX_INBOUND_BYTES = 15000;"),
+  expectText: 'SAME NUMBER',
+});
+
+plan(7, 'the audio cap is loosened until it bounds nothing', {
+  mutate: (s) => sub(s, "var MAX_INBOUND_AUDIO_BYTES = 1024 * 1024;", "var MAX_INBOUND_AUDIO_BYTES = 8 * 1024 * 1024;"),
+  expectText: 'is not tighter than the general one',
+});
+
+plan(7, 'a named bound is deleted rather than changed', {
+  mutate: (s) => sub(s, "var MAX_INBOUND_SECONDS = 40;", "/* PLANT: gone. */"),
+  expectText: 'not live numbers',
+});
+
+/* §9 — THE PIXEL BRANCH, WHICH ABSTAINS ON EVERY CI RUN AND SO HAS NEVER BEEN SHOWN RED.
+ * The abstention is honest, but a branch never seen red is not a branch. This plant swaps
+ * every glyph -- the eight shipping pad ones AND the four presets -- for ASCII that any
+ * machine can render, so the baseline passes and the comparison actually runs, with two
+ * presets given the same character. It demonstrates the branch without faking a verdict. */
+plan(9, 'the pixel comparison is made reachable, and two presets are given one shape', {
+  mutate: (s) => {
+    let out = s;
+    const pads = ['\\uD83C\\uDFA4', '\\uD83D\\uDDFA', '\\uD83C\\uDFA8', '\\uD83D\\uDEA8',
+                  '\\uD83D\\uDD27', '\\u26C5', '\\uD83D\\uDCF7', '\\uD83C\\uDFAE'];
+    const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    pads.forEach((g, i) => { out = sub(out, "emoji:'" + g + "'", "emoji:'" + letters[i] + "'"); });
+    /* DIFFERENT CODE POINTS THAT RENDER IDENTICALLY -- Latin A and Greek capital Alpha.
+     * Two copies of the same character would trip the earlier STRING check and never reach
+     * the pixel branch, which is the branch this plant exists to demonstrate. This pair is
+     * the ASCII stand-in for the dog-face-against-dog case the design says it avoids. */
+    out = sub(out, "{ id:'up',    icon:'\\uD83D\\uDC2D'", "{ id:'up',    icon:'A'");
+    out = sub(out, "{ id:'down',  icon:'\\uD83D\\uDC18'", "{ id:'down',  icon:'\\u0391'");
+    out = sub(out, "{ id:'robot', icon:'\\uD83E\\uDD16'", "{ id:'robot', icon:'Y'");
+    out = sub(out, "{ id:'cave',  icon:'\\uD83C\\uDFD4\\uFE0F'", "{ id:'cave',  icon:'X'");
+    return out;
+  },
+  expectText: 'render IDENTICALLY despite differing code points',
+});
+
+/* §20 — the openVoice re-entry guard, which nothing asserted. */
+plan(20, 'openVoice stops guarding against a second panel', {
+  mutate: (s) => sub(s, "  if (document.getElementById('voiceOverlay')) return;\n  voicePreset = 'up';", "  voicePreset = 'up';"),
+  expectText: 'overlay(s) after two openVoice calls',
+});
+
+/* §20 — and the fallback that was a `catch` where it should have been an `else`. */
+plan(20, 'the channel release fallback goes back into the catch', {
+  mutate: (s) => sub(s, "  var released = false;
+  try {
+    var c = getSupabaseClient();
+    if (c && c.removeChannel) { c.removeChannel(ch); released = true; }
+  } catch (e) { released = false; }
+  if (!released) { try { ch.unsubscribe(); } catch (e2) {} }",
+    "  try { var c = getSupabaseClient(); if (c && c.removeChannel) c.removeChannel(ch); }
+  catch (e) { try { ch.unsubscribe(); } catch (e2) {} }"),
+  expectText: 'released NOTHING and threw nothing',
+});
+
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);
 const results = [];
 for (const q of QUEUE) results.push(await scenario(q.section, q.label, q.spec));

@@ -64,7 +64,10 @@ const page = await ctx.newPage();
 /* A real finger: a touch that lands and lifts. A synthesised click is not a finger, and
  * every control in this panel is on wireTap precisely because of that. */
 async function finger(sel) {
-  const box = await page.locator(sel).boundingBox();
+  /* CODE THAT PREDATES THE HELPER. §6 learned that a locator on a missing element blocks
+   * and then THROWS, killing the check instead of failing a line; these two calls were
+   * written before that and never revisited. Same treatment, same reason. */
+  const box = await page.locator(sel).boundingBox({ timeout: 2500 }).catch(() => null);
   if (!box) throw new Error(`no box for ${sel}`);
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
   await page.touchscreen.tap(x, y);
@@ -394,10 +397,31 @@ try {
 
   /* ---- §7. THE HARD STOP, AND THE BOUND THAT IS NOT THE BACKSTOP -------- */
   if (run(7)) {
-    const nums = await page.evaluate(() => ({ rec: window.MAX_RECORD_MS, inbound: window.MAX_INBOUND_BYTES }));
+    const nums = await page.evaluate(() => ({
+      rec: window.MAX_RECORD_MS, inbound: window.MAX_INBOUND_BYTES,
+      audio: window.MAX_INBOUND_AUDIO_BYTES, secs: window.MAX_INBOUND_SECONDS,
+    }));
+    /* THE ASSERTION FOR "A REQUIREMENT AND ITS BACKSTOP MUST NOT BE THE SAME NUMBER" COULD
+     * NOT FIRE. It was an `else if` behind `rec !== 15000`, so reaching it required
+     * rec === 15000 AND rec === inbound — i.e. MAX_INBOUND_BYTES === 15000, which it never
+     * is. The one place this repo checks its own most-repeated rule was unfalsifiable, and
+     * its plant demonstrated the OTHER branch. Independent assertions now, and each named
+     * value is asserted rather than merely printed: MAX_INBOUND_BYTES was interpolated
+     * into the pass line without being checked, so deleting it read "is undefined bytes"
+     * and still passed. */
+    const named = [['MAX_RECORD_MS', nums.rec], ['MAX_INBOUND_BYTES', nums.inbound],
+                   ['MAX_INBOUND_AUDIO_BYTES', nums.audio], ['MAX_INBOUND_SECONDS', nums.secs]];
+    const missing = named.filter(([, v]) => typeof v !== 'number' || !isFinite(v) || v <= 0);
+    if (missing.length) bad(`${missing.length} bound(s) are not live numbers`, missing.map(([n, v]) => `${n}=${v}`).join(', '));
+    else ok(`all four bounds are live numbers: ${named.map(([n, v]) => `${n}=${v}`).join(', ')}`);
+
     if (nums.rec !== 15000) bad(`MAX_RECORD_MS is ${nums.rec}, not 15000`);
-    else if (nums.rec === nums.inbound) bad('the requirement and its backstop are the same number');
-    else ok(`MAX_RECORD_MS is ${nums.rec} ms and MAX_INBOUND_BYTES is ${nums.inbound} bytes — a duration and a size, failing differently`);
+    else ok('MAX_RECORD_MS is 15000 — the requirement');
+    if (nums.rec === nums.inbound) bad('the requirement and its backstop are the SAME NUMBER',
+      'a duration cap and a byte cap must fail differently; one derived from the other is one guard wearing two hats');
+    else if (nums.audio >= nums.inbound) bad(`the audio cap (${nums.audio}) is not tighter than the general one (${nums.inbound})`,
+      'then it bounds nothing the general cap did not already bound');
+    else ok(`the caps are independent: a ${nums.rec} ms duration, a ${nums.inbound} B general cap, a tighter ${nums.audio} B audio cap, and a ${nums.secs} s decoded-duration cap`);
 
     /* The mechanism, at a shortened value, because a three-year-old holding the button
      * is exactly the case a 15-second CI wait would test. The CONSTANT is asserted above;
@@ -507,14 +531,28 @@ try {
        * MUST DEMONSTRATE IT WOULD HAVE SEEN THE THING. */
       const padTofu = pix.pad.filter((h) => h === pix.tofu).length;
       const asTofu = pix.shots.filter((h) => h === pix.tofu).length;
-      if (padTofu > 0) {
+      /* A MISSING BASELINE IS NOT A LICENCE TO JUDGE. `PAD` falls back to [] when
+       * BTNS_LEFT is not there, and an empty baseline has padTofu === 0 — which read as
+       * "this machine's fonts are fine, go ahead and rule". A control that could not be
+       * taken must abstain exactly as a failed one does.
+       *
+       * And the gate is `=== pad.length`, not `> 0`: one unusual glyph on an otherwise
+       * fully-fonted machine should not switch the comparison off. Partial coverage is
+       * its own answer and is reported as such. */
+      if (!pix.pad.length) {
+        console.log('  ----  UNRESOLVED: the baseline could not be taken — BTNS_LEFT was not readable,');
+        console.log('        so there is nothing to say whether this machine can render glyphs at all.');
+      } else if (padTofu === pix.pad.length) {
         console.log(`  ----  UNRESOLVED: ${padTofu} of ${pix.pad.length} glyphs ALREADY SHIPPING on the console pad`);
         console.log(`        render as the missing-glyph box on this machine, so its font set is not the fleet's.`);
         console.log(`        (${pix.shots.length - asTofu} of ${pix.shots.length} preset glyphs did render here — information, not a verdict.)`);
         console.log('        A red here would be about fontconfig. Acceptance item 5 — a person who has not seen');
         console.log('        the app, on the fleet — is what settles glyph identifiability.');
+      } else if (padTofu > 0) {
+        console.log(`  ----  UNRESOLVED: ${padTofu} of ${pix.pad.length} shipping pad glyphs render as boxes here —`);
+        console.log('        partial font coverage, so this machine cannot speak to glyph distinctness either.');
       } else if (asTofu > 0) {
-        bad(`${asTofu} of ${pix.shots.length} preset glyphs render as an empty box on a machine whose pad glyphs all render`,
+        bad(`${asTofu} of ${pix.shots.length} preset glyphs render as an empty box on a machine whose pad glyphs ALL render`,
           'a preset a non-reader cannot see is not a preset, and here it is not even a shape');
       } else {
         const dupes = pix.shots.length - new Set(pix.shots).size;
@@ -529,7 +567,7 @@ try {
   if (run(10)) {
     await page.evaluate(() => { if (!document.getElementById('voiceOverlay')) openVoice(); });
     await page.waitForTimeout(150);
-    const box = await page.locator('#voiceSlider').boundingBox();
+    const box = await page.locator('#voiceSlider').boundingBox({ timeout: 2500 }).catch(() => null);
     if (!box) bad('there is no slider');
     else {
       const frac = 0.75;
@@ -853,6 +891,211 @@ try {
     else ok(`a remote clip plays, the exit stops it, no popup outlives the panel, and an oversized audio payload is refused before decoding`);
   }
 
+  /* ---- §15. A DEAD PANEL'S GRANT MUST NOT UNLOCK A LIVE PANEL'S GUARD ---
+   *
+   * §12 closes and reopens ONCE, BEFORE the taps, so it never has a grant in flight ACROSS
+   * a teardown. That is exactly the gap: `voicePending` was cleared before the generation
+   * was checked, so a stale continuation opened the door for the panel that replaced it.
+   * The gesture is longer than §12's but every step is a finger. */
+  if (run(15)) {
+    const r = await page.evaluate(async () => {
+      const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      const all = [];
+      let delay = 900;
+      navigator.mediaDevices.getUserMedia = (c) => real(c).then((st) => {
+        all.push(st);
+        const d = delay;
+        return new Promise((res) => setTimeout(() => res(st), d));
+      });
+      const tap = () => {
+        const b = document.getElementById('voiceRecBtn');
+        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      };
+      try {
+        closeVoice(); openVoice();
+        tap();                                   /* A issued — a slow permission bubble */
+        await new Promise((r2) => setTimeout(r2, 80));
+        closeVoice();                            /* back, while A is still in flight */
+        openVoice();                             /* Voice again */
+        delay = 500;
+        tap();                                   /* B issued */
+        await new Promise((r2) => setTimeout(r2, 900));  /* A settles here */
+        tap();                                   /* C — only possible if A unlocked the guard */
+        await new Promise((r2) => setTimeout(r2, 1600));
+        closeVoice();
+        await new Promise((r2) => setTimeout(r2, 600));
+        return {
+          granted: all.length,
+          live: all.reduce((n, st) => n + st.getTracks().filter((t) => t.readyState === 'live').length, 0),
+        };
+      } finally { navigator.mediaDevices.getUserMedia = real; }
+    });
+    if (r.granted < 2) bad(`the race could not be staged — only ${r.granted} grant(s) issued`, 'this section proved nothing');
+    else if (r.live > 0) bad(`${r.live} microphone track(s) LIVE after a grant crossed a teardown`,
+      `${r.granted} grants were issued; a stale continuation cleared voicePending before checking its generation, so a dead panel's grant unlocked the live panel's guard`);
+    else ok(`a grant that crosses a teardown leaves no live track (${r.granted} grants staged)`);
+  }
+
+  /* ---- §16. THE CAP MUST BOUND ALLOCATIONS, NOT JUST VOICES ------------- */
+  if (run(16)) {
+    const flood = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const ctx = getAudioCtx();
+      let peak = 0, live = 0;
+      const realDecode = ctx.decodeAudioData.bind(ctx);
+      /* Count decodes IN FLIGHT. `decodeAudioData` is what allocates the PCM, so the
+       * question is how many can be allocating at the same instant -- not how many end up
+       * audible, which is all `voiceInbound.length` could ever have measured. */
+      ctx.decodeAudioData = function (buf, ok2, err) {
+        live++; if (live > peak) peak = live;
+        const done = () => { live--; };
+        return realDecode(buf, (b) => { done(); if (ok2) ok2(b); }, (e) => { done(); if (err) err(e); });
+      };
+      try {
+        const url = 'data:audio/webm;base64,' + 'A'.repeat(2048);
+        for (let i = 0; i < 40; i++) playRemoteVoice(url);
+        await new Promise((r) => setTimeout(r, 700));
+        return { peak, max: window.VOICE_MAX_INBOUND };
+      } finally { ctx.decodeAudioData = realDecode; closeVoice(); }
+    });
+    if (flood.peak === 0) bad('no decode was ever started', 'this section proved nothing');
+    else if (flood.peak > flood.max) bad(`${flood.peak} decodes ran at once against a cap of ${flood.max}`,
+      'the guard counted clips that were SOUNDING, and nothing joins that list until a decode SUCCEEDS — so a burst all read zero, all passed, and all allocated. The multiplier is the message rate, which nothing bounds');
+    else ok(`a 40-message burst never exceeds ${flood.peak} concurrent decode(s) against a cap of ${flood.max}`);
+  }
+
+  /* ---- §17. AN OPEN MICROPHONE LOCKS OUT PLAYBACK ----------------------- */
+  if (run(17)) {
+    const lock = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const b = document.getElementById('voiceRecBtn');
+      const tap = (el) => { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+                            el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); };
+      tap(b);
+      await new Promise((r) => setTimeout(r, 900));
+      tap(b);                                    /* stop — clip 1 exists */
+      await new Promise((r) => setTimeout(r, 900));
+      if (window.__voice.state().stage !== 'ready') return { noClip: true };
+      tap(b);                                    /* record again */
+      await new Promise((r) => setTimeout(r, 500));
+      const capturing = window.__voice.state().capturing;
+      const before = window.__voice.state().nodes;
+      const tile = document.querySelectorAll('.voice-preset')[2];
+      tap(tile);                                 /* a preset, mid-record */
+      await new Promise((r) => setTimeout(r, 250));
+      const st = window.__voice.state();
+      const ring = document.getElementById('voiceRing');
+      const ringMoving = ring ? Number(ring.style.strokeDashoffset || 0) : -1;
+      /* READ BEFORE TEARDOWN. getComputedStyle on a DETACHED element returns an empty
+       * string, so reading this after closeVoice() reported "the tiles are still live"
+       * about a tile that no longer existed -- a check failing a correct build because it
+       * measured the wrong moment. */
+      const pe = getComputedStyle(tile).pointerEvents;
+      closeVoice();
+      return { capturing, before, after: st.nodes, ringMoving, pe };
+    });
+    if (lock.noClip) bad('no first clip was produced', 'this section proved nothing');
+    else if (!lock.capturing) bad('the panel does not report itself as capturing while recording', 'this section proved nothing');
+    else if (lock.after > lock.before) bad('a preset tapped mid-record STARTED PLAYBACK',
+      `${lock.before} playback node(s) before, ${lock.after} after — the old clip plays out of the speakers INTO the open microphone, and cancelling the animation frame freezes the countdown ring while the 15s timer keeps running`);
+    else if (lock.pe !== 'none') bad('the preset tiles are still live during a recording', `pointer-events is ${lock.pe}`);
+    else ok(`the preset tiles and slider are inert while the microphone is open (pointer-events ${lock.pe}, no playback started)`);
+  }
+
+  /* ---- §18. THE CLIP DIES WITH THE PANEL -- §S.1, on identifying data --- */
+  if (run(18)) {
+    const carry = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const b = document.getElementById('voiceRecBtn');
+      b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 900));
+      /* Back mid-record, then straight back in -- faster than the decode. */
+      closeVoice();
+      openVoice();
+      await new Promise((r) => setTimeout(r, 1800));
+      const st = window.__voice.state();
+      const buf = !!window.voiceBuffer;
+      closeVoice();
+      return { stage: st.stage, buf };
+    });
+    if (carry.buf || carry.stage === 'ready') bad("the PREVIOUS session's clip was installed into the fresh panel",
+      `stage=${carry.stage}, buffer present=${carry.buf} — an overlay check is not a generation check, and after close-then-reopen the overlay is back. This contradicts "the clip dies with the panel" on the only identifying data this app handles`);
+    else ok(`a clip whose recording was abandoned does not appear in the next panel (stage ${carry.stage})`);
+  }
+
+  /* ---- §19. THE DECODED-DURATION CAP, WHICH NOTHING ASSERTED ------------ */
+  if (run(19)) {
+    const dur = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const cap = window.MAX_INBOUND_SECONDS;
+      const ctx = getAudioCtx();
+      let started = 0;
+      const realStart = AudioBufferSourceNode.prototype.start;
+      AudioBufferSourceNode.prototype.start = function (...a) { started++; return realStart.apply(this, a); };
+      const realDecode = ctx.decodeAudioData.bind(ctx);
+      /* The cap must hold WHATEVER the codec's expansion ratio turns out to be, so the
+       * decoder is made to return an over-long buffer directly — which is the only way to
+       * test the property without depending on a particular encoder's bitrate. */
+      ctx.decodeAudioData = function (_b, ok2) {
+        const long = ctx.createBuffer(1, Math.ceil(8000 * (cap + 5)), 8000);
+        if (ok2) ok2(long);
+        return Promise.resolve(long);
+      };
+      try {
+        const before = started;
+        playRemoteVoice('data:audio/webm;base64,' + 'A'.repeat(2048));
+        await new Promise((r) => setTimeout(r, 400));
+        return { cap, played: started - before };
+      } finally {
+        ctx.decodeAudioData = realDecode;
+        AudioBufferSourceNode.prototype.start = realStart;
+        closeVoice();
+      }
+    });
+    if (dur.played > 0) bad(`a clip longer than MAX_INBOUND_SECONDS (${dur.cap}s) was PLAYED`,
+      'the duration cap is the half of the inbound bound that stays true whatever the next codec expands by — and deleting the line left the whole suite green');
+    else ok(`a decoded clip longer than ${dur.cap}s is refused before it sounds`);
+  }
+
+  /* ---- §20. TWO GUARDS NOTHING ASSERTED -------------------------------- */
+  if (run(20)) {
+    const re = await page.evaluate(() => {
+      closeVoice();
+      openVoice(); openVoice();
+      const n = document.querySelectorAll('#voiceOverlay').length;
+      closeVoice();
+      const left = document.querySelectorAll('#voiceOverlay').length;
+      /* Clean up whatever a broken guard left behind, so later sections start honest. */
+      document.querySelectorAll('#voiceOverlay').forEach((el) => el.remove());
+      return { n, left };
+    });
+    if (re.n !== 1) bad(`${re.n} overlay(s) after two openVoice calls`,
+      'closeVoice removes the one getElementById returns, so the other stays forever with its own exit button over the console');
+    else ok('a second openVoice is a no-op — one panel, and teardown removes it');
+
+    /* THE FALLBACK WAS A `catch` WHERE IT SHOULD HAVE BEEN AN `else`. It only ran when
+     * removeChannel THREW. A client that simply LACKS the method — a different
+     * supabase-js build, an offline client — made the `if` false, so nothing released and
+     * nothing threw either: silent, and silent across all four panels at once now that
+     * they share this function. */
+    const fb = await page.evaluate(() => {
+      const realGet = window.getSupabaseClient;
+      const released = [];
+      window.getSupabaseClient = () => ({ /* no removeChannel at all */ });
+      try {
+        releaseChannel({ unsubscribe() { released.push('unsubscribe'); } });
+        return { released };
+      } catch (e) { return { threw: String((e && e.message) || e) }; }
+      finally { window.getSupabaseClient = realGet; }
+    });
+    if (fb.threw) bad('releaseChannel threw on a client without removeChannel', fb.threw);
+    else if (!fb.released.length) bad('a client without removeChannel released NOTHING and threw nothing',
+      'the fallback sat in a catch, so it ran only when removeChannel threw — an absent method is not an exception');
+    else ok('a client without removeChannel falls back to unsubscribe — the fallback is an else, not a catch');
+  }
+
 } finally { await browser.close(); server.close(); }
 
 if (failures.length) {
@@ -861,4 +1104,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, the four preset glyphs are distinct code points (whether they render distinctly is UNRESOLVED wherever the pad's own glyphs do not), nothing clips or goes silent across 36 preset/slider positions, no orphaned microphone survives repeated taps, a send survives a playback tap and does not survive the exit, a remote clip is stopped by the exit, the slider's knob lands under the finger, and a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, the four preset glyphs are distinct code points (whether they render distinctly is UNRESOLVED wherever the pad's own glyphs do not), nothing clips or goes silent across 36 preset/slider positions, no orphaned microphone survives repeated taps, a send survives a playback tap and does not survive the exit, a remote clip is stopped by the exit, the slider's knob lands under the finger, a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused, a grant crossing a teardown leaves no live track, a 40-message burst cannot exceed the concurrent-decode cap, an open microphone locks out playback, an abandoned clip does not appear in the next panel, an over-long decoded clip is refused before it sounds, a second openVoice is a no-op, and a client without removeChannel still falls back to unsubscribe.`);

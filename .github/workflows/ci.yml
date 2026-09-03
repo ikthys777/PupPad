@@ -563,12 +563,30 @@ jobs:
         run: node .github/ci/demo-voice.mjs .
 
       - name: "Check 26 controls — every section of the voice check, shown red"
-        # 15 planted defects, each REMOVING A BEHAVIOUR rather than editing a string the
-        # assertion happens to read. Three of them found defects in the check itself
-        # before they found anything else: an unclamped value that THREW instead of
-        # failing, a closed AudioContext the shell silently healed, and a slider
-        # assertion that compared the paint against the value — the same number twice.
+        # Every section of check 26, shown red against a planted defect -- each plant
+        # REMOVING A BEHAVIOUR rather than editing a string the assertion happens to read.
+        # NO COUNT IS WRITTEN HERE: a hand-maintained number rots silently and a reader
+        # trusts it, which is this repo's own rule and was already being broken by this
+        # comment. The run prints the count it actually executed.
+        #
+        # Several of those plants found defects in the CHECK before they found anything in
+        # the app: an unclamped value that THREW instead of failing, a closed AudioContext
+        # the shell silently healed, a slider assertion that compared the paint against the
+        # value -- the same number twice -- and an assertion that read the very variable
+        # its own plant removed.
         run: node .github/ci/demo-voice-controls.mjs
+
+      - name: "Check 24 controls — every section of the inbound check, shown red"
+        # Check 24 shipped WITHOUT controls, so its first four sections had never been
+        # shown red. Its fifth already had -- a plant proved it passed with the release
+        # DELETED, because it was reading a comment. The other four were never asked.
+        #
+        # Asking them found another: §1 called safeMediaUrl ITSELF and only then invoked
+        # the sink, so it demonstrated that the validator refuses a URL -- which was never
+        # in doubt -- while saying nothing about whether the SINK IS GATED. Deleting the
+        # gate from the real handler left it green. It now drives the app's own registered
+        # callback.
+        run: node .github/ci/demo-inbound-controls.mjs
 
       - name: "Check 25 — every demonstration in .github/ci/ actually runs"
         # PUP-WO-0701 §6. FOUR check files reached main across three work orders without

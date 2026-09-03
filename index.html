@@ -466,8 +466,18 @@ function getSupabaseClient() {
  * A helper is the only answer that also covers the panel written NEXT. */
 function releaseChannel(ch) {
   if (!ch) return;
-  try { var c = getSupabaseClient(); if (c && c.removeChannel) c.removeChannel(ch); }
-  catch (e) { try { ch.unsubscribe(); } catch (e2) {} }
+  /* THE FALLBACK IS AN `else`, NOT A `catch`, AND THAT IS THE WHOLE DIFFERENCE.
+   *
+   * As a catch it only ran when `removeChannel` THREW. If the client were merely absent,
+   * or the method missing -- a different supabase-js build, an offline client -- the `if`
+   * was simply false, nothing released, and NOTHING THREW EITHER. Silent, and silent
+   * across all four panels at once, since they now share this function. */
+  var released = false;
+  try {
+    var c = getSupabaseClient();
+    if (c && c.removeChannel) { c.removeChannel(ch); released = true; }
+  } catch (e) { released = false; }
+  if (!released) { try { ch.unsubscribe(); } catch (e2) {} }
 }
 
 function joinCanvasChannel() {
@@ -1707,7 +1717,16 @@ var RING_HZ_MIN = 20, RING_HZ_MAX = 220;
 var CAVE_DELAY_MIN = 0.06, CAVE_DELAY_MAX = 0.40;
 var CAVE_FEEDBACK = 0.45;    /* CONSTANT, and never exposed to a slider. See above. */
 var CAVE_DRY = 0.50, CAVE_WET = 0.45;   /* headroom -- see the cave branch of buildVoiceGraph. */
-var VOICE_MAX_INBOUND = 3;   /* concurrently audible inbound clips, so a flood cannot stack. */
+var VOICE_MAX_INBOUND = 3;   /* concurrent inbound clips -- COUNTED WHILE DECODING, see below. */
+var voiceDecoding = 0;       /* decodes in flight; they have allocated but are not yet audible. */
+var voiceInboundBus = null;
+
+/* THE ONE SINK WHOSE AMPLITUDE A STRANGER CHOOSES IS THE ONE SINK THAT HAD NO ATTENUATOR.
+ * Headroom for the local cave path was derived from its echo series and lands at 0.84.
+ * Inbound clips went to the destination at UNITY, up to VOICE_MAX_INBOUND of them summing,
+ * with every sample chosen by whoever sent them. Attenuated and then LIMITED, so a clip
+ * mastered to full scale -- or three of them -- cannot be loud in a child's ear. */
+var VOICE_INBOUND_GAIN = 0.7;
 
 /* THE BYTE CAP BOUNDS THE STRING. THE STRING IS NOT WHAT COSTS.
  *
@@ -1907,8 +1926,29 @@ function joinVoiceChannel() {
  * never creates the sink: no <audio>, no img, no fetch, no XHR. The gate still runs first
  * and is still load-bearing, because it is also what bounds the SIZE and pins the TYPE.
  * Strictly fewer ways for an inbound byte to reach the network than the ruling required. */
+/* One bus for every inbound clip, rebuilt if the shared context was ever replaced. */
+function getInboundBus(ctx) {
+  if (voiceInboundBus && voiceInboundBus.context === ctx) return voiceInboundBus;
+  var g = ctx.createGain();
+  g.gain.value = VOICE_INBOUND_GAIN;
+  var comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -6; comp.knee.value = 6; comp.ratio.value = 20;
+  comp.attack.value = 0.003; comp.release.value = 0.25;
+  g.connect(comp); comp.connect(ctx.destination);
+  voiceInboundBus = g;
+  return g;
+}
+
 function playRemoteVoice(dataUrl) {
-  if (voiceInbound.length >= VOICE_MAX_INBOUND) return;
+  /* COUNT THE DECODES, NOT JUST THE VOICES.
+   *
+   * This guard read `voiceInbound.length`, and nothing joins that array until the decode
+   * SUCCEEDS -- so a burst of messages all read 0, all passed, and all called
+   * decodeAudioData at once. The cap bounded clips that were SOUNDING while the thing that
+   * costs is the ALLOCATION, and the real multiplier was the message rate, which nobody
+   * bounds. That is the same defect as the byte cap bounding the string, surviving its own
+   * fix in the one dimension the fix did not consider. */
+  if (voiceInbound.length + voiceDecoding >= VOICE_MAX_INBOUND) return;
   /* Before any allocation. See MAX_INBOUND_AUDIO_BYTES. */
   if (dataUrl.length > MAX_INBOUND_AUDIO_BYTES) return;
   var comma = dataUrl.indexOf(',');
@@ -1922,14 +1962,18 @@ function playRemoteVoice(dataUrl) {
 
   var ctx = getAudioCtx();
   var gen = voiceGen;
+  voiceDecoding++;
+  var settled = false;
+  function decodeDone() { if (!settled) { settled = true; voiceDecoding--; } }
   ctx.decodeAudioData(bytes.buffer, function(buf) {
+    decodeDone();
     /* The second layer: whatever the encoder's expansion ratio turns out to be, a clip
      * longer than this is refused AFTER decoding and before it is ever heard. */
     if (buf.duration > MAX_INBOUND_SECONDS) return;
     if (gen !== voiceGen || voiceInbound.length >= VOICE_MAX_INBOUND) return;
     var s = ctx.createBufferSource();
     s.buffer = buf;
-    s.connect(ctx.destination);
+    s.connect(getInboundBus(ctx));
     /* TRACKED, SO THE EXIT CAN REACH IT. An inbound clip used to be connected straight to
      * the destination and held by nothing: stopVoicePlayback could not see it, so the one
      * control this app promises -- one tap out from every state -- left a stranger's audio
@@ -1942,7 +1986,7 @@ function playRemoteVoice(dataUrl) {
     };
     s.start();
     showIncomingWoof(buf.duration);
-  }, function() { /* undecodable: nothing was started, nothing to release. */ });
+  }, function() { decodeDone(); });
 }
 
 /* A picture, not a word. Same shape as the camera's INCOMING SNAP popup. */
@@ -1968,11 +2012,24 @@ function removeVoicePopup(el) {
 function broadcastVoice(dataUrl) {
   /* Degrades exactly as broadcastPhoto does: no channel, no send, no throw. */
   if (!voiceChannel) return;
-  voiceChannel.send({ type: 'broadcast', event: 'clip',
-                      payload: { dataUrl: dataUrl, did: deviceId } });
+  /* NO `did`. Every other broadcast in this file carries a stable device id and NOTHING
+   * ANYWHERE READS ONE -- eight send sites, zero readers, verified by grep. On a channel
+   * anyone with the anon key can join, that is a stable identifier travelling beside a
+   * child's voice for no purpose at all. The other seven are pre-existing and named in
+   * FEEDBACK.md rather than changed from inside a voice work order. */
+  voiceChannel.send({ type: 'broadcast', event: 'clip', payload: { dataUrl: dataUrl } });
 }
 
 /* === THE RECORDER ========================================================= */
+/* ONE EXPRESSION FOR "THIS PANEL IS CAPTURING", used by the painting AND by the handlers.
+ * They were two: voiceSetStage gated only play and send on `stage === 'ready'`, while the
+ * preset tiles and the slider called playVoice() whenever a buffer existed. So recording a
+ * clip, tapping record again and then tapping a preset PLAYED THE OLD CLIP OUT OF THE
+ * SPEAKERS INTO THE OPEN MICROPHONE -- and stopVoicePlayback cancels voiceRaf, so the
+ * countdown ring froze while the 15-second timer kept running. Two expressions of one
+ * question that did not agree. */
+function voiceCapturing() { return !!voiceRecorder || voicePending; }
+
 function voiceSetStage(stage) {
   var overlay = document.getElementById('voiceOverlay');
   if (!overlay) return;
@@ -1995,7 +2052,18 @@ function voiceSetStage(stage) {
   /* Dimmed, never removed: a control that appears and disappears is a control a child
    * has to re-find. `pointer-events` is what actually disables it -- opacity alone would
    * leave a live button that merely looks dead. */
-  [[playBtn, ready], [sendBtn, ready]].forEach(function(pair) {
+  var live = !voiceCapturing();
+  var overlay2 = document.getElementById('voiceOverlay');
+  if (overlay2) {
+    var tiles = overlay2.querySelectorAll('.voice-preset');
+    for (var ti = 0; ti < tiles.length; ti++) {
+      tiles[ti].style.opacity = live ? '1' : '0.35';
+      tiles[ti].style.pointerEvents = live ? 'auto' : 'none';
+    }
+    var sl = document.getElementById('voiceSlider');
+    if (sl) { sl.style.opacity = live ? '1' : '0.35'; sl.style.pointerEvents = live ? 'auto' : 'none'; }
+  }
+  [[playBtn, ready && live], [sendBtn, ready && live]].forEach(function(pair) {
     if (!pair[0]) return;
     pair[0].style.opacity = pair[1] ? '1' : '0.25';
     pair[0].style.pointerEvents = pair[1] ? 'auto' : 'none';
@@ -2052,7 +2120,6 @@ function startVoiceRecording() {
   voiceSetStage('arming');
   var gen = voiceGen;
   navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(function(stream) {
-    voicePending = false;
     /* THE RACE THIS WORK ORDER CARES MOST ABOUT. getUserMedia resolves ASYNCHRONOUSLY,
      * so the panel can be closed -- or the permission prompt answered after closing it --
      * between the request and the grant. closeVoice cannot stop tracks that did not exist
@@ -2062,8 +2129,21 @@ function startVoiceRecording() {
      * to it and nothing left that holds a reference to turn it off. */
     if (gen !== voiceGen || !document.getElementById('voiceOverlay')) {
       stream.getTracks().forEach(function(t) { t.stop(); });
+      /* AND `voicePending` IS NOT OURS TO CLEAR. It was cleared here BEFORE this check ran,
+       * which meant A DEAD PANEL'S GRANT UNLOCKED A LIVE PANEL'S GUARD -- and the guard is
+       * the only thing standing between a three-year-old and an orphaned microphone.
+       *
+       * Reachable with a finger: tap mic (A) -> back -> Voice -> tap mic (B, pending set)
+       * -> A settles and clears the flag while B is still in flight -> tap mic (C) -> B
+       * and C both settle and C overwrites voiceStream. B'S MICROPHONE IS LIVE FOR THE
+       * LIFE OF THE PAGE. Most reachable on FIRST USE, where A waits on a permission
+       * bubble for as long as the adult takes.
+       *
+       * A stale continuation must touch NOTHING that belongs to the current generation.
+       * Its only business is stopping the tracks it was handed. */
       return;
     }
+    voicePending = false;
     voiceStream = stream;
     var chunks = [];
     var rec;
@@ -2085,11 +2165,19 @@ function startVoiceRecording() {
       blob.arrayBuffer().then(function(ab) {
         return getAudioCtx().decodeAudioData(ab);
       }).then(function(buf) {
-        if (!document.getElementById('voiceOverlay')) return;
+        /* AN OVERLAY CHECK IS NOT A GENERATION CHECK, and after close-then-reopen the
+         * overlay is BACK. Tapping back mid-record and reopening quickly installed THE
+         * PREVIOUS SESSION'S CLIP into the fresh panel, ready to play and to send --
+         * against §S.1's "the clip dies with the panel", on the only identifying data this
+         * app handles. The generation is the thing that actually died. */
+        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;
         voiceBuffer = buf;
         voiceSetStage('ready');
         doSound('chime');
-      }).catch(function() { voiceSetStage('empty'); doSound('error'); });
+      }).catch(function() {
+        if (gen !== voiceGen) return;
+        voiceSetStage('empty'); doSound('error');
+      });
     };
     rec.start();
     voiceSetStage('recording');
@@ -2097,6 +2185,8 @@ function startVoiceRecording() {
     /* THE HARD STOP. A three-year-old will hold the button; the timer does not care. */
     voiceTimers.push(setTimeout(function() { stopVoiceRecording(); }, MAX_RECORD_MS));
   }).catch(function() {
+    /* Same rule on the failure path, which had no generation check at all. */
+    if (gen !== voiceGen) return;
     voicePending = false;
     /* A refused or failed microphone must not leave the panel looking busy. */
     voiceSetStage(voiceBuffer ? 'ready' : 'empty');
@@ -2131,6 +2221,10 @@ function sendVoice() {
    * So the effect is applied here and only BYTES go on the wire. */
   var ctx = getAudioCtx();
   if (!ctx.createMediaStreamDestination || !window.MediaRecorder) { doSound('error'); return; }
+  /* Every continuation below belongs to THIS panel. `finish()` and `fr.onload` had no
+   * guard of any kind, and onstop's was an overlay check -- which a close-then-reopen
+   * satisfies with a different panel. */
+  var gen = voiceGen;
   voiceSending = true;
   var sendBtn = document.getElementById('voiceSendBtn');
   if (sendBtn) sendBtn.style.opacity = '0.4';
@@ -2160,6 +2254,7 @@ function sendVoice() {
   function finish() {
     voiceSendRec = null;
     voiceSendNodes = stopNodes(voiceSendNodes);
+    if (gen !== voiceGen) return;
     voiceSending = false;
     voiceSetStage('ready');
   }
@@ -2168,7 +2263,7 @@ function sendVoice() {
     voiceSendRec = null;
     voiceSendNodes = stopNodes(voiceSendNodes);
     /* Closed underneath us: the bytes belong to a panel that no longer exists. */
-    if (!document.getElementById('voiceOverlay')) { voiceSending = false; return; }
+    if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;
     if (!chunks.length) { finish(); doSound('error'); return; }
     /* THE SENDER MUST SPEAK THE GRAMMAR ITS OWN GATE ACCEPTS, and it did not.
      *
@@ -2192,6 +2287,9 @@ function sendVoice() {
     var blob = new Blob(chunks, { type: /^audio\//i.test(rawType) ? rawType : 'audio/webm' });
     var fr = new FileReader();
     fr.onload = function() {
+      /* Still ours? A clip must not be broadcast by the panel that replaced the one that
+       * recorded it. */
+      if (gen !== voiceGen) return;
       /* THE WIRE IS A data: URL, because that is the ONLY shape safeMediaUrl accepts --
        * two representations on purpose. Local playback never becomes a string at all. */
       var url = typeof fr.result === 'string' ? fr.result : '';
@@ -2293,8 +2391,9 @@ function buildVoiceSlider(preset) {
     if (e.pointerId !== dragging) return;
     dragging = -1;
     try { track.releasePointerCapture(e.pointerId); } catch (err) {}
-    /* Hear it immediately. This is the whole reason the slider exists. */
-    if (voiceBuffer) playVoice();
+    /* Hear it immediately -- unless the microphone is open, in which case this would play
+     * the previous clip into it. Same expression as the painting. */
+    if (voiceBuffer && !voiceCapturing()) playVoice();
   }
   track.addEventListener('pointerup', endDrag);
   track.addEventListener('pointercancel', endDrag);
@@ -2346,6 +2445,8 @@ function openVoice() {
      * that slides emit no click at all, and this panel is pressed with two hands.
      * `repeat` because a preset is chosen over and over -- the panel survives the press. */
     wireTap(tile, function() {
+      /* The same question the painting asks, asked the same way. */
+      if (voiceCapturing()) return;
       voicePreset = p.id;
       paintPresets();
       if (sliderEl && sliderEl.__paint) sliderEl.__paint();
@@ -2462,6 +2563,10 @@ function closeVoice() {
   /* A remote clip is audio the child did not start and could not stop. The exit is the
    * one control this app promises from every state, so it has to reach these too. */
   voiceInbound = stopNodes(voiceInbound);
+  if (voiceInboundBus) { try { voiceInboundBus.disconnect(); } catch (e) {} voiceInboundBus = null; }
+  /* Decodes in flight belong to a generation that no longer exists; their callbacks check
+   * `gen` and will not sound, so the counter is simply reset with them. */
+  voiceDecoding = 0;
   voicePopups.slice().forEach(removeVoicePopup);
   voiceBuffer = null;           /* the clip dies with the panel -- §S.1. */
   voiceSending = false;
@@ -2499,6 +2604,8 @@ window.__voice = {
       nodes: voiceNodes.length,
       sendNodes: voiceSendNodes.length,
       inbound: voiceInbound.length,
+      decoding: voiceDecoding,
+      capturing: voiceCapturing(),
       popups: voicePopups.length,
       timers: voiceTimers.length,
       channel: !!voiceChannel,

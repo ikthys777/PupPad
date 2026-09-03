@@ -28,6 +28,10 @@ console.log(`CHECK 24 — the inbound gate. subject ${COMMIT.slice(0, 12)}\n`);
 const failures = [];
 const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m, d) => { failures.push({ m, d }); console.log(`  FAIL  ${m}`); if (d) console.log(`        ${d}`); };
+/* --only, so a controls file can aim one plant at one section instead of running the
+ * whole check and hoping the red it gets is the red it meant. */
+const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7);
+const run = (n) => !ONLY || ONLY.split(',').includes(String(n));
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 /* Every request this server sees is recorded. The beacon is a request that should never
@@ -59,19 +63,44 @@ try {
   if (!present) { bad('there is no inbound gate at all', 'safeMediaUrl is not defined'); }
   else {
     /* 1. THE BEACON. A hostile payload driven through the real sink. */
+    if (run(1)) {
     const before = hits.length;
     const beacon = `${ORIGIN}/__beacon?id=1`;
-    await page.evaluate((b) => {
-      const url = safeMediaUrl(b, 'image');
-      if (url) showRemotePhoto(url);
+    /* THROUGH THE APP'S OWN REGISTERED HANDLER, NOT A RE-IMPLEMENTATION OF IT.
+     *
+     * This used to call `safeMediaUrl` itself and only invoke the sink if the gate passed
+     * — so it demonstrated that the VALIDATOR refuses a URL, which was never in doubt, and
+     * said nothing about whether the SINK IS GATED. Deleting the gate from
+     * joinCameraChannel's handler left this section green: the check was performing the
+     * very validation whose absence it was supposed to detect.
+     *
+     * Now a fake client is stood in front of joinCameraChannel so the app registers ITS
+     * OWN callback, and that captured callback is handed the hostile payload. */
+    const staged = await page.evaluate((b) => {
+      let handler = null;
+      const realGet = window.getSupabaseClient;
+      window.getSupabaseClient = () => ({
+        channel: () => ({ on(_t, _f, cb) { handler = cb; return this; }, subscribe() { return this; }, send() {} }),
+        removeChannel() {},
+      });
+      try {
+        window.cameraChannel = null;
+        joinCameraChannel();
+        if (!handler) return false;
+        handler({ payload: { dataUrl: b } });
+        return true;
+      } finally { window.getSupabaseClient = realGet; }
     }, beacon);
+    if (!staged) bad('the camera registered no inbound handler', 'this section proved nothing');
     await page.waitForTimeout(600);
     const fetched = hits.slice(before).filter((h) => h.startsWith('/__beacon'));
     if (fetched.length) bad(`the child's device fetched an attacker-named origin (${fetched.length} request(s))`,
       'no script ran and nothing was stolen — and invariant 3 is broken anyway, because a core surface reached the network');
     else ok('a payload naming a remote origin causes NO network request — the sink refused it');
+    }
 
     /* 2. AND THE GATE MUST STILL PASS REAL MEDIA, or it is a feature that was removed. */
+    if (run(2)) {
     const good = await page.evaluate(() => {
       const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
       const wav = 'data:audio/wav;base64,UklGRiQAAABXQVZF';
@@ -82,16 +111,20 @@ try {
       `image ${good.img}, audio ${good.aud}`);
     else if (!good.crossed) bad('the gate accepts an image where audio is expected — the kind is not enforced');
     else ok('a real data:image and data:audio pass, and an image offered as audio is refused');
+    }
 
     /* 3. THE RECEIVING HALF OF THE BOUND. */
+    if (run(3)) {
     const capped = await page.evaluate(() => {
       const huge = 'data:image/png;base64,' + 'A'.repeat(4 * 1024 * 1024);
       return safeMediaUrl(huge, 'image') === '';
     });
     if (!capped) bad('an oversized inbound payload is accepted', 'the designed bound is recorder-side only — it bounds what this device SENDS, not what it ACCEPTS');
     else ok('an oversized inbound payload is refused — the bound has its receiving half');
+    }
 
     /* 4. THE GALLERY IS BOUNDED, and evicts the OLDEST. */
+    if (run(4)) {
     const cap = await page.evaluate(() => {
       if (typeof galleryPush !== 'function') return null;
       cameraGallery = [];
@@ -102,6 +135,7 @@ try {
     else if (cap.len > cap.max) bad(`the gallery grew to ${cap.len} against a cap of ${cap.max}`);
     else if (cap.first === 'u0') bad('the gallery is capped but evicts the NEWEST', 'oldest-evicted is the ruling; this keeps the first 24 forever');
     else ok(`the gallery is bounded at ${cap.len} and evicts the oldest (holds ${cap.first}..${cap.last})`);
+    }
   }
 
   /* 5. THE RECEIVER DIES WITH THE PANEL — ALL THREE PANELS, AND BY EFFECT.
@@ -126,7 +160,7 @@ try {
     { name: 'canvas', close: 'closeCanvas', handle: 'canvasChannel', overlay: 'canvasOverlay' },
     { name: 'map',    close: 'closeTreasureMap', handle: 'mapChannel', overlay: 'mapOverlay' },
   ];
-  for (const p of panels) {
+  for (const p of (run(5) ? panels : [])) {
     const r = await page.evaluate(({ close, handle }) => {
       /* `var` at the top level of a classic script IS a window property, so both the
        * teardown and its handle are reachable by name with no eval anywhere. */
