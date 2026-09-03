@@ -220,6 +220,49 @@ it does not answer what became active.**
 > registered.** One command, and it is now the only thing standing between a written
 > check and an ornamental one.
 
+**A PLANT THAT APPLIES IS NOT A PLANT THAT REPRODUCES.** *(Ruled 2026-09-03. **The
+builder's, from `PUP-WO-0701` round 3, and it cost two false controls in one file.**)*
+
+The standing rule was that every plant must be a real defect that parses and goes red for
+its own stated reason. **That is necessary and it is not sufficient — it grades the patch,
+not the demonstration.** Two plants in check 26 applied byte-for-byte, changed real
+behaviour, and stayed **green**:
+
+- **§15's** restored the orphaned-microphone defect exactly, but the scenario used one
+  shared `getUserMedia` delay, so the second grant always settled first and the third tap
+  became a STOP. **The defect was present and the gesture could not reach it.**
+- **§9's** homoglyph pair was **assumed rather than measured**: Latin `A` against Greek
+  Alpha renders *differently* in this font stack, so the plant was not a homoglyph at all.
+  Latin against Cyrillic `A` is identical here; against `B` is the null control. **A branch
+  would have been certified on a pair that does not exercise it.**
+
+> **A control must show the check going red BECAUSE the planted defect was reached. When it
+> stays green, the first suspect is the scenario, not the plant.**
+
+**AND THE ARRANGE STEP IS PART OF WHAT MUST BE ATTACKED.** §16 opened with
+`closeVoice(); openVoice();` — and `closeVoice` is exactly what zeroes the decode counter,
+so its flood always ran from a freshly zeroed one. **Its pass line was true only of a state
+its own setup manufactured**, and never of the state the app is in after a child has used
+it. Run the identical flood without the leading teardown and the peak doubles.
+
+**A GUARD ON A CALLBACK WITH TWO EFFECTS MUST BE SHOWN TO COVER EACH ONE.** *(Ruled
+2026-09-03. **The builder's own defect, introduced by the fix for the previous one.**)*
+
+The inbound decode callback both **sounds** a clip and **decrements** the in-flight counter.
+The generation check covered sounding and not decrementing, so a decode still in flight at
+teardown decremented a counter `closeVoice` had already zeroed: **one ordinary gesture — a
+clip arrives, the child taps back while it is decoding — left the counter negative for the
+life of the page**, and the cap whose whole purpose is to bound the allocation became
+arbitrarily permissive. Measured 4 concurrent decodes against a cap of 3 after one cycle,
+24 after seven.
+
+**The comment asserted the opposite** — *"their callbacks check gen and will not sound, so
+the counter is simply reset with them."* True of one effect, written as though it covered
+both.
+
+> **Enumerate a guarded callback's side effects and check the guard against each. "The
+> callback is guarded" is not a property a callback has.**
+
 **A WORK ORDER'S METHOD MUST NOT DEFEAT THE REASON IT GIVES FOR ITSELF.** *(Ruled
 2026-09-03. **CC-A's defect, refused by the builder with the work order's own argument.**)*
 
