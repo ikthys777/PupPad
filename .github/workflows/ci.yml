@@ -550,6 +550,18 @@ jobs:
         # from the child's phone; unregistered, a future change reopens it in silence.
         run: node .github/ci/demo-inbound.mjs .
 
+      - name: "Check 25 — every demonstration in .github/ci/ actually runs"
+        # PUP-WO-0701 §6. FOUR check files reached main across three work orders without
+        # ever being added here; each was written with its controls and shown red, and
+        # none ran anywhere but a builder's machine. A MISSING CHECK AND A PASSING ONE
+        # ARE THE SAME COLOUR — passes-by-not-running moved from the ASSERTION, where
+        # every instinct in this repo is pointed, to the REGISTRATION, where none look.
+        #
+        # It asserts the EQUALITY, derived from the directory, never a list: a list goes
+        # stale exactly the way this file did, and the next check someone adds is the one
+        # missing from both. No browser, no network — it reads two files off disk.
+        run: node .github/ci/check-registered.mjs .
+
   # ==========================================================================
   # Publication — two copies, one Pages deployment.
   #

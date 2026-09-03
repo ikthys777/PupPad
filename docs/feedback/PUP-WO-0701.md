@@ -72,9 +72,26 @@ the first run: it already sat at 18m0s green on a 2-core runner and this adds fi
 browser-bound checks. The last CI budget guessed here was cancelled at 10m17s, and a
 cancellation looks exactly like a failure.
 
-**Worth its own follow-up, not built here:** nothing verifies that a `demo-*.mjs` in
-`.github/ci/` appears in `ci.yml`. That is a one-line check and it would have caught all
-five.
+**BUILT HERE, RULED BY CC-A, and the reasoning is why it is not a precedent for folding:**
+`ci.yml` was already open in this PR and inside the fence — the cheapest moment it will
+ever have — and **numbering it means it waits in the queue while unregistered checks stay
+invisible, which is the exact failure the item describes.** A parked item about things
+being invisible is a shape this project has paid for repeatedly. It is also what keeps the
+five registrations *true*: shipping them without it defers the same defect by one work
+order.
+
+**Check 25 asserts the EQUALITY, derived from the directory, never a list** — a list goes
+stale exactly the way `ci.yml` did, and the next file someone adds is the one missing from
+both. It fails closed if the directory match returns nothing, so it cannot pass by finding
+no work to do. **Red proof:** adding an unregistered `demo-*.mjs` exits **1** with
+`demo-planted-unregistered.mjs is not registered in ci.yml`; removing it exits **0**.
+*(Exit codes read directly — not through a pipe, which is how `node --check` was misread
+earlier in this same session.)*
+
+**CC-A's half, recorded because they recorded it:** merge discipline verified the fence,
+CI green, and the fix at source — **it never asked whether an added check RUNS.** Scope
+answers what changed; it does not answer what became active. That is why it reached `main`
+three times instead of once, and it is now a standing rule in `TEMPLATE.md`.
 
 ## 4. Verdict
 
