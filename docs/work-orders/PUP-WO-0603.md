@@ -68,34 +68,56 @@ reported **on this same S10+**, so it is firing **in the installed PWA too** —
 order's §0 alternative is closed by this answer and must be struck rather than tested
 again.
 
-## 2. THE CODE HOLE — `touch-action` IS NOT INHERITED
+## 2. ~~THE CODE HOLE~~ — MEASURED AND REFUTED. THE PREVENTION IS INERT.
 
-Sixteen declarations in the file, on `html`/`body` and fifteen elements. **`touch-action`
-does not inherit**, so every panel and overlay without one leaves the browser free to
-interpret a gesture — and a long press with a second contact becomes a pinch.
+**CC-B flagged this before building on it and I verified the load-bearing fact:
+`index.html:17` ALREADY carries `html,body{…touch-action:none…}`.**
 
-**Do it by ENUMERATION, not by a universal selector.** Apply `touch-action:none` to the
-full-bleed **panel and overlay containers** — the surfaces that should never scroll — and
-**leave every scroller's existing `pan-x`/`pan-y` alone.** The five `overflow-x:auto`
-strips must **gain `touch-action:pan-x`**, not lose their gesture: they are unprotected
-today *and* would be frozen by a blanket rule, so they need the opposite of both.
+**My §2 said "`touch-action` does not inherit, so every panel without one leaves the
+browser free to interpret a gesture." That is TRUE OF THE PROPERTY AND FALSE OF THE
+BEHAVIOUR** — for a **document-level** gesture the effective value is the intersection up
+the ancestor chain, so the root declaration already blocks page zoom whatever a panel
+computes. Measured with real two-point touch, and **the null result is what makes it
+mean anything**:
 
-**AND PROVE IT WITH A CHECK THAT CAN GO RED — "we added it everywhere" is a convention,
-and conventions are what this codebase keeps paying for.**
+| fixture | scale |
+|---|---|
+| **all-auto, no `touch-action` anywhere** | **1 → 5, ZOOMED** *(the instrument can see a zoom)* |
+| root `none`, panel unspecified | 1 → 1 blocked |
+| root `none`, panel explicitly `auto` | 1 → 1 blocked |
+| root `auto`, panel `none` | 1 → 1 blocked |
 
-> **THE TRAP: a hand-maintained list of containers is the convention wearing a check's
-> clothes.** It goes stale exactly the way the sixteen hand-placed declarations went
-> stale, and the next panel added is the one missing from both. **Derive the set from a
-> STRUCTURAL property** — walk the live DOM and assert that every element which is
-> full-bleed and positioned, or which hosts the app's own pointer wiring, has a computed
-> `touch-action` that is not `auto`. **Then plant a new container without it and show the
-> check goes red.** If the set cannot be derived structurally, say so and stop — a check
-> over a list someone must remember to update is not a check.
+**So adding `touch-action:none` to panel containers is INERT FOR ZOOM in the only
+environment we can measure — which is precisely what §1 forbids: it would look like a
+fix, change nothing, and close the ticket.** *That trap caught its own author.*
 
-**And add the multi-touch guard.** `touches.length` is tested in exactly **2** places
-today *(not 3)*. A guard that `preventDefault`s when `touches.length > 1` on the
-non-scrolling surfaces is the direct answer to "a long press with a second contact
-becomes a pinch" — **and a three-year-old always has a second contact.**
+**AND MY "THEY WOULD BREAK SILENTLY" WAS ALSO WRONG.** A root `touch-action:none` does
+**not** freeze descendant scrollers — the intersection stops at the scroll container, and
+all three cases scroll. The five `overflow-x` strips are **not** unprotected-and-frozen
+today. *A universal selector is still wrong for the other reasons, and `pan-x` on the
+strips is still defensible as **intent made explicit** — but not as a rescue.*
+
+### RULED: ship it as defence in depth, and RETARGET THE CHECK
+
+**CC-B offered (a) ship all four with an honesty note, or (b) strike prevention. Ruled:
+(a) — with a correction to the check that neither option contained.**
+
+- **The declarations ship, clearly labelled DEFENCE IN DEPTH, never as the fix.** They
+  cost nothing and they close a real hole against a nameable future change: `:17` is one
+  line in a file that changes constantly.
+- **BUT THE STRUCTURAL CHECK MUST ASSERT THE DEFENCE, NOT THE HEDGE.** As proposed it
+  would assert *containers carry `touch-action`* — **that is the hedge, and asserting it
+  is §6.1 member 6: a proxy the property does not follow from.** The property that
+  actually works is `:17`. **So the check asserts that a document-level pinch DOES NOT
+  ZOOM, and its plant is removing `touch-action:none` from `html,body`.** CC-B's row-1
+  fixture already proves that assertion is possible and can go red.
+- Keep the structural sweep too — it is genuinely derived, not remembered — but as the
+  **secondary** assertion over the three containers it discovers (`#root`, `#alertFlash`,
+  `#cameraOverlay`), not as the thing standing between Buddy and a lockout.
+
+**And the feedback doc says plainly that the container declarations were not shown to
+change any behaviour.** An inert change is fine; an inert change believed to be the fix
+is how the next person stops looking.
 
 ## 3. THE RECOVERY PATH — AND BE HONEST ABOUT WHAT IT CAN DO
 
