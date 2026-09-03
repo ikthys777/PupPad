@@ -220,6 +220,30 @@ it does not answer what became active.**
 > registered.** One command, and it is now the only thing standing between a written
 > check and an ornamental one.
 
+**A WORK ORDER'S METHOD MUST NOT DEFEAT THE REASON IT GIVES FOR ITSELF.** *(Ruled
+2026-09-03. **CC-A's defect, refused by the builder with the work order's own argument.**)*
+
+`PUP-WO-0701` §S2.2 ordered three inline copies of `closeCamera`'s channel-release shape
+into `closeCanvas`, `closeTreasureMap` and the new voice panel. **The justification
+written one paragraph above it was that a rule expressed in many places rots** — the
+"which code is older than the rule?" finding, which was the entire reason the fix was
+worth folding in. The instruction manufactured four copies of the rule whose duplication
+it was written to end. The builder refused it, hoisted `releaseChannel()`, and kept the
+nulling at the call site because a callee cannot clear its caller's variable.
+
+**This is the fifth self-contradicting work order in this project and it is a NEW SHAPE.**
+The previous four contradicted their own **fence** — forbidding a file the body required.
+This one contradicted its own **rationale**, which is harder to see: a fence conflict is
+two rules in one document, and this is one rule and its own stated purpose, agreeing in
+topic and disagreeing in direction.
+
+> **Before dispatch, read each instruction against the reason given for it in the same
+> section. If the method would produce the thing the reason objects to, the method is
+> wrong — the reason is why the work order exists.**
+
+*The catch is the builder's and cost one round trip; unrefused, it would have shipped four
+copies of a rule under a paragraph explaining why four copies is the defect.*
+
 **A HUMAN DECISION COSTS ONE THREAD, NOT THE LOOP.** *(Ruled 2026-09-03. **CC-A's
 defect, found by the co-architect when Scotty asked why the cycle kept stopping.**)*
 

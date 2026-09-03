@@ -479,7 +479,7 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0701` part 2 — the voice panel** | **DISPATCHED to CC-B 2026-09-03.** Part 1 merged; the build directive is `PUP-WO-0701.md` §S2; acceptance **3–8 open** | in flight |
+| 1 | **`PUP-WO-0701` part 2 — the voice panel** | **PR #65 OPEN, CI GREEN, RETURNED UNMERGED 2026-09-03.** Five product findings; **P1 is the work order's own flag-and-stop** — `voicePending` is not generation-scoped, so a dead panel's grant unlocks a live panel's guard and a microphone survives the page. Three findings about the checks, incl. **the repo's own "requirement ≠ backstop" assertion being unreachable** | CC-B, second pass |
 | 2 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
 | 4 | `PUP-WO-0112` — the CI job split | scoped, no file | nobody |
@@ -496,6 +496,14 @@ Promotion is Scotty's alone.**
 - **`PUP-WO-0602` acceptance item 1** — that an Android long press no longer opens the
   context menu. The suppression is fully verified; **the trigger is not, because Chromium
   cannot raise one.** **Needs the S10+.**
+- **THE VOICE AUDIENCE — SCOTTY'S, AND IT NEEDS A NUMBER.** `puppad-voice` is a fixed
+  global channel, unscoped by any pairing id, `self:false`, no per-clip addressing and no
+  revocation: **anyone holding the URL and the anon key receives every clip from every
+  install.** That is already true of photos. What changes the price is that **this panel
+  carries the first identifying data this app has ever handled** — a coordinate is not
+  identifying and a three-year-old's voice is. *(The builder's sharpening, and it is
+  right: "I would not ship this to a device outside the family without scoping the
+  channel.")* **Not a defect and not the builder's to fix — a blast-radius decision.**
 - **Roadmap gate 3 and gate 8** remain open and are not simulable.
 - **A play session with Buddy.** The drag now shows him the piece, the picker fits, tiles
   are the size Scotty asked for, and there is a perfect-clear celebration to win.
