@@ -15,10 +15,19 @@
  * therefore declared inside mount(). The source's `store.ts:156` module-scope create()
  * and its `store.ts:424` window.__blockPop debug global do not come across.
  *
- * Deliberately NOT ported (PUP-WO-0400 §4): the 8x8 entry, the four assists, particles,
- * audio, cheer text, shake, haptics, the score's presentation, and `Piece.id` — whose
- * only reader was a React key (`PieceTray.tsx:22`), which is not stable or unique (its
- * mint counter resets on module load) and would have imported a bug.
+ * Deliberately NOT ported (PUP-WO-0400 §4): the 8x8 entry, the four assists, shake, and
+ * `Piece.id` — whose only reader was a React key (`PieceTray.tsx:22`), which is not
+ * stable or unique (its mint counter resets on module load) and would have imported a
+ * bug.
+ *
+ * THAT LIST USED TO BE LONGER AND IT WENT STALE WITHOUT ANYONE EDITING IT. It also named
+ * audio, haptics, particles, cheer text and "the score's presentation". PUP-WO-0402 built
+ * the audio and the haptics and left this sentence alone, so for two work orders the file
+ * opened by declaring absent a feature sitting 1000 lines below it. PUP-WO-0404 built the
+ * other three. A not-ported list is a claim about the whole file made at the top of it,
+ * which is the cheapest kind of comment to write and the easiest to falsify from a
+ * distance: it is FALSIFIED BY ADDITION, so nothing in the diff that falsifies it is
+ * anywhere near it. Struck to what is still true.
  */
 
 /* --- the shape catalogue (pieces.ts) --------------------------------------- */
@@ -136,7 +145,15 @@ export default function mount(host, api) {
     drop: 'tap',       /* it lands */
     refuse: 'lock',    /* it cannot go there. Quiet, on purpose. */
     clear: 'twinkle',  /* a line goes. The reward, and the loudest cue. */
-    deal: 'blip'       /* the tray refills */
+    deal: 'blip',      /* the tray refills */
+    /* §2. THE WIN, AND IT IS ALLOWED TO BE THE LOUDEST THING IN THE GAME. Both are
+     * doSound banks (index.html:176/181) — checked, not assumed, because an unknown
+     * name is a SILENT no-op that nothing reports and PUP-WO-0400 shipped one for a
+     * commit. `powerUp` is the only ascending bank that ends above 2kHz and runs ~750ms;
+     * `chime` is four warm notes under 800Hz layered under it so the win is not merely
+     * brighter than a line clear but WIDER than one. */
+    win: 'powerUp',
+    cheer: 'chime'
   });
 
   function cue(name) {
@@ -157,6 +174,87 @@ export default function mount(host, api) {
    * multiple of the BOARD cell. One name each, measured at no viewport. */
   var TRAY_INSET = 8;
   var TRAY_CELL_CAP = 1.35;
+
+  /* ===================================================================== *
+   * §1 — THE COMBO IS SPOKEN TO THE CHILD AS THE BOARD, NOT AS A NUMBER
+   * ===================================================================== *
+   * Buddy is three and cannot read. A readout of 240 is decoration for an adult, and
+   * northstar invariant 1 forbids text being the ONLY way to know a thing. So the
+   * multiplier is expressed as HOW MUCH BETTER THE WORLD REACTS, in four dimensions at
+   * once — sparks, brightness, pitch, and the length of the buzz. He learns that two
+   * lines at once feels better than one WITHOUT EVER SEEING A DIGIT.
+   *
+   * AND THERE IS NO OPPOSITE. A placement that clears nothing keeps the plain `drop`
+   * tick it has always had and gains NOTHING from this channel — no dimmer flash, no
+   * lower note, no shorter buzz. Northstar §5 makes scores a non-goal because they
+   * import a fail state; a channel that can only ever say "that was good, and that was
+   * BETTER" imports none. The absence of a reward is not a punishment, and the way to
+   * keep it that way is for the silent case to have no expression here at all.
+   *
+   * THE LADDER SATURATES, AND THAT IS THE POINT OF `COMBO_TOP`. `combo` is unbounded —
+   * `:956` increments it on every clearing placement forever — but every dimension here
+   * is bounded, and the pitch one is bounded BY THE SHELL: `playTone` clamps hz into
+   * [40,3000] (index.html:139-140). A ladder that walked past 3000 would return the SAME
+   * clamped note for two different combos, and a child would be told two things were
+   * equal that are not — a silent failure of the one acceptance clause that matters.
+   * The top of this ladder is COMBO_HZ_BASE + COMBO_HZ_STEP * (COMBO_TOP - 1) = 1720 Hz,
+   * which is 1280 Hz of headroom. Check 21 §16 does not re-derive that arithmetic — it
+   * OBSERVES that no two ranks sound the same, which is the property the clamp threatens
+   * and the only one worth asserting.
+   *
+   * These are not viewport numbers. Nothing here is a length measured against a screen:
+   * a rank is a count, a peak is an opacity, a pitch is a frequency, and a duration is
+   * milliseconds. Architecture §5's rule binds lengths, and none of these is one. The
+   * ONE length below (SPARK_SPREAD_CELLS) is expressed in BOARD CELLS for exactly that
+   * reason, and resolved against the grid as measured. */
+  var COMBO_TOP = 5;
+  var SPARKS_PER_CELL_BASE = 3;
+  var SPARKS_PER_CELL_STEP = 1;
+  /* A CEILING ON EMISSION POINTS, NOT ON SPARKS — because a cap on the total would make
+   * the count stop rising with the combo exactly where the combo is most worth feeling,
+   * and check 21 §16 would then be measuring the cap instead of the ladder. A piece can
+   * complete four lines at once (~24 cells); bursting all of them at rank 5 is 168 nodes
+   * animating together, which is not an S10+ budget. Bursting EIGHT of them is 56, and
+   * per-point intensity still rises with every rank. */
+  var EMIT_POINTS_MAX = 8;
+  var SPARK_SPREAD_CELLS = 1.9;
+  var SPARK_MS = 620;
+  var FLASH_PEAK_BASE = 0.16;
+  var FLASH_PEAK_STEP = 0.07;
+  var FLASH_MS = 300;
+  var COMBO_HZ_BASE = 880;
+  var COMBO_HZ_STEP = 210;
+  var COMBO_TONE_MS = 90;
+  var BUZZ_MS_BASE = 14;
+  var BUZZ_MS_STEP = 6;
+
+  /* §2. THE CELEBRATION ENDS BY ITSELF AS WELL AS BY A TAP. Invariant 5 applies to a win
+   * exactly as it applies to a game over: a three-year-old must not be stuck admiring
+   * fireworks with no idea how to leave. Both ways out are built, not one. */
+  var CELEB_MS = 3400;
+  var CELEB_MS_REDUCED = 1600;
+
+  /* THE WINNING TAP MUST NOT ALSO BE THE DISMISSING TAP, AND IT WAS.
+   *
+   * Measured, not reasoned: the celebration opens synchronously inside the `touchend`
+   * that placed the last piece, so it is inserted UNDER THE FINGER THAT IS STILL THERE
+   * — and the browser then synthesises a `click` from that same tap, which lands on an
+   * element that did not exist when the gesture began. Recorded in the harness at
+   * `pointerdown 910 / touchend 936 / click ON-CELEB 936`: the fireworks were destroyed
+   * in the same millisecond they were created, every time, and what shipped would have
+   * been a win that flickers and vanishes.
+   *
+   * This is architecture §6.1 member 6's synthesised click seen from the other side. The
+   * project's four earlier instances were all "the click never comes"; this is "the
+   * click comes and it is not the child's". Both are the same underlying fact — A
+   * SYNTHESISED CLICK IS NOT A FINGER — and a control that appears mid-gesture must
+   * therefore ignore the tail of the gesture that created it.
+   *
+   * 350ms is a settle window, not a timing guess about the synthesiser: it is longer
+   * than any tail Chromium produces and far shorter than a three-year-old's decision to
+   * leave. A tap inside it is ignored rather than queued — deferring it would just move
+   * the same accidental dismissal 350ms later. */
+  var CELEB_ARM_MS = 350;
 
   /* --- engine (engine.ts), pure, no DOM --------------------------------- */
 
@@ -343,6 +441,23 @@ export default function mount(host, api) {
     listeners.push([target, type, fn, opts]);
   }
 
+  /* §2. THE WIN CONDITION, AND THE GAME HAD NO CONCEPT OF ONE. Easy mode cannot be
+   * lost — `rescueUnplaceable` swaps any piece that does not fit and a 1x1 fits wherever
+   * a single cell is free, so `over` needs the board entirely full, and the placement
+   * that fills a row's last cell clears it. 108 finger placements never reached it.
+   * A board cleared to nothing is therefore the ONLY terminal-feeling event Buddy can
+   * reach, which is why §2 gives it fireworks instead of a flourish. Pure, no DOM, and
+   * it reads the board it is handed rather than the binding — `place` calls it on
+   * `cleared.board` before that value has been assigned anywhere a mistake could pick up
+   * the pre-clear board instead. */
+  function boardEmpty(b) {
+    if (!b || !b.length) return false;
+    for (var r = 0; r < b.length; r++) {
+      for (var c = 0; c < b[r].length; c++) if (b[r][c] !== 0) return false;
+    }
+    return true;
+  }
+
   /* --- persistence ------------------------------------------------------ */
 
   function validCell(v) {
@@ -458,10 +573,17 @@ export default function mount(host, api) {
     'linear-gradient(rgba(0,255,136,.035),rgba(0,255,136,.035));',
     'background-size:auto,100% 1px;background-position:0 0,0 50%;',
     'background-repeat:no-repeat,no-repeat;',
-    /* THE LEFT INSET IS THE EXIT'S COLUMN, NOT PADDING. #gameBack is position:fixed at
-     * x 10-74, 64px square, forever. Copied from the control panel's own gutter rather
-     * than written as a bare 84: landscape phones put punch-holes and curved edges into
-     * the SIDE insets, which a tablet does not, and env() is the only thing that knows. */
+    /* THE LEFT INSET IS THE EXIT'S COLUMN, NOT PADDING. #gameBack is `position:fixed` at
+     * `left:max(10px,env(safe-area-inset-left))`, 64px square (index.html:2139-2140) — so
+     * it owns x 10-74 AT INSET ZERO and x 30-94 on the fleet, whose punch-holes put ~30px
+     * into the SIDE inset in landscape. The expression below is right and has always been
+     * right; the sentence here used to state the inset-zero span as though it were the
+     * only one, which is architecture §5's rule wearing a different hat — A NUMBER IS
+     * ONLY EVER CORRECT AT THE VIEWPORT (here: THE INSET) IT WAS MEASURED AT. Copied from
+     * the control panel's own gutter rather than written as a bare 84, because env() is
+     * the only thing that knows. §1's readout is kept OUT of this column for the same
+     * reason it exists: it is the exit's, and the exit is the one control that must never
+     * be crowded. */
     'padding-left:max(84px,calc(env(safe-area-inset-left) + 74px));',
     'padding-right:max(8px,env(safe-area-inset-right));',
     '-webkit-tap-highlight-color:transparent;touch-action:none;user-select:none;',
@@ -571,6 +693,80 @@ export default function mount(host, api) {
      * elements and did not go back for the third. */
     '.bp-drag[hidden]{display:none}',
 
+    /* ================= §1/§2: THE CHILD'S CHANNEL AND THE WIN ================
+     * EVERY ELEMENT BELOW IS CREATED AND REMOVED, NEVER TOGGLED WITH `hidden`. That is
+     * a deliberate response to the defect three rules above: `.bp-drag` carries an author
+     * `display`, `hidden` is only the UA rule `[hidden]{display:none}`, and any author
+     * `display` beats it — so this file already carries THREE `[hidden]{display:none}`
+     * compensations, each added after the matching bug shipped. `sweep()` has never
+     * needed one because it builds its element and throws it away, and so does all of
+     * this. The rule the file learned the hard way is "when you give an element a
+     * display, check what else compensates for that property"; the rule it can follow
+     * instead is DO NOT GIVE A LIFETIME TO A STYLE FLAG. */
+
+    /* The spark layer is clipped to the board's own rounded rect so a burst at the edge
+     * cannot paint over the tray or the exit's gutter. z-index 4 puts it above the wells
+     * and their ghosts and BELOW `.bp-drag` at 5 — a spark must never hide the piece the
+     * child is holding. */
+    '.bp-fx{position:absolute;inset:0;pointer-events:none;z-index:4;overflow:hidden;',
+    'border-radius:22px}',
+    '.bp-spark{position:absolute;width:var(--bp-sz);height:var(--bp-sz);',
+    'margin-left:calc(var(--bp-sz) / -2);margin-top:calc(var(--bp-sz) / -2);',
+    'border-radius:50%;background:var(--bp-c);box-shadow:0 0 8px var(--bp-c);',
+    'will-change:transform,opacity;',
+    'animation:bp-spark var(--bp-dur) cubic-bezier(.16,.84,.44,1) var(--bp-del) both}',
+    '@keyframes bp-spark{from{transform:translate(0,0) scale(.4);opacity:0}',
+    '14%{opacity:1}to{transform:translate(var(--bp-dx),var(--bp-dy)) scale(.2);opacity:0}}',
+
+    /* THE FLASH IS AN OPACITY FADE AND NOTHING ELSE — no scale, no travel. That is why
+     * it is the dimension kept under prefersReducedMotion while the sparks are not: what
+     * that preference protects against is vestibular motion, and a brightness that falls
+     * to zero in place has none. It is also why it can be MEASURED as a peak: the peak is
+     * a custom property the element is built with, so a check reads paint, not intent. */
+    '.bp-flash{position:absolute;inset:0;pointer-events:none;z-index:3;border-radius:22px;',
+    'background:radial-gradient(circle at 50% 50%,',
+    'rgb(255 255 255 / var(--bp-peak)) 0%,rgb(255 255 255 / 0) 72%);',
+    'animation:bp-flash var(--bp-fade) ease-out forwards}',
+    '@keyframes bp-flash{from{opacity:1}to{opacity:0}}',
+
+    /* THE WIN. Full-root, ABOVE `.bp-over` at 10, because a perfect clear and a game
+     * over cannot both be true (an empty board fits every piece) but the z order should
+     * not depend on that being reasoned about correctly forever. It is the only element
+     * in this file that takes pointer events on purpose: the whole surface is the way
+     * out, so a three-year-old cannot miss it. */
+    '.bp-celeb{position:absolute;inset:0;z-index:12;display:flex;align-items:center;',
+    'justify-content:center;touch-action:none;-webkit-tap-highlight-color:transparent;',
+    'background:rgb(15 29 58 / .30)}',
+    '.bp-cheer{font-size:min(15vh,64px);font-weight:800;line-height:1;color:#fff;',
+    'letter-spacing:.5px;padding:.35em .6em;border-radius:999px;white-space:nowrap;',
+    'background:radial-gradient(circle at 34% 28%,#ffe9a8,#f0a93c 62%,#e0761f 100%);',
+    'color:#3a1d02;box-shadow:0 10px 30px rgb(0 0 0 / .45),',
+    'inset 0 4px 0 rgb(255 255 255 / .55);',
+    'animation:bp-cheer 1500ms cubic-bezier(.28,1.5,.52,1) both}',
+    /* POPS UP, GROWS FAST, BURSTS — the three verbs the work order asked for, in that
+     * order, and the burst is the reason this is `both` rather than `forwards`: the
+     * element is removed on a timer, but if that timer is ever late the last frame must
+     * already be the empty one. */
+    '@keyframes bp-cheer{0%{transform:scale(.15) rotate(-8deg);opacity:0}',
+    '24%{transform:scale(1.18) rotate(2deg);opacity:1}',
+    '38%{transform:scale(.98) rotate(0deg);opacity:1}',
+    '72%{transform:scale(1.04);opacity:1}',
+    '100%{transform:scale(1.9);opacity:0}}',
+    /* Reduced motion gets the SAME words, the same sound and the same duration — it
+     * simply does not travel. The win is not a thing to be opted out of. */
+    '.bp-celeb-calm .bp-cheer{animation:bp-cheer-calm 1500ms ease-out both}',
+    '@keyframes bp-cheer-calm{0%{opacity:0}18%{opacity:1}82%{opacity:1}100%{opacity:0}}',
+
+    /* §1 THE ADULT'S READOUT. `pointer-events:none` and a plain <div>: it is not a
+     * control, it must never eat a tap meant for the tray, and acceptance §1.3 measures
+     * exactly that. It is a FLEX SIBLING of the three slots rather than an overlay on
+     * them, so "does not intersect an interactive rect" is a property of the layout
+     * instead of a promise about coordinates. */
+    '.bp-score{flex:0 0 auto;pointer-events:none;text-align:right;padding:0 8px 4px 0;',
+    'font:600 15px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;',
+    'font-variant-numeric:tabular-nums;letter-spacing:.6px;',
+    'color:rgb(255 255 255 / .46);text-shadow:0 1px 2px rgb(0 0 0 / .5)}',
+
     /* THE TERMINAL STATE'S ONE WAY BACK. §8.5 and invariant 5: a single affordance
      * INSIDE host that resumes play. It does NOT call api.close() — the shell's own exit
      * is the way out of the game; this is the way out of the STATE. No text: one glyph. */
@@ -599,6 +795,25 @@ export default function mount(host, api) {
 
   var trayEl = document.createElement('div');
   trayEl.className = 'bp-tray';
+
+  /* §1 — SCOTTY'S CHANNEL. Appended here, BEFORE the slot loop below, so it is the
+   * tray column's first flex child and the three slots lay out under it. Two things
+   * follow from that placement rather than from a promise:
+   *   IT IS NOT IN THE EXIT'S COLUMN. The exit owns the left gutter `.bp-root` reserves
+   *   as padding; this is inside the CONTENT box, at the far right of it, which is the
+   *   furthest point on the screen from the exit itself.
+   *   (Written without backticks around that element's name on purpose — see the note
+   *   at the foot of this file about check 11's specifier scanner.)
+   *   IT CANNOT OVERLAP A CONTROL. Flex siblings do not intersect. An absolutely
+   *   positioned readout would have had to be kept clear of three moving slot rects at
+   *   every viewport, and architecture §5 is the record of how that ends.
+   * It is also NOT the only expression of anything: every movement of this number is
+   * simultaneously spoken to the child as sparks, brightness, pitch and buzz, which is
+   * how a numeral survives northstar invariant 1 in a toy for a non-reader. */
+  var scoreEl = document.createElement('div');
+  scoreEl.className = 'bp-score';
+  scoreEl.setAttribute('data-score', '');
+  trayEl.appendChild(scoreEl);
 
   root.appendChild(boardWrap);
   root.appendChild(trayEl);
@@ -652,6 +867,7 @@ export default function mount(host, api) {
   }
 
   var overlay = null;
+  var celebEl = null;
 
   /* The console's paw as a data URI, one per colour, built on demand and kept. No
    * innerHTML, no image file, no urlsToCache line — invariant 3 is untouched. pawSVG is
@@ -688,6 +904,159 @@ export default function mount(host, api) {
     if (sweepTimer) { clearTimeout(sweepTimer); sweepTimer = 0; }
     if (sweepEl && sweepEl.parentNode) sweepEl.parentNode.removeChild(sweepEl);
     sweepEl = null;
+  }
+
+  /* --- §1/§2 the emitter: one-shot, board-local, released by teardown ----- *
+   * ONE TIMER REGISTRY RATHER THAN ONE NAMED HANDLE PER EFFECT, and that is a change of
+   * kind from the sweepTimer next door, so it is worth saying why. A sweep is exactly one
+   * pending callback and a name holds it fine. The fireworks are a STAGGERED SEQUENCE —
+   * the whole point of them is that bursts land at different times — so the number of
+   * live timers is a property of the celebration rather than of the code, and a set of
+   * named handles could not be written down in advance. §8.1 requires teardown to
+   * release every acquired resource; a registry makes that structural instead of a
+   * promise to remember the next handle someone adds. */
+  var fxEl = null;
+  var fxTimers = [];
+  /* THE LAYER'S TEARDOWN IS A SEPARATE, SINGLE-OWNER HANDLE AND NOT ONE OF THE REGISTRY
+   * TIMERS. The first version put it in `fxTimers` with everything else, and a second
+   * line clear inside the first burst's lifetime then had its sparks deleted mid-flight
+   * by the FIRST burst's sweeper — the layer is shared, so whoever armed first decided
+   * when everyone's sparks died. That is `beginClear`'s defect exactly, one function
+   * along: ONE OWNER, ONE CANCELLATION PATH, and the owner cancels before it decides.
+   * A combo is the case where clears arrive close together, so this is the path the
+   * feature is most used on rather than an edge. */
+  var fxSweepTimer = 0;
+
+  function fxAfter(ms, fn) {
+    var t = setTimeout(function () {
+      var i = fxTimers.indexOf(t);
+      if (i !== -1) fxTimers.splice(i, 1);
+      if (dead) return;
+      fn();
+    }, ms);
+    fxTimers.push(t);
+    return t;
+  }
+
+  function fxLayer() {
+    if (!fxEl) {
+      fxEl = document.createElement('div');
+      fxEl.className = 'bp-fx';
+      boardWrap.appendChild(fxEl);
+    }
+    return fxEl;
+  }
+
+  function clearFx() {
+    for (var i = 0; i < fxTimers.length; i++) clearTimeout(fxTimers[i]);
+    fxTimers.length = 0;
+    if (fxSweepTimer) { clearTimeout(fxSweepTimer); fxSweepTimer = 0; }
+    if (fxEl && fxEl.parentNode) fxEl.parentNode.removeChild(fxEl);
+    fxEl = null;
+  }
+
+  /* Re-arm, never stack: cancels the outgoing sweep before deciding the new one. */
+  function armFxSweep(ms) {
+    if (fxSweepTimer) { clearTimeout(fxSweepTimer); fxSweepTimer = 0; }
+    fxSweepTimer = setTimeout(function () {
+      fxSweepTimer = 0;
+      if (dead || celebEl) return;
+      clearFx();
+    }, ms);
+  }
+
+  /* The rank is the combo with its top clipped. See COMBO_TOP. A combo of 0 and a combo
+   * of 1 are the same event — the first clear of a run — because `:956` sets combo to 1
+   * on it; the guard is here so a corrupted resume cannot produce a negative rank and a
+   * negative spark count, which would silently emit nothing. */
+  function comboRank(c) {
+    var r = (typeof c === 'number' && isFinite(c)) ? Math.floor(c) : 1;
+    if (r < 1) r = 1;
+    if (r > COMBO_TOP) r = COMBO_TOP;
+    return r;
+  }
+
+  function comboHz(rank) { return COMBO_HZ_BASE + COMBO_HZ_STEP * (rank - 1); }
+
+  /* SPARK GEOMETRY IS DERIVED FROM THE GRID AS MEASURED, NOT FROM `cellPx`. cellPx is
+   * computed by relayout from the host rect; the grid's own rect is what is on the
+   * glass. They should agree, and when they do not it is the glass that is right — and
+   * a burst aimed with the stale one paints beside the cell that cleared. Architecture
+   * §6.1 member 7 is the record of resolving a reference and stopping one frame short. */
+  function burstAt(x, y, count, spread, color, delay) {
+    if (dead || reduced || !(count > 0)) return 0;
+    var layer = fxLayer();
+    var made = 0;
+    for (var i = 0; i < count; i++) {
+      var ang = (Math.PI * 2 * i) / count + (i % 2 ? 0.55 : 0);
+      /* Index arithmetic, NOT Math.random: check 21's harness pins Math.random to a
+       * constant, so a random radius would collapse every spark onto one ring under the
+       * instrument and look nothing like what ships. A varied burst must be varied in
+       * the pinned world too. */
+      var dist = spread * (0.42 + 0.58 * (((i * 37) % 100) / 100));
+      var el = document.createElement('span');
+      el.className = 'bp-spark';
+      el.style.left = Math.round(x) + 'px';
+      el.style.top = Math.round(y) + 'px';
+      el.style.setProperty('--bp-sz', (5 + ((i * 13) % 5)) + 'px');
+      el.style.setProperty('--bp-c', color);
+      el.style.setProperty('--bp-dx', Math.round(Math.cos(ang) * dist) + 'px');
+      el.style.setProperty('--bp-dy', Math.round(Math.sin(ang) * dist + dist * 0.30) + 'px');
+      el.style.setProperty('--bp-dur', SPARK_MS + 'ms');
+      el.style.setProperty('--bp-del', (delay || 0) + 'ms');
+      layer.appendChild(el);
+      made++;
+    }
+    return made;
+  }
+
+  function flash(peak, ms) {
+    if (dead) return null;
+    var layer = fxLayer();
+    var el = document.createElement('div');
+    el.className = 'bp-flash';
+    el.style.setProperty('--bp-peak', String(peak));
+    el.style.setProperty('--bp-fade', ms + 'ms');
+    layer.appendChild(el);
+    fxAfter(ms + 40, function () { if (el.parentNode) el.parentNode.removeChild(el); });
+    return el;
+  }
+
+  /* THE CHILD'S WHOLE CHANNEL, IN ONE PLACE, CALLED ONLY WHEN LINES WENT. There is no
+   * else-branch anywhere in this function and there must never be one: the non-clearing
+   * placement's expression here is that this is not called. */
+  function comboReact(clearedCells, rank) {
+    if (dead) return 0;
+    /* Pitch first — it is the dimension that survives reduced motion, so it must not sit
+     * behind any early return that motion can take. */
+    try { api.tone(comboHz(rank), COMBO_TONE_MS, 'sine'); } catch (e) {}
+    try { api.vibrate(BUZZ_MS_BASE + BUZZ_MS_STEP * (rank - 1)); } catch (e) {}
+    flash(FLASH_PEAK_BASE + FLASH_PEAK_STEP * (rank - 1), FLASH_MS);
+    if (reduced) return 0;
+
+    var br = boardWrap.getBoundingClientRect();
+    var gr = grid.getBoundingClientRect();
+    if (!gr.width || !gr.height) return 0;
+    var ox = gr.left - br.left;
+    var oy = gr.top - br.top;
+    var cw = gr.width / N;
+    var ch = gr.height / N;
+    var per = SPARKS_PER_CELL_BASE + SPARKS_PER_CELL_STEP * (rank - 1);
+    var spread = Math.max(12, cw * SPARK_SPREAD_CELLS);
+
+    var pts = clearedCells || [];
+    var step = pts.length > EMIT_POINTS_MAX ? pts.length / EMIT_POINTS_MAX : 1;
+    var n = pts.length > EMIT_POINTS_MAX ? EMIT_POINTS_MAX : pts.length;
+    var made = 0;
+    for (var i = 0; i < n; i++) {
+      var cell = pts[Math.floor(i * step)];
+      if (!cell) continue;
+      var ramp = CANDY[((cell.color || 1) - 1) % CANDY.length];
+      made += burstAt(ox + (cell.c + 0.5) * cw, oy + (cell.r + 0.5) * ch,
+                      per, spread, ramp.light, i * 24);
+    }
+    armFxSweep(SPARK_MS + n * 24 + 80);
+    return made;
   }
 
   function paintCandyVars(el, color) {
@@ -913,6 +1282,13 @@ export default function mount(host, api) {
     }
   }
 
+  /* §1. The adult's channel, and the ONLY place the number is written down. Called
+   * from every site that can change `score`: place, restart and boot. */
+  function renderScore() {
+    if (dead) return;
+    scoreEl.textContent = String(score);
+  }
+
   /* --- the clear window: ONE OWNER, ONE CANCELLATION PATH ---------------- */
 
   /* THE SOURCE STRANDS THIS FOREVER AND THE STRANDED STATE IS UNLEAVEABLE.
@@ -968,12 +1344,27 @@ export default function mount(host, api) {
     beginClear(cleared.cells);
     over = !anyTrayFits(board, tray);
 
+    /* §2. ASKED OF `cleared.board` AND ASKED BEFORE ANYTHING ELSE CAN TOUCH IT. The
+     * tray refill above may deal new pieces and `rescueUnplaceable` may swap them, but
+     * neither writes the board, so this is the state the child just produced. */
+    var perfect = lines > 0 && boardEmpty(board);
+
     /* THE CLEAR IS THE ONE EVENT WORTH A BUZZ, and it speaks over the drop rather than
-     * after it — a child who cleared a line should hear that, not the placement. */
+     * after it — a child who cleared a line should hear that, not the placement.
+     *
+     * §1: THE BUZZ IS NOW PART OF THE LADDER RATHER THAN A FLAT 18ms. It moved inside
+     * comboReact for the reason the whole of this project keeps relearning — the length
+     * of the buzz and the number of sparks are two expressions of ONE fact, "how good
+     * was that", and two call sites is how they drift apart. One function owns the
+     * child's channel and every dimension of it leaves from there.
+     *
+     * There is deliberately NOTHING in the else-branch. A placement that clears nothing
+     * gets the `drop` tick it has always had and no expression in this channel at all,
+     * which is what makes the channel incapable of saying "that was bad". */
     if (lines > 0) {
       cue(CUE.clear);
-      try { api.vibrate(18); } catch (e) {}
       sweep();
+      comboReact(cleared.cells, comboRank(combo));
     } else {
       cue(CUE.drop);
     }
@@ -981,13 +1372,22 @@ export default function mount(host, api) {
 
     render();
     renderTray(true);
+    renderScore();
     persist();
+    /* `over` cannot be true here — an empty board fits every piece — but the order is
+     * written so that if it somehow were, the terminal state wins and the celebration
+     * never opens over an overlay the child then has to leave twice. */
     if (over) showOver();
+    else if (perfect) celebrate();
     return true;
   }
 
   function restart() {
     cancelClear();
+    /* A restart from the game-over overlay hands back an EMPTY board, which is the same
+     * shape as a win and must not read as one: nothing here calls celebrate(), and the
+     * detection lives inside place() precisely so that only a PLACEMENT can win. */
+    endCelebration();
     board = emptyBoard(N);
     tray = dealTray(board, mode);
     score = 0;
@@ -999,6 +1399,7 @@ export default function mount(host, api) {
     hideOver();
     render();
     renderTray(true);
+    renderScore();
     persist();
   }
 
@@ -1031,6 +1432,91 @@ export default function mount(host, api) {
   function hideOver() {
     if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
     overlay = null;
+  }
+
+  /* --- §2 the win ------------------------------------------------------- *
+   * INVARIANT 5 APPLIES TO A CELEBRATION EXACTLY AS IT APPLIES TO A GAME OVER, and it
+   * is honoured TWICE rather than once. A tap anywhere ends it, and it ends by itself
+   * if no tap comes. Either alone would be a defensible reading of "one tap out"; both
+   * is the only reading that survives a three-year-old who has put the phone down, and
+   * the only one that survives a three-year-old who has not learned that the fireworks
+   * are tappable. Neither path is the other's fallback — `endCelebration` is idempotent
+   * and both call it.
+   *
+   * THE WORDS ARE NOT THE MESSAGE. "Good Job!" is text and Buddy cannot read it, so by
+   * invariant 1 it may not be the only expression: with it covered, the win is still a
+   * screenful of fireworks, a rising powerUp under a chime, and a board that just went
+   * empty. Acceptance §1 measures that with every painted word masked. */
+  function endCelebration() {
+    if (celebEl && celebEl.parentNode) celebEl.parentNode.removeChild(celebEl);
+    celebEl = null;
+    clearFx();
+  }
+
+  function celebrate() {
+    if (dead || celebEl) return;
+    /* The line-clear burst that got us here is still on screen and its own sweeper timer
+     * would tear the layer down mid-firework. Take the layer over: cancel the pending
+     * timers, keep the sparks that are already flying. */
+    for (var i = 0; i < fxTimers.length; i++) clearTimeout(fxTimers[i]);
+    fxTimers.length = 0;
+    if (fxSweepTimer) { clearTimeout(fxSweepTimer); fxSweepTimer = 0; }
+
+    celebEl = document.createElement('div');
+    celebEl.className = reduced ? 'bp-celeb bp-celeb-calm' : 'bp-celeb';
+    celebEl.setAttribute('data-celebrate', '');
+    var cheer = document.createElement('div');
+    cheer.className = 'bp-cheer';
+    cheer.textContent = 'Good Job!';
+    celebEl.appendChild(cheer);
+    root.appendChild(celebEl);
+
+    var done = false;
+    var openedAt = Date.now();
+    /* `fromTimer` is what makes the guard safe: the self-return must fire even though it
+     * arrives long after the window, and must never be gated by a clock comparison it
+     * does not need. Only INPUT is guarded. */
+    function leave(ev, fromTimer) {
+      if (ev && ev.cancelable) ev.preventDefault();
+      if (done) return;
+      if (!fromTimer && (Date.now() - openedAt) < CELEB_ARM_MS) return;
+      done = true;
+      endCelebration();
+    }
+    /* Bound on the element and removed with it, like `bp-again` above. `touchend` first
+     * so a finger never waits on a synthesised click — and a synthesised click is
+     * exactly what a second finger on the glass suppresses, which is the founding case
+     * of architecture §6.1 member 6. */
+    celebEl.addEventListener('touchend', leave);
+    celebEl.addEventListener('click', leave);
+    celebEl.addEventListener('pointerdown', leave);
+
+    cue(CUE.win);
+    fxAfter(180, function () { cue(CUE.cheer); });
+
+    /* THE FIREWORKS. Staggered, so the S10+ never animates all of them at once: three
+     * volleys of eight land 260ms apart, so at most ~16 sparks overlap. Under reduced
+     * motion burstAt returns 0 without building anything and the win is carried by the
+     * bubble, the flash and both cues — the distinction is never removed, only stilled. */
+    var per = SPARKS_PER_CELL_BASE + SPARKS_PER_CELL_STEP * (COMBO_TOP - 1) + 3;
+    flash(FLASH_PEAK_BASE + FLASH_PEAK_STEP * (COMBO_TOP - 1), FLASH_MS * 2);
+    if (!reduced) {
+      var br = boardWrap.getBoundingClientRect();
+      var spread = Math.max(24, (br.width || 240) * 0.34);
+      var vol = [[0.30, 0.34], [0.72, 0.28], [0.50, 0.64]];
+      for (var v = 0; v < vol.length; v++) {
+        (function (k) {
+          fxAfter(k * 260, function () {
+            var b = boardWrap.getBoundingClientRect();
+            var ramp = CANDY[k % CANDY.length];
+            burstAt((b.width || 240) * vol[k][0], (b.height || 240) * vol[k][1],
+                    per, spread, ramp.light, 0);
+          });
+        })(v);
+      }
+    }
+
+    fxAfter(reduced ? CELEB_MS_REDUCED : CELEB_MS, function () { leave(null, true); });
   }
 
   /* --- pointer ---------------------------------------------------------- */
@@ -1326,6 +1812,11 @@ export default function mount(host, api) {
   relayout();
   render();
   renderTray(true);
+  /* A RESUMED SAVE WHOSE BOARD IS ALREADY EMPTY IS NOT A WIN, and this is the line that
+   * says so by omission: boot paints the score and nothing else. The child won that
+   * board in a previous session and was already congratulated for it; firing fireworks
+   * at a mount is celebrating the act of opening the game. */
+  renderScore();
   if (over) showOver();
 
   /* THE SEAM. Published with NO `controls`, so mountControlPanel returns null at
@@ -1351,6 +1842,11 @@ export default function mount(host, api) {
     if (clearTimer) { clearTimeout(clearTimer); clearTimer = 0; }
     clearingCells = null;
     clearSweep();
+    /* §8.1: every acquired resource, in the order it was acquired. endCelebration calls
+     * clearFx, which cancels every pending fxTimer AND removes the spark layer — so a
+     * teardown in the middle of a firework leaves no timer to fire against a dead
+     * closure and no node behind for endGameSession's body sweep to report. */
+    endCelebration();
     if (ro) { try { ro.disconnect(); } catch (e) {} ro = null; }
     for (var i = 0; i < listeners.length; i++) {
       try { listeners[i][0].removeEventListener(listeners[i][1], listeners[i][2], listeners[i][3]); } catch (e) {}
@@ -1371,3 +1867,28 @@ export default function mount(host, api) {
 
   return release;
 }
+
+/* ---------------------------------------------------------------------------
+ * A NOTE ON PROSE, BECAUSE ONE COMMENT IN THIS FILE FAILED THE BUILD.
+ *
+ * check-games-offline.mjs (check 11) is a fail-closed gate on northstar invariant 3: it
+ * scans every module in games/ for a static or dynamic module specifier and rejects any
+ * that is not a relative path inside games/. Its scanner is deliberately line-agnostic,
+ * because the evasions it was built to catch put the specifier on the next line.
+ *
+ * IT IS ALSO COMMENT-AGNOSTIC, and that is a defect. Its pattern allows an unbounded lazy
+ * gap between the keyword and the specifier, so it will pair the keyword at line 12 with
+ * a quoted or backticked token EIGHT HUNDRED LINES LATER and report a forbidden bare
+ * specifier in a file that has none. It did exactly that here, naming line 12 — a line of
+ * English prose — and the build could not proceed. The comment at its own line 230 says
+ * the scan runs on the comment-stripped source. It does not; it runs on the raw text.
+ *
+ * So the rule for this file, until check 11 is fixed: DO NOT WRITE A QUOTED OR BACKTICKED
+ * TOKEN DIRECTLY AFTER THE WORD "fr" + "om" IN A COMMENT. That is the whole trigger, and
+ * it is why two sentences in this file read a little flatter than they would have.
+ *
+ * This was reported to CC-A rather than worked around in silence, because a gate that
+ * fails on prose will fail the next game module for the same invisible reason, and the
+ * message it prints points at a line containing nothing of the kind. check 11 is not this
+ * work order's to edit; the note is here so the next person does not spend the hour.
+ * ------------------------------------------------------------------------- */

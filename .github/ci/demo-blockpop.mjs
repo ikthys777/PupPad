@@ -83,6 +83,21 @@ const ORIGIN = `http://127.0.0.1:${server.address().port}`;
  * clauses when they were two numbers. */
 const MIN_TOUCH = 44;
 
+/* ONE CELL PARKED IN THE FAR CORNER, AND EVERY FIXTURE THAT COMPLETES A WHOLE LINE
+ * NEEDS IT. A 6x6 board with only row 0 filled does not merely clear a line when that
+ * row completes — it clears the BOARD, and since PUP-WO-0404 that is the game's win
+ * condition. The celebration then covers the board and refuses play until it is left,
+ * which is correct behaviour and fatal to any fixture that goes on to place another
+ * piece: the placement lands on the overlay, nothing happens, and the assertion that
+ * follows is satisfied by a game that did nothing at all. Section 4's column-clear plant
+ * went GREEN that way — "column 0 did not clear" is trivially true of a column that was
+ * never built.
+ *
+ * These fixtures were ALWAYS perfect clears. Nothing existed to notice, so nothing did.
+ * That is worth stating plainly, because the alternative reading — that a test was bent
+ * to fit new code — is the one a reviewer should suspect and it is not what happened. */
+const PARKED_BOARD = [[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,1]];
+
 const PIN_DOT = 0;
 const PIN_TRI = 0.390625;
 
@@ -186,6 +201,11 @@ async function shape(vp, pin = 0) {
   await ctx.addInitScript(HARNESS, pin);
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
+  /* Local-only reproduction lever for CI's slower CPU. Unset in CI and in every normal
+   * run, so it changes nothing that ships; it exists so a wall-clock assertion can be
+   * shown surviving the conditions that broke it. */
+  { const t = Number(process.env.PUPPAD_THROTTLE || 0);
+    if (t > 1) { try { await cdp.send('Emulation.setCPUThrottlingRate', { rate: t }); } catch (e) {} } }
   const errs = [];
   page.on('pageerror', (e) => errs.push(String(e)));
   const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points });
@@ -268,9 +288,78 @@ async function shape(vp, pin = 0) {
   });
   const cues = () => page.evaluate(() => ({ all: window.__cues.slice(), unknown: window.__cueUnknown.slice(), banks: window.__banks.slice() }));
 
-  const openBlocks = async ({ clearStorage = false } = {}) => {
+  /* SEED THE BOARD THROUGH THE SAVE THE MODULE ALREADY RESTORES. `board` lives in
+   * mount's closure and nothing reaches it — the seam's `set` returns false by design
+   * (§8.3 withholds mutation), so the only honest way to start a test from a chosen
+   * position is the one the game itself uses on every resume. That also means the seed
+   * goes through loadSaved's real validator: a fixture the game would reject is a
+   * fixture this file cannot use, which is the right constraint.
+   *
+   * A tray of three nulls is deliberate — `trayEmpty` sends boot to `dealTray`, so the
+   * pieces come from the pinned deal rather than from a hand-written piece literal that
+   * would have to agree with pieces.ts forever. */
+  const seedBoard = (board, { score = 0, combo = 0 } = {}) => page.evaluate(([b, sc, cb]) => {
+    localStorage.setItem('pupgame:blocks', JSON.stringify({ v: 1, board: b, tray: [null, null, null], score: sc, combo: cb }));
+  }, [board, score, combo]);
+
+  /* A 6x6 board from a compact spec: rows of '.' and '#'. */
+  const grid6 = (rows) => rows.map((r) => [...r].map((ch) => (ch === '#' ? 1 : 0)));
+
+  /* THE PITCH, OBSERVED, and by the same mechanism the cue recorder uses: api.tone is
+   * frozen inside the shell but resolves the global `playTone` when it is CALLED, so
+   * replacing that global records exactly what the module asked for — including a value
+   * that playTone would clamp, which is the failure this needs to be able to see. */
+  const recordTones = () => page.evaluate(() => {
+    window.__tones = [];
+    const real = window.playTone;
+    window.playTone = function (hz, ms, wave) {
+      window.__tones.push({ hz, ms, wave });
+      try { return real.apply(this, arguments); } catch (e) {}
+    };
+  });
+  const tones = () => page.evaluate(() => (window.__tones || []).slice());
+
+  /* FREEZE EVERY ANIMATION AT ITS FIRST FRAME BEFORE MEASURING PAINT. A flash that fades
+   * over 300ms cannot be compared between runs by screenshotting it "quickly" — the
+   * number you get back is the scheduler's, not the feature's. Pausing at currentTime 0
+   * makes the peak fully expressed and the measurement deterministic, which is what lets
+   * §16 compare brightness across three combos at all. */
+  const freezeAnimations = (t = 0) => page.evaluate((ms) => {
+    for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = ms; } catch (e) {} }
+  }, t);
+
+  /* REAL PIXELS, NOT A COMPUTED STYLE. The flash's peak is authored as a custom property
+   * and resolved into a gradient, and reading either of those back grades the feature
+   * against its own source. A rect comes from style, not from ink — AND SO DOES AN
+   * ATTRIBUTE, AND SO DOES A CUSTOM PROPERTY. So: screenshot the clip, hand the bytes
+   * back to the page, decode them through an <img> onto a canvas, and average the
+   * luminance the compositor actually produced. No dependency, and nothing in the path
+   * can agree with the module by construction. */
+  const sampleLuma = async (clip) => {
+    const b64 = (await page.screenshot({ clip })).toString('base64');
+    return page.evaluate(async (d) => {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/png;base64,' + d; });
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      const cx = cv.getContext('2d');
+      cx.drawImage(img, 0, 0);
+      const px = cx.getImageData(0, 0, cv.width, cv.height).data;
+      let sum = 0, n = 0;
+      for (let i = 0; i < px.length; i += 4) { sum += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; n++; }
+      return n ? sum / n : 0;
+    }, b64);
+  };
+
+  /* Cover every painted word without changing a single rect: the letters go transparent
+   * where they stand. Acceptance §1 asks what a non-reader can still tell apart, and a
+   * mask that also removed the elements would change the layout it is asking about. */
+  const coverWords = () => page.addStyleTag({ content: '*{color:transparent!important;text-shadow:none!important}' });
+
+  const openBlocks = async ({ clearStorage = false, seed = null, seedScore = 0, seedCombo = 0 } = {}) => {
     await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
     if (clearStorage) { await page.evaluate(() => { try { localStorage.clear(); } catch (e) {} }); await page.reload({ waitUntil: 'domcontentloaded' }); }
+    if (seed) await seedBoard(seed, { score: seedScore, combo: seedCombo });
     await page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
     await fingerTap('.pad-btn[data-id="7"]');
     await page.waitForSelector('.pickerTile[data-game="blocks"]', { timeout: 10000 });
@@ -316,7 +405,8 @@ async function shape(vp, pin = 0) {
     return h && h.blocks ? h.blocks.get() : null;
   });
 
-  return { ctx, page, cdp, touch, wait, rect, tapTarget, fingerTap, fingerDragTo, firstFullSlot, placeAt, openBlocks, boardState, seam, recordCues, cues, errs };
+  return { ctx, page, cdp, touch, wait, rect, tapTarget, fingerTap, fingerDragTo, firstFullSlot, placeAt, openBlocks, boardState, seam, recordCues, cues, errs,
+    seedBoard, grid6, recordTones, tones, freezeAnimations, coverWords, sampleLuma };
 }
 
 try {
@@ -613,7 +703,12 @@ try {
   console.log('\n--- 4. a completed row clears, and the score rises by engine.ts:131-139\'s formula ---');
   {
     const s = await shape(FLEET[0]);
-    await s.openBlocks({ clearStorage: true });
+    /* PARKED CELL — see the note by PARKED_BOARD. Completing a line on an otherwise
+     * empty board is a WIN since PUP-WO-0404, and a win opens a celebration that
+     * correctly refuses further play until it is left. This section is not about the
+     * win, and without the parked cell its later placements land on the overlay and do
+     * nothing — which reads as a pass. */
+    await s.openBlocks({ clearStorage: true, seed: PARKED_BOARD });
     /* Every deal is a single dot (Math.random pinned to 0), so filling row 0 takes six
      * placements and the sixth completes the line. */
     let sc = null;
@@ -717,7 +812,18 @@ try {
   console.log('\n--- 6. THE OTHER INVISIBLE ONE: a placement inside the 280ms clear window leaves nothing stranded ---');
   {
     const s = await shape(FLEET[0]);
-    await s.openBlocks({ clearStorage: true });
+    /* ONE CELL PARKED IN THE CORNER, AND IT IS NOT DECORATION. Filling row 0 of an
+     * OTHERWISE EMPTY 6x6 board does not merely clear a line — it clears the board, and
+     * since PUP-WO-0404 that is a WIN, which opens a celebration over the board and
+     * correctly refuses further play until it is left. This section is not about the
+     * win; it is about a placement landing inside the 280ms clear window. Parking a cell at 5,5 keeps the
+     * fixture a line clear, which is what it was always meant to be.
+     *
+     * The fixture did not change meaning when the feature landed — IT HAD ALWAYS BEEN A
+     * PERFECT CLEAR, and nothing existed to notice. That is worth saying because it is
+     * the honest version: this is not a test bent to fit new code, it is a fixture whose
+     * true description was only available once the game could tell the difference. */
+    await s.openBlocks({ clearStorage: true, seed: [[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,1]] });
     /* Geometry first: every page.evaluate below would cost time we do not have. */
     const slot0 = await s.rect('.bp-slot[data-slot="0"]');
     const cell00 = await s.rect('.bp-well[data-row="0"][data-col="0"]');
@@ -1428,7 +1534,25 @@ try {
   {
     const s = await shape(FLEET[0], PIN_DOT);
     await s.page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
-    await s.page.evaluate(() => { try { localStorage.clear(); } catch (e) {} });
+    /* ONE CELL PARKED IN THE CORNER, AND IT IS NOT DECORATION. Filling row 0 of an
+     * OTHERWISE EMPTY 6x6 board does not merely clear a line — it clears the board, and
+     * since PUP-WO-0404 that is a WIN, which opens a celebration over the board and
+     * correctly refuses further play until it is left. This section is not about the
+     * win; it is about the cues a placement, a clear and a refusal make. Parking a cell at 5,5 keeps the
+     * fixture a line clear, which is what it was always meant to be.
+     *
+     * The fixture did not change meaning when the feature landed — IT HAD ALWAYS BEEN A
+     * PERFECT CLEAR, and nothing existed to notice. That is worth saying because it is
+     * the honest version: this is not a test bent to fit new code, it is a fixture whose
+     * true description was only available once the game could tell the difference. */
+    await s.page.evaluate(() => {
+      try {
+        localStorage.clear();
+        localStorage.setItem('pupgame:blocks', JSON.stringify({ v: 1,
+          board: [[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,1]],
+          tray: [null, null, null], score: 0, combo: 0 }));
+      } catch (e) {}
+    });
     await s.page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
     await s.recordCues();
     await s.fingerTap('.pad-btn[data-id="7"]');
@@ -1517,7 +1641,12 @@ try {
   console.log('\n--- 13. the flair is PupPad\'s own, it is transient, and it spends no contrast ---');
   {
     const s = await shape(FLEET[0], PIN_DOT);
-    await s.openBlocks({ clearStorage: true });
+    /* PARKED CELL — see the note by PARKED_BOARD. Completing a line on an otherwise
+     * empty board is a WIN since PUP-WO-0404, and a win opens a celebration that
+     * correctly refuses further play until it is left. This section is not about the
+     * win, and without the parked cell its later placements land on the overlay and do
+     * nothing — which reads as a pass. */
+    await s.openBlocks({ clearStorage: true, seed: PARKED_BOARD });
     /* Baseline BEFORE any clear: the flair must not be sitting on the board. */
     const idle = await s.page.evaluate(() => ({
       sweeps: document.querySelectorAll('.bp-sweeparm').length,
@@ -1527,27 +1656,56 @@ try {
     }));
     for (let c = 0; c < 5; c++) await s.placeAt(0, c);
     await s.page.evaluate(() => { window.__bp.anim.pop = 0; });
+
+    /* RECORD THE FLAIR AS IT APPEARS. DO NOT GO AND LOOK FOR IT.
+     *
+     * This block used to place the piece, sleep, and then poll the DOM — and the sleep
+     * was longer than the thing it was sampling. THE CLEAR WINDOW OPENS ON `pointerdown`,
+     * not on pointerup: `onCellDown` calls `place()` directly (games/blockpop.js), so the
+     * 280ms `CLEAR_MS` timer is already armed while the finger is still down. `placeAt`
+     * then spends fingerTap's own 40ms + 120ms, this block spent another 90, and 250 of
+     * the 280 were gone before the first byte of the query — leaving ABOUT 30ms for every
+     * CDP round trip in between. It passed on a 16-core desktop and failed in CI, which
+     * is the definition of a check that was measuring the machine.
+     *
+     * The paw is transient BY DESIGN, so there is no steady state to wait for and no
+     * sleep that fixes it — a longer one misses it, a shorter one races the animation's
+     * first frame. The instrument has to stop sampling and start LISTENING. `animationstart`
+     * fires once per stamped element the moment it is painted, which is the event the
+     * assertion was always about, and the record it leaves does not care when we read it.
+     *
+     * It is also strictly MORE than the poll could see: the poll could only ever count
+     * paws that survived until the query, so a build that stamped six and released five
+     * early was indistinguishable from one that stamped one. */
+    await s.page.evaluate(() => {
+      window.__flair = { stamps: [], sweeps: 0 };
+      document.addEventListener('animationstart', (e) => {
+        if (e.animationName === 'bp-sweep') { window.__flair.sweeps++; return; }
+        if (e.animationName !== 'bp-stamp') return;
+        const el = e.target;
+        /* Read at the instant it is painted. `indexOf('svg')` matches the MIME string in
+         * EVERY svg data URI, so a blank <svg></svg> passed as "a paw"; pawSVG draws five
+         * ellipses, so count them. */
+        const u = getComputedStyle(el).backgroundImage || '';
+        const candy = el.parentNode && el.parentNode.querySelector('.bp-candy');
+        window.__flair.stamps.push({
+          ellipses: (decodeURIComponent(u).match(/<ellipse/g) || []).length,
+          /* A stamp belongs to a cell that is DYING. One landing on a live candy is a
+           * paw over a filled cell, which is invariant 1 — and asking at stamp time is
+           * the only moment the answer is not trivially "no paws are left". */
+          overLiveCandy: !!(candy && !candy.hidden && !candy.classList.contains('bp-clear')),
+        });
+      }, true);
+    });
+
     await s.placeAt(0, 5);
     await s.wait(90);
-    /* Mid-clear: the paw is stamped and the arm is turning. */
-    const during = await s.page.evaluate(() => {
-      const st = [...document.querySelectorAll('.bp-stamp')].filter((e) => !e.hidden);
-      return {
-        stamps: st.length,
-        /* `indexOf('svg')` matches the MIME string in EVERY svg data URI, so a blank
-         * <svg></svg> passed as "a paw". pawSVG draws five ellipses; require them. */
-        withPaw: st.filter((e) => {
-          const u = getComputedStyle(e).backgroundImage || '';
-          const n = (decodeURIComponent(u).match(/<ellipse/g) || []).length;
-          return n >= 5;
-        }).length,
-        sweeps: document.querySelectorAll('.bp-sweeparm').length,
-        stampOverFilled: st.filter((e) => {
-          const c = e.parentNode.querySelector('.bp-candy');
-          return c && !c.hidden && !c.classList.contains('bp-clear');
-        }).length,
-      };
-    });
+    const during = await s.page.evaluate(() => ({
+      stamps: window.__flair.stamps.length,
+      withPaw: window.__flair.stamps.filter((x) => x.ellipses >= 5).length,
+      sweeps: window.__flair.sweeps,
+      stampOverFilled: window.__flair.stamps.filter((x) => x.overLiveCandy).length,
+    }));
     await s.page.waitForTimeout(900);
     const after = await s.page.evaluate(() => ({
       sweeps: document.querySelectorAll('.bp-sweeparm').length,
@@ -1560,7 +1718,7 @@ try {
     else if (!during.stamps) bad('a cleared line stamped no paw');
     else if (during.withPaw !== during.stamps) bad(`${during.stamps - during.withPaw} stamp(s) do not carry a paw`,
       'pawSVG draws five ellipses; a data URI without them is some other picture, or a blank one');
-    else if (during.stampOverFilled) bad(`${during.stampOverFilled} paw(s) are over a cell that is NOT clearing`,
+    else if (during.stampOverFilled) bad(`${during.stampOverFilled} paw(s) were stamped onto a cell that is NOT clearing`,
       'a stamp over a live candy masks it — invariant 1');
     else if (!during.sweeps) bad('the line clear ran no sweep');
     else if (after.sweeps || after.visibleStamps) bad('the flair outlived the clear',
@@ -1577,7 +1735,12 @@ try {
      * then look. */
     {
       const s2 = await shape(FLEET[0], PIN_DOT);
-      await s2.openBlocks({ clearStorage: true });
+    /* PARKED CELL — see the note by PARKED_BOARD. Completing a line on an otherwise
+     * empty board is a WIN since PUP-WO-0404, and a win opens a celebration that
+     * correctly refuses further play until it is left. This section is not about the
+     * win, and without the parked cell its later placements land on the overlay and do
+     * nothing — which reads as a pass. */
+      await s2.openBlocks({ clearStorage: true, seed: PARKED_BOARD });
       const slot0 = await s2.rect('.bp-slot[data-slot="0"]');
       const cell00 = await s2.rect('.bp-well[data-row="0"][data-col="0"]');
       for (let c = 0; c < 6; c++) await s2.placeAt(0, c);
@@ -1942,6 +2105,534 @@ try {
   }
   });
 
+  /* ------------------------------------------------------------------ */
+  await section(16, async () => {
+  console.log('--- 16. the combo is spoken to the child as the board, and never as a digit ---');
+  const s = await shape(FLEET[0]);
+
+  /* Row 0 one cell short, and ONE cell parked at the far corner so the clear is not
+   * also a perfect clear — otherwise every sample here would be taken underneath the
+   * celebration overlay and this section would be measuring §2 instead of §1. */
+  const SEED = s.grid6(['#####.', '......', '......', '......', '......', '#.....']);
+
+  const placeFast = async (r, c) => {
+    const i = await s.firstFullSlot();
+    if (i < 0) return false;
+    if (!await s.fingerTap(`.bp-slot[data-slot="${i}"]`)) return false;
+    const t = await s.tapTarget(`.bp-well[data-row="${r}"][data-col="${c}"]`);
+    if (!t || !t.topmost) return false;
+    await s.touch('touchStart', [{ x: t.cx, y: t.cy, id: 1 }]);
+    await s.touch('touchEnd', []);
+    return true;
+  };
+
+  /* THE SEEDED COMBO IS ONE LESS THAN THE RANK UNDER TEST, because the clearing
+   * placement itself advances it (`:956`). Seeding 0/2/4 measures ranks 1/3/5 — the
+   * bottom, middle and top of the ladder, so a step that has quietly stopped rising is
+   * visible at both ends. */
+  const runs = [];
+  for (const seedCombo of [0, 2, 4]) {
+    await s.openBlocks({ clearStorage: true, seed: SEED, seedCombo });
+    await s.recordCues();
+    await s.recordTones();
+    if (!await placeFast(0, 5)) { bad(`combo seed ${seedCombo}: could not place the clearing piece`); continue; }
+
+    const board = await s.rect('.bp-grid');
+    await s.freezeAnimations(0);
+    const dom = await s.page.evaluate(() => {
+      const sparks = [...document.querySelectorAll('.bp-spark')];
+      const fl = document.querySelector('.bp-flash');
+      const b = document.querySelector('.bp-grid').getBoundingClientRect();
+      let inside = 0, sized = 0;
+      for (const sp of sparks) {
+        const r = sp.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) sized++;
+        if (r.left >= b.left - 40 && r.right <= b.right + 40 && r.top >= b.top - 40 && r.bottom <= b.bottom + 40) inside++;
+      }
+      return { sparks: sparks.length, sized, inside, flash: !!fl, celeb: !!document.querySelector('.bp-celeb') };
+    });
+    /* A 40px square dead centre of the board: the flash's gradient centre, over wells
+     * that are identical in all three runs, so the only thing that can move this number
+     * is the peak. */
+    const luma = await s.sampleLuma({ x: Math.round(board.cx - 20), y: Math.round(board.cy - 20), width: 40, height: 40 });
+    const t = await s.tones();
+    const c = await s.cues();
+    runs.push({ seedCombo, rank: seedCombo + 1, ...dom, luma, tones: t, cues: c.all.slice(), unknown: c.unknown });
+  }
+
+  if (runs.length !== 3) { bad('section 16 could not take all three samples'); }
+  else {
+    const [r1, r3, r5] = runs;
+    if (runs.some((r) => r.celeb)) bad('a celebration opened during the combo samples — this section is measuring the wrong feature');
+
+    /* 1. PARTICLES DRAWN. */
+    if (!(r1.sparks > 0)) bad('a line clear drew no particles at all', `rank 1 produced ${r1.sparks}`);
+    else if (!(r1.sparks < r3.sparks && r3.sparks < r5.sparks))
+      bad('the particle count does not rise with the combo', `ranks 1/3/5 drew ${r1.sparks}/${r3.sparks}/${r5.sparks}`);
+    else if (runs.some((r) => r.sized !== r.sparks))
+      bad('some particles are in the DOM with no size — a rect comes from style, not from ink',
+        runs.map((r) => `rank ${r.rank}: ${r.sized}/${r.sparks} sized`).join(' · '));
+    else if (runs.some((r) => r.inside !== r.sparks))
+      bad('particles are being drawn outside the board they belong to',
+        runs.map((r) => `rank ${r.rank}: ${r.inside}/${r.sparks} inside`).join(' · '));
+    else ok(`particles rise with the combo — ranks 1/3/5 drew ${r1.sparks}/${r3.sparks}/${r5.sparks}, every one of them sized and on the board`);
+
+    /* 2. PEAK BRIGHTNESS, IN PIXELS. */
+    if (!runs.every((r) => r.flash)) bad('no flash element was painted for a line clear');
+    else if (!(r1.luma < r3.luma && r3.luma < r5.luma))
+      bad('the board does not get brighter as the combo rises',
+        `measured luminance at the board centre: ${runs.map((r) => `rank ${r.rank} ${r.luma.toFixed(1)}`).join(', ')}`);
+    else ok(`the board brightens with the combo — measured luminance ${r1.luma.toFixed(1)} -> ${r3.luma.toFixed(1)} -> ${r5.luma.toFixed(1)} at ranks 1/3/5`);
+
+    /* 3. PITCH — AND THE CLAMP IS THE FAILURE THIS IS FOR. playTone pins hz into
+     * [40,3000]; a ladder that walked past the ceiling would return the SAME note for
+     * two different combos and tell a child two unequal things are equal. This asserts
+     * the pitches are DISTINCT AND RISING as observed at the shell's own entry point —
+     * it does not re-derive the ladder, because a check that recomputes the formula
+     * agrees with a wrong formula. */
+    const hz = runs.map((r) => (r.tones.length ? r.tones[r.tones.length - 1].hz : null));
+    if (hz.some((h) => h === null)) bad('a line clear played no tone at all', `tones per run: ${runs.map((r) => r.tones.length).join('/')}`);
+    else if (!(hz[0] < hz[1] && hz[1] < hz[2]))
+      bad('the pitch does not rise with the combo', `ranks 1/3/5 asked for ${hz.join(', ')} Hz`);
+    else if (hz.some((h) => h >= 3000 || h <= 40))
+      bad('a pitch lands on playTone\'s clamp, so two different combos can sound identical',
+        `ranks 1/3/5 asked for ${hz.join(', ')} Hz against the shell\'s [40,3000] (index.html:139-140)`);
+    else ok(`the pitch rises with the combo — ${hz.join(' -> ')} Hz, every one clear of the shell's [40,3000] clamp`);
+
+    if (runs.some((r) => r.unknown.length)) bad('a cue name outside the twelve banks was played', runs.flatMap((r) => r.unknown).join(', '));
+  }
+
+  /* 4. AND THE HALF THAT MATTERS MOST: THERE IS NO OPPOSITE. A placement that clears
+   * nothing must be SILENT in this channel — not a dimmer flash, not a lower note, not
+   * a shorter buzz. Northstar §5 forbids a fail state; a channel that can only say
+   * "good" and "better" has none, and the way that stays true is that the non-clearing
+   * case has no expression here at all. */
+  await s.openBlocks({ clearStorage: true, seed: SEED, seedCombo: 4 });
+  await s.recordCues();
+  await s.recordTones();
+  const beforeV = await s.page.evaluate(() => (window.__bp.vibrations || []).length);
+  if (!await placeFast(3, 3)) bad('could not make a non-clearing placement');
+  else {
+    await s.wait(160);
+    const quiet = await s.page.evaluate(() => ({
+      sparks: document.querySelectorAll('.bp-spark').length,
+      flash: document.querySelectorAll('.bp-flash').length,
+      celeb: document.querySelectorAll('.bp-celeb').length,
+      vibrations: (window.__bp.vibrations || []).length,
+    }));
+    const qt = await s.tones();
+    const qc = await s.cues();
+    const harsh = qc.all.filter((n) => n === 'error' || n === 'alert' || n === 'lock');
+    const faults = [];
+    if (quiet.sparks) faults.push(`${quiet.sparks} particle(s)`);
+    if (quiet.flash) faults.push(`${quiet.flash} flash(es)`);
+    if (qt.length) faults.push(`${qt.length} tone(s) (${qt.map((t) => t.hz).join(',')} Hz)`);
+    if (quiet.vibrations > beforeV) faults.push(`${quiet.vibrations - beforeV} buzz(es)`);
+    if (harsh.length) faults.push(`the harsh cue(s) ${harsh.join(',')}`);
+    if (faults.length) bad('a placement that cleared nothing spoke in the child\'s channel', faults.join(' · ') + ' — the absence of a reward must not be rendered as a punishment');
+    else ok(`a placement that cleared nothing is silent in the child's channel — no particles, no flash, no tone, no buzz, and it still landed audibly (${qc.all.join(',') || 'no cue'})`);
+
+    /* AND THE PRECONDITION, because "nothing happened" is what a broken fixture looks
+     * like too. A silence asserted against a placement that never landed proves nothing
+     * — this file has shipped that exact vacuous pass once already. */
+    const landed = await s.seam();
+    if (!landed || landed.combo !== 0) bad('the non-clearing placement did not actually land, so the silence above is vacuous',
+      `seam reports ${JSON.stringify(landed)} — a real non-clearing placement resets the combo to 0`);
+    else ok('and the silence is not vacuous: the piece really landed and reset the combo to 0');
+  }
+  await s.ctx.close();
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(17, async () => {
+  console.log('--- 17. with every painted word covered, the board still says what happened ---');
+  const s = await shape(FLEET[0]);
+  const SEED = s.grid6(['#####.', '......', '......', '......', '......', '#.....']);
+
+  const placeFast = async (r, c) => {
+    const i = await s.firstFullSlot();
+    if (i < 0) return false;
+    if (!await s.fingerTap(`.bp-slot[data-slot="${i}"]`)) return false;
+    const t = await s.tapTarget(`.bp-well[data-row="${r}"][data-col="${c}"]`);
+    if (!t || !t.topmost) return false;
+    await s.touch('touchStart', [{ x: t.cx, y: t.cy, id: 1 }]);
+    await s.touch('touchEnd', []);
+    return true;
+  };
+
+  /* Words covered, animations parked at a moment when the sparks are mid-flight, and
+   * only the BOARD in frame — so nothing that lands in these bytes came from a numeral. */
+  const shot = async (seedCombo, cell) => {
+    await s.openBlocks({ clearStorage: true, seed: SEED, seedCombo });
+    await s.coverWords();
+    if (!await placeFast(cell[0], cell[1])) return null;
+    await s.freezeAnimations(180);
+    const b = await s.rect('.bp-grid');
+    return s.page.screenshot({ clip: { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.w), height: Math.round(b.h) } });
+  };
+
+  /* THE INSTRUMENT MUST FIRST DEMONSTRATE IT WOULD SEE NOTHING. Two captures of the
+   * same frozen state must be byte-identical, or "these two differ" means only that
+   * screenshots differ. This project has shipped a green that proved nothing more than
+   * once; a difference test without its own null result is that shape exactly. */
+  const a1 = await shot(0, [0, 5]);
+  const a2 = await shot(0, [0, 5]);
+  if (!a1 || !a2) { bad('section 17 could not capture the baseline'); }
+  else if (!a1.equals(a2)) bad('two captures of the same frozen state differ, so this section cannot tell a real change from noise');
+  else {
+    ok('the instrument is still: two captures of the same frozen board are byte-identical');
+
+    /* 1. A CLEARING PLACEMENT vs A NON-CLEARING ONE, no words on the screen. */
+    const nonClear = await shot(0, [3, 3]);
+    if (!nonClear) bad('could not capture a non-clearing placement');
+    else if (nonClear.equals(a1)) bad('with the words covered, a clearing placement looks exactly like a non-clearing one — invariant 1 fails here');
+    else ok('a clearing placement is distinguishable from a non-clearing one with every word covered');
+
+    /* 2. AND THE ONE THAT PROVES THE RULING. Same seed, same clearing move, so the board
+     * AFTER is identical in both frames — the ONLY thing that can differ is how hard the
+     * world reacted. A 2x that looks like a 1x means the multiplier reached the child
+     * through the numeral or not at all. */
+    const rank2 = await shot(1, [0, 5]);
+    if (!rank2) bad('could not capture the 2x combo');
+    else if (rank2.equals(a1)) bad('a 2x combo is pixel-identical to a 1x on an identical board — the multiplier only exists as a digit',
+      'the child cannot read the digit, so at that point the combo does not exist for him at all');
+    else ok('a 2x combo is distinguishable from a 1x on an identical board, with every word covered');
+  }
+  await s.ctx.close();
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(18, async () => {
+  console.log('--- 18. the number is Scotty\'s: out of the touch path, out of the exit\'s column, never alone ---');
+  const reports18 = await Promise.all(FLEET.map(async (vp) => {
+    const R = buffered();
+    const ok = R.ok, bad = R.bad, info = R.info;
+    const s = await shape(vp);
+    await s.openBlocks({ clearStorage: true });
+
+    const geo = await s.page.evaluate(() => {
+      const sc = document.querySelector('.bp-score');
+      if (!sc) return null;
+      const r = sc.getBoundingClientRect();
+      const cs = getComputedStyle(sc);
+      const hits = [];
+      /* EVERY interactive rect on the glass, the game's and the shell's — the exit and
+       * the settings button are as much a touch target as a tray slot is. */
+      for (const e of document.querySelectorAll('.bp-well,.bp-slot,button,[role="button"]')) {
+        if (e === sc || sc.contains(e)) continue;
+        const q = e.getBoundingClientRect();
+        if (!q.width || !q.height) continue;
+        if (q.x < r.x + r.width && q.x + q.width > r.x && q.y < r.y + r.height && q.y + q.height > r.y) {
+          hits.push({ id: e.id || e.className || e.tagName, x: q.x, y: q.y, w: q.width, h: q.height });
+        }
+      }
+      const gb = document.getElementById('gameBack');
+      const g = gb ? gb.getBoundingClientRect() : null;
+      const mid = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return {
+        x: r.x, y: r.y, w: r.width, h: r.height, text: sc.textContent,
+        pe: cs.pointerEvents, display: cs.display, visibility: cs.visibility, opacity: +cs.opacity,
+        hits,
+        exit: g ? { x: g.x, y: g.y, w: g.width, h: g.height } : null,
+        capturesOwnCentre: !!(mid && (mid === sc || sc.contains(mid))),
+      };
+    });
+
+    if (!geo) { bad(`${vp.name}: there is no score readout on the screen at all`); await s.ctx.close(); return R; }
+    if (!geo.w || !geo.h || geo.display === 'none' || geo.visibility === 'hidden' || geo.opacity === 0) {
+      bad(`${vp.name}: the readout occupies no paint`, `${geo.w}x${geo.h}, display ${geo.display}, visibility ${geo.visibility}, opacity ${geo.opacity}`);
+    } else if (geo.hits.length) {
+      bad(`${vp.name}: the readout overlaps ${geo.hits.length} interactive rect(s)`,
+        geo.hits.map((h) => `${h.id} at ${h.x.toFixed(0)},${h.y.toFixed(0)} ${h.w.toFixed(0)}x${h.h.toFixed(0)}`).join(' · '));
+    } else if (!geo.exit) {
+      bad(`${vp.name}: #gameBack is not on the screen, so "out of the exit's column" cannot be decided`);
+    } else if (!(geo.x >= geo.exit.x + geo.exit.w)) {
+      /* DERIVED FROM THE EXIT AT RUNTIME, NOT FROM A LITERAL. The exit's left edge is
+       * env(safe-area-inset-left), which is 10px at inset zero and ~30px on the fleet —
+       * a number pasted here would be right on a desktop and wrong on all three phones,
+       * which is architecture §5's whole subject. */
+      bad(`${vp.name}: the readout is inside the exit's column`,
+        `readout starts at x ${geo.x.toFixed(0)}; the exit owns x ${geo.exit.x.toFixed(0)}-${(geo.exit.x + geo.exit.w).toFixed(0)}`);
+    } else if (geo.pe !== 'none' || geo.capturesOwnCentre) {
+      bad(`${vp.name}: the readout takes pointer events, so it can eat a tap meant for the tray`,
+        `pointer-events: ${geo.pe}; it is the topmost element at its own centre: ${geo.capturesOwnCentre}`);
+    } else {
+      ok(`${vp.name}: the readout is ${geo.w.toFixed(0)}x${geo.h.toFixed(0)} at x ${geo.x.toFixed(0)}, clear of the exit's column (x ${geo.exit.x.toFixed(0)}-${(geo.exit.x + geo.exit.w).toFixed(0)}), overlapping no control and taking no taps`);
+    }
+
+    /* AND IT MUST BE THE SCORE, NOT A DECORATION THAT HAPPENS TO BE A NUMBER. */
+    const before = await s.seam();
+    await s.placeAt(2, 2);
+    await s.wait(120);
+    const after = await s.seam();
+    const painted = await s.page.evaluate(() => { const e = document.querySelector('.bp-score'); return e ? e.textContent.trim() : null; });
+    if (!after || after.score === before.score) info(`${vp.name}: the placement did not change the score, so freshness is untested here`);
+    else if (painted !== String(after.score)) bad(`${vp.name}: the painted number is not the score`, `painted "${painted}", engine has ${after.score}`);
+    else ok(`${vp.name}: the painted number tracks the engine — ${before.score} -> ${after.score} after one placement`);
+    await s.ctx.close();
+    return R;
+  }));
+  for (const r of reports18) r.flush();
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(19, async () => {
+  console.log('--- 19. the perfect clear is the only win easy mode has, and it can be left ---');
+  /* Comfortably past the module's settle window without naming its constant — a number
+   * pasted here would be a second expression of the module's own and would go stale
+   * silently. This is "wait longer than any plausible guard", not "wait exactly 350". */
+  const CELEB_ARM_MS_PROBE = 600;
+  const s = await shape(FLEET[0]);
+  /* ONE ROW SHORT OF EMPTY. Nothing else on the board, so the placement that completes
+   * row 0 clears the board to nothing — which the game had no concept of before §2. */
+  const WIN = s.grid6(['#####.', '......', '......', '......', '......', '......']);
+  /* Two rows short, for the clear-window probe. */
+  const WIN2 = s.grid6(['#####.', '#####.', '......', '......', '......', '......']);
+
+  /* A placement with the waits cut to what the event loop needs, so two of them fit
+   * inside the 280ms clear window. */
+  const quickPlace = async (r, c) => {
+    const i = await s.firstFullSlot();
+    if (i < 0) return false;
+    const sl = await s.tapTarget(`.bp-slot[data-slot="${i}"]`);
+    if (!sl || !sl.topmost) return false;
+    await s.touch('touchStart', [{ x: sl.cx, y: sl.cy, id: 1 }]);
+    await s.wait(12);
+    await s.touch('touchEnd', []);
+    await s.wait(12);
+    const t = await s.tapTarget(`.bp-well[data-row="${r}"][data-col="${c}"]`);
+    if (!t || !t.topmost) return false;
+    await s.touch('touchStart', [{ x: t.cx, y: t.cy, id: 1 }]);
+    await s.wait(12);
+    await s.touch('touchEnd', []);
+    return true;
+  };
+
+  /* A deliberate tap on the board as soon as the win lands — the child's hand is already
+   * there, and this is the gesture the settle window exists to survive. */
+  const earlyTap = async () => {
+    const b = await s.rect('.bp-grid');
+    await s.touch('touchStart', [{ x: b.cx, y: b.cy, id: 1 }]);
+    await s.touch('touchEnd', []);
+  };
+
+  const celebState = () => s.page.evaluate(() => {
+    const c = document.querySelector('.bp-celeb');
+    const cheer = document.querySelector('.bp-cheer');
+    const cs = c ? getComputedStyle(c) : null;
+    return {
+      present: !!c,
+      painted: !!(c && cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0 && c.getBoundingClientRect().width > 0),
+      words: cheer ? cheer.textContent.trim() : null,
+      sparks: document.querySelectorAll('.bp-spark').length,
+      /* "EMPTY" MEANS NO LIVING CELL, NOT NO PAINTED ONE. The cells that just cleared are
+       * still on the glass for CLEAR_MS by design — they are mid-death, carrying
+       * `.bp-clear`. Counting painted candies inside that window reported a board that
+       * "is not empty" at the exact moment the game had just emptied it, which is this
+       * file measuring the animation instead of the state. */
+      live: [...document.querySelectorAll('.bp-candy')].filter((e) => !e.hidden && !e.classList.contains('bp-clear')).length,
+      dying: document.querySelectorAll('.bp-candy.bp-clear').length,
+    };
+  });
+
+  /* 1. IT HAPPENS AT ALL. */
+  await s.openBlocks({ clearStorage: true, seed: WIN });
+  await s.recordCues();
+  if (!await quickPlace(0, 5)) bad('could not complete the last row');
+  else {
+    /* THE GUARD PROBE HAPPENS FIRST, AND THAT ORDERING IS THE MEASUREMENT. The settle
+     * window is short by design, so a probe that runs after 200ms of assertions and a
+     * few CDP round trips is racing it — on a loaded 2-core runner the "early" tap lands
+     * LATE, the celebration goes away exactly as it should, and a correct build is
+     * reported broken. Tapping immediately puts the probe unambiguously inside any
+     * plausible window without this file naming the module's constant. */
+    await earlyTap();
+    await s.wait(200);
+    const st = await celebState();
+    const c = await s.cues();
+    if (!st.present) bad('clearing the whole board passed unnoticed — there is no win');
+    else if (!st.painted) bad('the celebration is in the DOM but paints nothing');
+    else if (st.live) bad(`a celebration fired on a board that still has ${st.live} living cell(s)`, `${st.dying} more are mid-clear`);
+    else if (!st.sparks) bad('the win drew no fireworks');
+    else if (c.unknown.length) bad('the win played a cue outside the twelve banks', c.unknown.join(','));
+    else if (c.all.indexOf('powerUp') < 0) bad('the win did not sound different from a line clear', `cues: ${c.all.join(',')}`);
+    else ok(`clearing the board wins: ${st.sparks} fireworks, "${st.words}", and ${c.all.slice(-2).join('+')} over the line-clear cue`);
+  }
+
+  /* 2. INVARIANT 5, FIRST WAY: ONE TAP OUT. Tapped in the middle of the board, which is
+   * where a child's hand already is — not on a dismiss control he would have to find.
+   *
+   * AND THE GUARD IS ASSERTED FIRST, because without it this feature does not survive
+   * contact with a finger at all. The celebration opens inside the touchend that won the
+   * game, so the browser's synthesised click lands on it and destroys it in the same
+   * millisecond. Measured before the fix: `pointerdown 910 / touchend 936 / click
+   * ON-CELEB 936`, and every sample from 10ms onward found nothing on the glass. Remove
+   * the settle window and this goes red for that reason. */
+  {
+    /* The state sampled above was taken AFTER the immediate tap. If the settle window is
+     * honoured the celebration is still there; if it is not, it is already gone. */
+    const guarded = await celebState();
+    const b = await s.rect('.bp-grid');
+    if (!guarded.present) bad('a tap inside the settle window dismissed the celebration',
+      'the tap that wins the game arrives as a synthesised click on an element created under the finger — without the settle window the win flickers and vanishes');
+    else {
+      await s.wait(CELEB_ARM_MS_PROBE);
+      await s.touch('touchStart', [{ x: b.cx, y: b.cy, id: 1 }]);
+      await s.wait(20);
+      await s.touch('touchEnd', []);
+      await s.wait(240);
+      const st1 = await celebState();
+      if (st1.present) bad('one tap did not leave the celebration — a three-year-old is stuck admiring fireworks');
+      else ok('the winning gesture cannot dismiss its own celebration, and one tap after it can');
+    }
+  }
+
+  /* 3. INVARIANT 5, SECOND WAY: IT ENDS BY ITSELF. Both are built. A child who has put
+   * the phone down never taps, and a child who has not learned the fireworks are
+   * tappable never taps either. */
+  await s.openBlocks({ clearStorage: true, seed: WIN });
+  if (!await quickPlace(0, 5)) bad('could not set up the self-return probe');
+  else {
+    await s.wait(250);
+    const up = await celebState();
+    await s.wait(3600);
+    const gone = await celebState();
+    if (!up.present) bad('no celebration to time out');
+    else if (gone.present) bad('the celebration never ends on its own', 'a child who does not tap is left in it');
+    else ok('and it ends by itself with no tap at all — both ways out are built, not one');
+  }
+
+  /* 4. A RESUMED EMPTY BOARD IS NOT A WIN. He won it last time and was congratulated
+   * then; firing fireworks at a mount celebrates opening the game. */
+  await s.openBlocks({ clearStorage: true, seed: s.grid6(['......', '......', '......', '......', '......', '......']), seedScore: 240 });
+  await s.wait(300);
+  {
+    const st = await celebState();
+    const seam = await s.seam();
+    if (st.present) bad('resuming a save whose board is already empty fires a celebration');
+    else if (!seam || seam.score !== 240) bad('the resume probe did not actually restore the saved game, so its silence is vacuous', `seam: ${JSON.stringify(seam)}`);
+    else ok('a resumed save whose board is already empty does not celebrate — and the resume really happened (score 240 restored)');
+  }
+
+  /* 5. A PERFECT CLEAR INSIDE THE 280ms CLEAR WINDOW. The window is one owner and one
+   * cancellation path (beginClear); the celebration takes the spark layer over from a
+   * burst that is still flying. This is the case where those two meet. */
+  await s.openBlocks({ clearStorage: true, seed: WIN2 });
+  await s.recordCues();
+  const t0 = Date.now();
+  const okA = await quickPlace(0, 5);
+  const okB = await quickPlace(1, 5);
+  const elapsed = Date.now() - t0;
+  if (!okA || !okB) bad('could not land two clears back to back');
+  else {
+    await s.wait(260);
+    const st = await celebState();
+    if (elapsed > 280) info(`the two clears took ${elapsed}ms, so the second landed after the 280ms window rather than inside it`);
+    if (!st.present) bad('a perfect clear completed inside the clear window did not celebrate', `second placement at +${elapsed}ms`);
+    else if (st.live) bad(`the celebration fired but the board still has ${st.live} living cell(s)`);
+    else ok(`a perfect clear landing ${elapsed}ms after the previous one still wins, with the first burst still on the glass`);
+    /* And it is leaveable from that state too — waiting past the settle window first,
+     * because a tap inside it is ignored BY DESIGN and asserting against one would be
+     * this file grading the guard as a bug. */
+    await s.wait(CELEB_ARM_MS_PROBE);
+    const b = await s.rect('.bp-grid');
+    await s.touch('touchStart', [{ x: b.cx, y: b.cy, id: 1 }]);
+    await s.wait(30);
+    await s.touch('touchEnd', []);
+    await s.wait(220);
+    if ((await celebState()).present) bad('the celebration reached through the clear window cannot be tapped out of');
+  }
+
+  /* 6. THE CHILD WALKS AWAY MID-FIREWORK. §8.1: teardown releases every acquired
+   * resource. A staggered volley is a set of pending timers armed against a closure the
+   * exit is about to kill. */
+  await s.openBlocks({ clearStorage: true, seed: WIN });
+  await s.recordCues();
+  if (!await quickPlace(0, 5)) bad('could not set up the teardown probe');
+  else {
+    await s.wait(120);
+    if (!(await celebState()).present) bad('no celebration was running when the exit was pressed');
+    else {
+      await s.fingerTap('#gameBack');
+      await s.wait(200);
+      const before = (await s.cues()).all.length;
+      const left = await s.page.evaluate(() => ({
+        nodes: document.querySelectorAll('.bp-celeb,.bp-fx,.bp-spark,.bp-flash,.bp-cheer').length,
+        timers: window.__bp.timers.size,
+        intervals: window.__bp.intervals.size,
+      }));
+      await s.wait(3000);
+      const after = (await s.cues()).all.length;
+      if (left.nodes) bad(`${left.nodes} celebration node(s) survived teardown`);
+      else if (left.timers || left.intervals) bad(`the game left ${left.timers} timer(s) and ${left.intervals} interval(s) armed mid-celebration`);
+      else if (after !== before) bad(`the celebration kept speaking after the child left — ${after - before} cue(s) in the 3s after teardown`);
+      else ok('leaving mid-firework releases every node, every timer, and the game goes quiet');
+    }
+  }
+  await s.ctx.close();
+
+  /* 7. REDUCED MOTION KEEPS THE WIN AND STILLS IT. Acceptance §4: the distinction must
+   * survive without the motion, not be removed with it. */
+  {
+    const rm = await browser.newContext({ viewport: { width: FLEET[0].width, height: FLEET[0].height }, hasTouch: true, reducedMotion: 'reduce' });
+    await rm.addInitScript(HARNESS, PIN_DOT);
+    const page = await rm.newPage();
+    await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
+    await page.evaluate(([b]) => {
+      localStorage.clear();
+      localStorage.setItem('pupgame:blocks', JSON.stringify({ v: 1, board: b, tray: [null, null, null], score: 0, combo: 0 }));
+    }, [WIN]);
+    const cdp2 = await rm.newCDPSession(page);
+    const touch2 = (type, points) => cdp2.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+    const tapSel = async (sel) => {
+      const r = await page.evaluate((q) => { const e = document.querySelector(q); if (!e) return null; const b = e.getBoundingClientRect(); return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 }; }, sel);
+      if (!r) return false;
+      await touch2('touchStart', [{ x: r.cx, y: r.cy, id: 1 }]);
+      await page.waitForTimeout(20);
+      await touch2('touchEnd', []);
+      await page.waitForTimeout(120);
+      return true;
+    };
+    await page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+    await tapSel('.pad-btn[data-id="7"]');
+    await page.waitForSelector('.pickerTile[data-game="blocks"]', { timeout: 10000 });
+    await tapSel('.pickerTile[data-game="blocks"]');
+    await page.waitForFunction(() => { const h = document.getElementById('gameHost'); return !!(h && h.blocks && h.querySelector('.bp-grid')); }, { timeout: 10000 });
+    await page.evaluate(() => {
+      window.__tones = [];
+      const real = window.playTone;
+      window.playTone = function (hz, ms, w) { window.__tones.push({ hz, ms, w }); try { return real.apply(this, arguments); } catch (e) {} };
+      window.__cues = [];
+      const rs = window.doSound;
+      window.doSound = function (n) { window.__cues.push(n); try { return rs.apply(this, arguments); } catch (e) {} };
+    });
+    const i = await page.evaluate(() => [...document.querySelectorAll('.bp-slot')].findIndex((x) => x.getAttribute('data-empty') === '0'));
+    await tapSel(`.bp-slot[data-slot="${i}"]`);
+    await tapSel('.bp-well[data-row="0"][data-col="5"]');
+    await page.waitForTimeout(220);
+    const rmState = await page.evaluate(() => ({
+      celeb: !!document.querySelector('.bp-celeb'),
+      calm: !!document.querySelector('.bp-celeb-calm'),
+      sparks: document.querySelectorAll('.bp-spark').length,
+      cues: (window.__cues || []).slice(),
+      tones: (window.__tones || []).slice(),
+    }));
+    if (!rmState.celeb) bad('with reduced motion the win disappears entirely');
+    else if (!rmState.calm) bad('the reduced-motion celebration still uses the travelling animation');
+    else if (rmState.sparks) bad(`reduced motion still flung ${rmState.sparks} particles`);
+    else if (rmState.cues.indexOf('powerUp') < 0) bad('the reduced-motion win is silent as well as still — nothing is left to carry it', `cues: ${rmState.cues.join(',')}`);
+    else ok(`reduced motion keeps the win and stills it: no particles, the calm bubble, and ${rmState.cues.filter((c) => c === 'powerUp' || c === 'chime').join('+')} still play`);
+
+    /* AND THE COMBO MUST STILL BE DISTINGUISHABLE WITH THE MOTION GONE — acceptance §4
+     * in its own words. Pitch is the dimension that does not move, which is why
+     * comboReact plays it before any reduced-motion return. */
+    const hz = rmState.tones.map((t) => t.hz);
+    if (!hz.length) bad('with reduced motion the combo has no expression left at all', 'no particles, and no tone either — the distinction was removed rather than restated');
+    else ok(`and the combo survives the stillness as pitch: ${hz.join(',')} Hz played with motion reduced`);
+    await rm.close();
+  }
+  });
+
 } finally {
   await browser.close();
   server.close();
@@ -1953,4 +2644,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 21 PASSED at ${COMMIT.slice(0, 12)} — Block Pop lays out inside three real phones, places by drag and by tap, clears a line and scores it, re-pops nothing while a finger crosses the board, strands nothing inside the clear window, retains no state across a remount, and leaves nothing live when the child walks away mid-drag.`);
+console.log(`\nCHECK 21 PASSED at ${COMMIT.slice(0, 12)} — Block Pop lays out inside three real phones, places by drag and by tap, clears a line and scores it, re-pops nothing while a finger crosses the board, strands nothing inside the clear window, retains no state across a remount, leaves nothing live when the child walks away mid-drag, speaks the combo to a non-reader as particles, brightness and pitch that a covered screenful of words cannot account for, keeps the numeral out of the touch path and out of the exit's column, and wins on a perfect clear with a celebration that neither traps the child nor is destroyed by the gesture that earned it.`);
