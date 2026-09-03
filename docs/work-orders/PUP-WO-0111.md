@@ -48,9 +48,25 @@ survived.**
 1. **The tile is driven off the BINDING axis**, not off width. Halve it — ~120px is
    Scotty's "cut them in half" and it lets **two rows** fit.
 2. **Keep the exit-clearance PROPERTY and stop expressing it as a height.** The `140px`
-   exists to clear `#gameBack`'s hit box (y 62–126, x 10–74). **The panel already solved
-   this with a column rule; use the same shape.** A tile must not intersect x 10–74 —
-   which no viewport can invalidate.
+   exists to clear `#gameBack`'s hit box. **The panel already solved this with a column
+   rule; use the same shape.**
+
+   > **CORRECTED 2026-09-03, AND THE ERROR WAS MINE IN THE PARAGRAPH THAT CONDEMNS IT.**
+   > This clause first said *"a tile must not intersect x 10–74 — which no viewport can
+   > invalidate."* **`x 10–74` is a hardcoded column, which is architecture §5's defect
+   > one axis over from the `140px` it replaces.** `makeBackButton` sets
+   > `left: max(10px, env(safe-area-inset-left))` at `width:64px`, so the exit occupies
+   > **x 10–74 only when the inset is zero** — and **on this fleet the inset is ~30px,
+   > so it is actually x 30–94.**
+   >
+   > **I read the panel's DERIVED rule and wrote down its VALUE AT INSET ZERO.** The
+   > panel spends `max(84px, calc(env(safe-area-inset-left) + 74px))` and was right all
+   > along; I transcribed its output on a tablet and called it a relation.
+   >
+   > **The requirement is therefore DERIVED FROM THE EXIT, never written down:** CC-B
+   > built `max(94px, calc(env(safe-area-inset-left) + 84px))`, which holds a uniform
+   > 20px margin past the exit's right edge at every inset. **Any expression that
+   > mentions a column position as a literal is wrong here.**
 3. **Keep `align-content:safe` and `justify-content:safe`.** They are what stop a centred
    overflowing grid pushing rows above `scrollTop: 0` where no gesture reaches them.
    **That is invariant 6 — the adversarial pass measured it breaking at the fifth entry
