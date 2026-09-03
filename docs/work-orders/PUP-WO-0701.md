@@ -220,3 +220,17 @@ constraint here has an answer in the existing code. **Retention does not: one ma
 for `DELETE|expires|retention|purge` in 2,642 lines.** A coordinate and a child's
 voice are not the same kind of data, and the app currently treats everything the same
 way — which nobody decided, and which therefore has to be decided now.
+
+## CLOSING SEQUENCE — FOUR STEPS, AND THE FOURTH IS THE ONE THAT DECAYS
+
+**Build → freeze → adversarial pass → disposition → `FEEDBACK.md` → then:**
+
+1. **Push.**
+2. **Open the PR**, left unmerged.
+3. **VERIFY THE NUMBER RESOLVES.** *A PR that did not open is indistinguishable from one
+   nobody read.*
+4. **`SendMessage` to CC-A citing that number — AS THE LAST ACTION OF THE TURN.**
+
+*Added 2026-09-03. `SendMessage` appeared in **zero** work orders while being a line in
+`architecture.md`, which made the handoff a convention — and a green PR once sat unclaimed
+for three hours because a park never woke the reviewer. See `docs/work-orders/TEMPLATE.md`.*

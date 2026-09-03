@@ -241,7 +241,23 @@ category, and worth shipping, but not the same as a fix.
 shown red — §2's empty-set guard, which needs every panel destroyed at once — **recorded
 as asserted-by-construction rather than quietly counted as proven.**
 
-### THE ONLY THING THAT CAN SETTLE THE SYMPTOM
+### ANSWERED 2026-09-03 — IT IS PAGE ZOOM. §3 IS UNBLOCKED AND §4 IS STILL UNVERIFIED.
+
+**Scotty: only the app magnifies; the Android status bar does NOT.** So it is page-level
+zoom, **`visualViewport.scale` does change**, and the recovery **can** fire. The
+conditional resolves in favour of the work already built — **nothing in §3 needs
+redesigning.**
+
+**BUT THIS DOES NOT MAKE §4 VERIFIED, AND THE DISTINCTION IS THE WHOLE HABIT.** The answer
+establishes that the recovery is **relevant** — it addresses the right mechanism. It does
+not establish that it **works**: nobody has observed it fire, because the harness cannot
+zoom `index.html` and that limit is unchanged. **§4's UNVERIFIED stamp stands until
+someone watches the exit come back on the S10+.**
+
+*Relevant and effective are different claims, and the gap between them is exactly where
+"we fixed it" gets said too early.*
+
+### ~~THE ONLY THING THAT CAN SETTLE THE SYMPTOM~~
 
 **Is the Android status bar magnified too, or only the app's own content?** *(Raised by
 CC-B, twice, and now blocking.)* If the whole screen magnifies, `visualViewport.scale`
