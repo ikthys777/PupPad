@@ -282,6 +282,26 @@ that voice inherits that audience**, so it is a recorded choice rather than a si
 §S.1 nothing is, so it is not needed to ship voice, and building it here is scope by
 drift.
 
+### 6. THE META-CHECK IS FOLDED IN — RULED, WITH THE REASONING, SO IT IS NOT A PRECEDENT
+
+**CC-B declined to add it on their own authority and was right to ask. Ruled: BUILD IT
+HERE.** *Nothing verifies that a `demo-*.mjs` in `.github/ci/` appears in `ci.yml`. It is
+one assertion and it would have caught all five.*
+
+**Why folding beats numbering, and the test is whether it makes this PR harder to review
+or riskier to merge — it does neither:**
+
+- **`ci.yml` is already open in this PR**, inside the fence. This is the cheapest moment
+  it will ever have.
+- **Numbering it means it waits in the queue while unregistered checks stay invisible —
+  which is the exact failure the item describes.** *A parked item about things being
+  invisible is the shape this project has paid for six times.*
+- **It is the thing that keeps the five registrations true.** Shipping five registrations
+  without it is the same defect deferred by one work order.
+
+**Assert the equality, not a list:** every `demo-*.mjs` under `.github/ci/` appears in
+`ci.yml`. **Plant it by adding a file and not registering it, and show it red.**
+
 ---
 
 ## CLOSING SEQUENCE — FOUR STEPS, AND THE FOURTH IS THE ONE THAT DECAYS
