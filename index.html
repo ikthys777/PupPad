@@ -451,6 +451,25 @@ function getSupabaseClient() {
   } catch(e) { console.log('SB client error:', e); return null; }
 }
 
+/* === ONE EXPRESSION, NOT FOUR — PUP-WO-0701 §S2.2 ==========================
+ * `closeCamera` shipped the release discipline as five inline lines. Part 2 adds it to
+ * canvas and map, and the voice panel adds a FOURTH channel — so the literal copy the
+ * directive describes would leave four copies of one rule, in a project whose most
+ * expensive recurring defect is TWO EXPRESSIONS THAT MUST AGREE. Four is worse.
+ *
+ * So the shape is preserved exactly (removeChannel, `.unsubscribe()` fallback in the
+ * catch) and hoisted to one function every panel calls. NULLING THE HANDLE STAYS AT THE
+ * CALL SITE: JS is pass-by-value, so a callee cannot clear its caller's variable — and a
+ * helper that appeared to do so would be the worst kind of false green.
+ *
+ * WHICH CODE IS OLDER THAN THE RULE? That question is why canvas and map were missed.
+ * A helper is the only answer that also covers the panel written NEXT. */
+function releaseChannel(ch) {
+  if (!ch) return;
+  try { var c = getSupabaseClient(); if (c && c.removeChannel) c.removeChannel(ch); }
+  catch (e) { try { ch.unsubscribe(); } catch (e2) {} }
+}
+
 function joinCanvasChannel() {
   var client = getSupabaseClient();
   if (!client) return;
@@ -820,6 +839,12 @@ function openCanvas() {
 }
 
 function closeCanvas() {
+  /* The first of closeCamera's two older siblings — PUP-WO-0701 §S2.2. Open Draw once
+   * and remote strokes kept arriving over the console, over a game, over anything, for
+   * the rest of the session. That is the exact symptom closeCamera's comment describes;
+   * it was simply never true of this panel. */
+  releaseChannel(canvasChannel);
+  canvasChannel = null;
   canvasOpen = false;
   isDrawing = false;
   lastPt = null;
@@ -1623,11 +1648,8 @@ function closeCamera() {
    * Supabase channel and DOES release — its `unsub()` is called in panelTeardown. It was
    * resolved before this was built, because an unreleased channel nobody counted is an
    * unreleased channel.) */
-  if (cameraChannel) {
-    try { var c = getSupabaseClient(); if (c && c.removeChannel) c.removeChannel(cameraChannel); }
-    catch (e) { try { cameraChannel.unsubscribe(); } catch (e2) {} }
-    cameraChannel = null;
-  }
+  releaseChannel(cameraChannel);
+  cameraChannel = null;
   try { delete window.renderCameraGallery; } catch (e) { window.renderCameraGallery = undefined; }
   if (window.__camStickerRO) { try { window.__camStickerRO.disconnect(); } catch (e) {} window.__camStickerRO = null; }
   var overlay = document.getElementById('cameraOverlay');
@@ -2068,6 +2090,9 @@ function openTreasureMap() {
 }
 
 function closeTreasureMap() {
+  /* The second sibling — PUP-WO-0701 §S2.2. Same fact as closeCanvas above. */
+  releaseChannel(mapChannel);
+  mapChannel = null;
   if (mapWatchId !== null) {
     navigator.geolocation.clearWatch(mapWatchId);
     mapWatchId = null;
