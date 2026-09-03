@@ -3339,9 +3339,48 @@ function attachEvents() {
     }, { repeat: true });
   });
 
+  /* === THE RADAR'S LONG PRESS — PUP-WO-0602 ================================
+   *
+   * WHY THIS IS NOT `wireTap`, RULED WITH THE CODE IN FRONT OF ME RATHER THAN BY
+   * FAMILY RESEMBLANCE. wireTap (:2099) already handles the three gestures a
+   * three-year-old actually makes, so reaching for it is the obvious move — and it does
+   * not fit, for three reasons that are properties of the gesture rather than taste:
+   *
+   *   1. wireTap FIRES ON `pointerup`. A long press must fire WHILE THE FINGER IS STILL
+   *      DOWN, at LONG_PRESS_MS, with no pointerup in sight. wireTap owns no timer and
+   *      has no concept of one; a long press is not a tap that took longer.
+   *   2. ONE GESTURE HERE HAS TWO OUTCOMES — a paw on a short tap, an X on a long press —
+   *      and wireTap's contract is one function per element.
+   *   3. wireTap's `fn()` TAKES NO ARGUMENTS. Both marks are placed at the press
+   *      coordinates, and there is nowhere in that signature for them.
+   *
+   * So the three properties are BUILT HERE DELIBERATELY rather than inherited by
+   * accident. What is borrowed is the discipline, not the function: one owner per press,
+   * and every way the press can end releases it.
+   *
+   * THE RADAR PREDATES wireTap AND NEVER WENT BACK FOR ITS `pointercancel`. wireTap has
+   * one at :2111 and the settings slider has one at :2485; this had none, so the ONE
+   * EVENT THE BROWSER SENDS WHEN IT TAKES A GESTURE AWAY was the one event the app's
+   * central feature ignored. That is the same shape as `.bp-drag[hidden]` and as the
+   * passive-listener guard in PUP-WO-0603: THE REMEDY WAS ALREADY IN THE FILE, APPLIED TO
+   * THE NEWER CODE, AND THE OLDER CODE NEVER CAME BACK FOR IT. Third instance. */
   var radar = document.getElementById('radarArea');
   if (radar) {
+    /* One pointer owns the press. A second finger used to call this handler again,
+     * RESTART the timer and overwrite longPressPos — so the X landed wherever the second
+     * finger was, and the press the child had actually been holding was discarded. A
+     * three-year-old always has a second contact. */
+    var radarPid = -1;
+
+    function endRadarPress() {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      radarPid = -1;
+    }
+
     radar.addEventListener('pointerdown', function(e) {
+      if (radarPid !== -1) return;
+      radarPid = e.pointerId;
       var rect = radar.getBoundingClientRect();
       var xPct = ((e.clientX - rect.left) / rect.width) * 100;
       var yPct = ((e.clientY - rect.top) / rect.height) * 100;
@@ -3349,22 +3388,46 @@ function attachEvents() {
       didLongPress = false;
       longPressTimer = setTimeout(function() {
         didLongPress = true;
+        longPressTimer = null;
         spawnX(longPressPos.x, longPressPos.y);
         pushXMark(longPressPos.x, longPressPos.y);
       }, LONG_PRESS_MS);
     });
     radar.addEventListener('pointerup', function(e) {
-      clearTimeout(longPressTimer);
-      if (!didLongPress) {
+      if (radarPid !== -1 && e.pointerId !== radarPid) return;
+      var fired = didLongPress;
+      endRadarPress();
+      if (!fired) {
         var rect = radar.getBoundingClientRect();
         var xPct = ((e.clientX - rect.left) / rect.width) * 100;
         var yPct = ((e.clientY - rect.top) / rect.height) * 100;
         spawnPaw(xPct, yPct);
       }
     });
-    radar.addEventListener('pointerleave', function() {
-      clearTimeout(longPressTimer);
+    /* THE EVENT THIS FEATURE HAS NEVER HANDLED. The browser sends `pointercancel` when
+     * it claims a gesture for itself — a scroll, a text selection, a context menu — and
+     * when it does, NEITHER pointerup NOR pointerleave is guaranteed to arrive. Without
+     * this the timer survived the gesture that was taken away and stamped an X the child
+     * never completed, at a position from a press that no longer existed. */
+    radar.addEventListener('pointercancel', function(e) {
+      if (radarPid !== -1 && e.pointerId !== radarPid) return;
+      didLongPress = false;
+      endRadarPress();
     });
+    radar.addEventListener('pointerleave', function() {
+      endRadarPress();
+    });
+    /* SCOPED TO THE RADAR, AND THAT SCOPE IS THE WHOLE OF IT. A document-level
+     * suppression would satisfy the symptom and REMOVE TEXT SELECTION FROM EVERY ADULT
+     * SURFACE — the settings panel, the PIN entry, the Supabase fields — which
+     * PUP-WO-0602 §5 names as a flag-and-stop. `contextmenu` appeared ZERO times in this
+     * file before this line.
+     *
+     * NOT ALSO `-webkit-touch-callout`, DELIBERATELY. It is a WebKit property that Chrome
+     * does not implement, and the fleet is three Android phones (architecture §3). Adding
+     * it would read as a second layer of defence and be inert on every device we ship to
+     * — the maximum-scale trap from PUP-WO-0603, one work order later. */
+    radar.addEventListener('contextmenu', function(e) { e.preventDefault(); });
   }
 
   var lockBtn = document.getElementById('lockBtn');
