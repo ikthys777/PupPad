@@ -43,6 +43,30 @@ to end** — it still waits for a real tile and taps it. Demonstrated, not asser
 picker renders **exactly two tiles, neither `hello`**; **checks 13 and 14 still pass**
 against their corruptions of the file; **check 19 §9 still exercises the no-panel path.**
 
+## 3.1 The tile floor: 150 had no basis, and reconciling it to one number would have
+## broken the check
+
+`demo-picker.mjs` filtered `t.w < 150 || t.h < 150` — **a bare literal, no comment, no
+derivation**, under a failure message asserting *"a three-year-old's aim"* that nothing in
+the project establishes. Confirmed at source. Everything actually measured sits below it:
+`MIN_TOUCH = 44` is a named constant, and **Buddy plays Block Pop on a 64px board cell,
+confirmed on the device.** The floor is now **96** — 1.5× a target he demonstrably hits,
+better than 2× the platform minimum — with that basis written at the line.
+
+**The ruling also said to reconcile the CSS `min-width` to the same source. I measured that
+and it is the one part I did not do, because it makes the check unfalsifiable.** With both
+at 96, a tile calc broken from `132px` to `20px` **still renders at exactly 96** — the min
+floors it *on* the threshold — and check 17 goes **GREEN on a broken build.** Measured, not
+argued.
+
+So they are deliberately different numbers doing different jobs: **96 is the requirement**
+(the check), **64 is the runtime safety net** (the CSS). A calc failure then lands under the
+requirement and goes red, while never handing the child a target smaller than one he already
+hits. Verified both ways: at 96/96 the broken calc passes; at 64/96 it fails.
+
+**Two expressions holding one number was the disease that hid the invented 150. Making them
+agree would have been the same disease with a better number.**
+
 ## 4. The `urlsToCache` line stays, and the evidence decides it
 
 **No check depends on `games/hello.js` being in the precache** — `demo-games-offline`

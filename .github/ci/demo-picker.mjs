@@ -135,10 +135,30 @@ const tileInfo = await page.evaluate(() => [...document.querySelectorAll('.picke
     icon: kids[0] || '', word: kids[1] || '',
     hit: (() => { const e = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return !!(e && t.contains(e)); })() };
 }));
-const small = tileInfo.filter((t) => t.w < 150 || t.h < 150);
+/* 96, AND THE BASIS IS AT THE LINE BECAUSE THE OLD ONE HAD NONE.
+ * This was `< 150` — a bare literal with no comment and no derivation, under a failure
+ * message asserting "a three-year-old's aim" that nothing in the project established. The
+ * tile CSS carried the same 150, so two expressions held one unjustified number and that
+ * is why it survived unexamined.
+ *
+ * Everything actually measured here sits below it: MIN_TOUCH = 44 is a NAMED constant
+ * (demo-blockpop.mjs), and Buddy plays Block Pop on a 64px board cell, confirmed on the
+ * device. A picker tile is an EASIER target than a board cell — isolated, no neighbour
+ * across the gap, no drag, no legal-versus-illegal distinction — so the floor is 1.5x a
+ * target he demonstrably hits and better than twice the platform minimum. The tile renders
+ * at 132, which clears it with room, so this still has teeth against a genuinely small one.
+ *
+ * AND IT IS DELIBERATELY NOT THE SAME NUMBER AS THE CSS `min-width`, WHICH IS THE HALF
+ * THAT MAKES IT A CHECK AT ALL. With both at 96 a tile calc broken from 132px to 20px
+ * renders at exactly 96 — the min floors it ON the threshold — and this assertion goes
+ * GREEN on a broken build; measured. The CSS floor is a RUNTIME SAFETY NET and sits at 64,
+ * the board cell, so a calc failure still leaves the child a target he already hits AND
+ * lands under this line, which then goes red. A requirement and a backstop are different
+ * jobs and must not be the same number. */
+const small = tileInfo.filter((t) => t.w < 96 || t.h < 96);
 const off = tileInfo.filter((t) => !t.onScreen || !t.hit);
 const wordless = tileInfo.filter((t) => !t.icon || !t.word);
-if (!small.length) ok(`every tile is at least 150x150 — ${tileInfo.map((t) => `${t.id} ${t.w}x${t.h}`).join(', ')}`);
+if (!small.length) ok(`every tile is at least 96x96 — ${tileInfo.map((t) => `${t.id} ${t.w}x${t.h}`).join(', ')}`);
 else bad(`${small.length} tile(s) below a three-year-old's aim`, JSON.stringify(small));
 if (!off.length) ok('every tile is fully on screen and is what a finger at its centre would hit');
 else bad(`${off.length} tile(s) off-screen or covered`, JSON.stringify(off));

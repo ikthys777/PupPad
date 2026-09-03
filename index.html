@@ -3065,10 +3065,17 @@ function pickerTile(entry) {
    * `min(38vh, 42vw, 132px)` reads the binding axis first and still cannot exceed the old
    * width term or the halved ceiling. At 411px of height that is 132px, so TWO ROWS plus
    * the gap and padding come to 320 of 411 and the grid stays centred without scrolling.
-   * The floor drops to 96px — a tile is a whole-hand target for a three-year-old and 96
-   * is still more than twice the 44px minimum — because a 150px floor at 411px of height
-   * re-creates the clipping the ceiling just fixed. */
-  t.style.cssText = 'width:min(38vh,42vw,132px);height:min(38vh,42vw,132px);min-width:96px;min-height:96px;'
+   * THE `min-width` IS A RUNTIME SAFETY NET, NOT THE REQUIREMENT, AND THAT IS WHY IT IS 64
+   * RATHER THAN THE 96 CHECK 17 ENFORCES. It was 150, the same literal the check carried,
+   * and two expressions holding one number is why nobody noticed the number was invented.
+   * Setting both to 96 was the obvious reconciliation AND IT MAKES THE CHECK
+   * UNFALSIFIABLE: with the min on the threshold, a tile calc broken from 132 to 20 still
+   * renders at exactly 96 and check 17 goes green — measured, not reasoned. So the min
+   * sits at the 64px board cell Buddy demonstrably plays, which keeps a calc failure from
+   * ever handing him something smaller than a target he already hits, while leaving it
+   * BELOW the requirement so the check can see it. A backstop and a requirement are
+   * different jobs. */
+  t.style.cssText = 'width:min(38vh,42vw,132px);height:min(38vh,42vw,132px);min-width:64px;min-height:64px;'
     + 'border-radius:28px;border:3px solid ' + entry.glow + ';'
     + 'background:linear-gradient(160deg,rgba(255,255,255,0.12),rgba(0,0,0,0.30)),' + entry.color + ';'
     + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;'
