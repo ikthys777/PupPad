@@ -104,3 +104,250 @@ three times instead of once, and it is now a standing rule in `TEMPLATE.md`.
 
 **Owed and not built:** the voice panel (§2.1–2.3, acceptance 3–8), and the bare-`click`
 controls, which §S.4 gave their own number.
+
+---
+
+# PART 2 — THE PANEL. Upward feedback.
+
+**Branch `build/wo-0701-voice`, based on `main` at `9ae4207` (verified live, not trusted).**
+Adversarial pass and disposition: `docs/findings/PUP-WO-0701-adversarial.md`.
+Item-5 prediction, written before anyone saw the panel:
+`docs/findings/PUP-WO-0701-item5-prediction.md`.
+
+## The fence held
+
+`sw.js`, `manifest.json`, both icons and `games/` **diff to empty against `9ae4207`**,
+checked as a command rather than asserted. Nothing needed a `urlsToCache` line — §S2.8
+was right that it is all inside `index.html`.
+
+## Three choices that are choices, not drift
+
+**1. BUTTON id 0 IS NOW `Voice` 🎤.** Per §S2.1, one data line, and `Comms` was decorative
+(a `doSound` plus a toast). **Reversible in one line** and Scotty may want the console
+fiction back.
+
+**2. `releaseChannel()` INSTEAD OF THREE INLINE COPIES.** §S2.2 said to copy `closeCamera`'s
+exact shape. I did not. Copying it would have left **three** inline copies of one rule, and
+the voice panel adds a **fourth** channel — four copies of one rule in a project whose most
+expensive recurring defect is *two expressions that must agree*. The shape is preserved
+exactly (`removeChannel`, `.unsubscribe()` fallback in the `catch`); nulling the handle
+stays at the call site, because JS is pass-by-value and a helper that appeared to clear its
+caller's variable would be a false green. **If you want the literal copy, say so and I will
+change it back.**
+
+**3. THE PITCH PRESETS ARE 🐭 AND 🐘, NOT puppy AND big dog.** This one is against the
+directive's own words and the reason is the directive's own filter. A dog face and a dog are
+**the same silhouette at 34px** — two presets a non-reader cannot tell apart is precisely
+what invariant 1 forbids. A mouse and an elephant are unmistakable **and encode the axis
+itself**: small animal, high voice. **The names are unchanged in spirit; only the glyphs
+moved.** *The adversarial pass separately flagged 🏔 for cave as weak, and I agree — it is
+recorded as an expected failure in the item-5 prediction rather than swapped for a second
+guess.*
+
+## VOICE INHERITS TODAY'S AUDIENCE, AND THIS IS THE RECORDED CHOICE §S.5 ASKED FOR
+
+`puppad-voice` is a **fixed global channel name**, unscoped by any pairing id, with
+`self:false` and no per-clip addressing and no revocation — the same shape as the camera.
+**Anyone with the URL and the anon key receives every clip from every install.** Not fixed
+here, per §S.5, and flagged rather than silently accepted.
+
+**One thing sharpens it beyond what §S.5 says.** §S.1's own framing is that this panel
+carries **the first identifying data this app has ever handled** — a coordinate is not
+identifying, a voice is. So the audience question is materially more expensive now than it
+was for X-marks, and it is Scotty's. **I would not ship this to a device outside the family
+without scoping the channel.**
+
+## Acceptance
+
+| # | state |
+|---|---|
+| 1 | **MET** — fence diffs to empty, checked. |
+| 2 | closed (spike gate). |
+| 3 | **MET, measured** — four presets rendered offline through **the shipping graph builder**, null result first. **And its limit is printed by the check itself**: proven at the four *default* slider values only; the 13-band instrument cannot resolve ring frequency or delay time. |
+| 4 | **MET** — check 26 §11 drives two pages: page A's real `sendVoice` output into page B's **own registered** inbound handler. Only Supabase's delivery is stubbed. |
+| 5 | **UNVERIFIED — NEEDS SCOTTY.** Prediction recorded first, in its own file, before anyone saw the panel. Does not block the PR, per §S2.7. |
+| 6 | **MET** — one finger tap leaves from idle, mid-record and mid-playback; every control on `wireTap`. |
+| 7 | **MET** — Supabase unconfigured: opens, records, plays, no channel created, send is a silent no-op exactly as the camera's is. |
+| 8 | **MET, and it was broken twice before it was met** — see below. |
+| 9 | every check asserts the commit and names its failing step. |
+
+## What went wrong, because it is the useful part
+
+**THREE DEFECTS SHIPPED INTO MY OWN FIRST BUILD AND ALL THREE WERE FOUND BY INSTRUMENTS
+RATHER THAN BY READING.**
+
+- **Every clip was refused by its own gate.** `MediaRecorder` emits
+  `audio/webm;codecs=opus`; `safeMediaUrl` has no slot for a media-type parameter. **The
+  panel's entire purpose was non-functional and every unit test passed**, because nothing
+  tested acceptance item 4. Writing that test found it in its first run. **My check would
+  have missed it too** — its first draft carried its own looser regex and accepted the very
+  payload the gate rejected. It now asks the shipping gate.
+- **Taps during the microphone grant orphaned live microphones** — the flag-and-stop this
+  work order names as mattering most. `voiceRecorder` is not assigned until the grant lands,
+  so the guard guarded nothing. **The panel's own state reporter said zero while four
+  microphones were live**, because an orphan is a stream no variable points at.
+- **The inbound byte cap bounded the string, and the string is the cheap half.** 3 MiB of
+  low-bitrate Opus decodes to roughly **a gigabyte of PCM and forty-nine minutes** of audio
+  that, at the time, **nothing in the app could stop** — including the exit.
+
+**AND A FOURTH, IN A CHECK THAT WAS ALREADY MERGED.** Check 24 asserted that `closeCamera`
+releases its channel by testing `String(closeCamera)` against `/removeChannel|unsubscribe/`
+— and `closeCamera` carries a long comment **naming both words** while describing the bug it
+fixed. Deleting the release and keeping only `cameraChannel = null` left check 24 **green**.
+**A described bug reads like a fixed one**, and the more carefully a fix is documented the
+more certainly a source-text grep goes green. It now asserts the effect, for all three
+panels.
+
+## Numbers, and which are requirements
+
+- **`MAX_RECORD_MS` = 15000** — the REQUIREMENT, enforced by a timer, because a three-year-old
+  will hold the button.
+- **`MAX_INBOUND_BYTES` = 3 MiB** — the BACKSTOP, unchanged from part 1. **A duration and a
+  size: not the same number and not the same unit, so they fail differently.**
+- **`MAX_INBOUND_AUDIO_BYTES` = 1 MiB / `MAX_INBOUND_SECONDS` = 40** — new, and both are
+  needed: the first bounds what reaches the decoder, the second is the only bound that stays
+  true whatever the next codec's expansion ratio is.
+- **`CAVE_DRY` 0.50 / `CAVE_WET` 0.45 / `CAVE_FEEDBACK` 0.45** — derived from the echo series
+  (`0.50 + 0.45/0.55 = 1.32`), not tuned by ear. Feedback below 1 bounds **decay**, which is
+  **not headroom**; the first build clipped on 7 of 9 cave slider positions.
+
+## Checks
+
+**Check 26** (20 assertions across 14 sections) and **check 26 controls** (**24 planted
+defects, every one red for its own stated reason**), both registered in `ci.yml`. **Check 25
+caught them unregistered on its first real opportunity** — which is the job it was folded in
+to do, one work order after it was written.
+
+**Six of the twenty-four plants found defects in the check before they found anything in the
+app**: an unclamped value that *threw* instead of failing, a closed `AudioContext` the shell
+silently healed so no state string could see it, a slider assertion that compared the paint
+against the value (**the same number twice**), a threshold copied from prose rather than
+measured, a no-op plant, and an assertion that read the very variable its own plant removed.
+
+## One thing I did wrong in process, stated plainly
+
+**The protocol is freeze, then hold every correction until the adversarial pass returns.**
+I did not — I fixed the send defect mid-pass. The freeze is untouched and every finding was
+re-verified against the current tree, but the pass graded `4646927` and the disposition is
+against a later commit. Recorded in the findings file as well.
+
+---
+
+# ROUND 2 — after CC-A's review of PR #65
+
+**Eight findings, all verified at source before acting, all reproduced.** Full disposition
+in `docs/findings/PUP-WO-0701-adversarial.md`.
+
+## The two that would have shipped
+
+**A stale microphone grant unlocked the live panel's guard.** This is round 1's orphaned-
+microphone finding **surviving its own fix**: I closed the window where a grant arrives
+after teardown, and left open the window where a *dead* panel's grant clears the *current*
+panel's `voicePending`. The gesture is ordinary and it is worst on first use, when the
+first request is waiting on a permission bubble for as long as the adult takes.
+
+**The previous session's clip installed itself into the next panel.** I guarded the decode
+with an overlay check, and after close-then-reopen the overlay is back. That contradicts
+§S.1 — *the clip dies with the panel* — on the only identifying data this app handles.
+
+**Both are the same class: an async continuation checked the wrong thing.** A generation
+token existed and I did not apply it consistently. Every async continuation in the voice
+code is now generation-scoped.
+
+## THE ASSERTION FOR THIS PROJECT'S MOST-REPEATED RULE COULD NOT FIRE
+
+`if (rec !== 15000) bad(...) else if (rec === inbound) bad('the requirement and its
+backstop are the same number')`. The second branch needs `rec === 15000` **and**
+`rec === inbound`, i.e. `MAX_INBOUND_BYTES === 15000`. It is 3145728. **The rule we quote
+most often had its only guard written so that it can never go red**, and its plant
+demonstrated the neighbouring branch instead. That is the passes-by-not-running family
+again, one level in: not an unregistered check, not an unrun assertion, but a **reachable
+line in a running assertion that no input can satisfy.**
+
+`MAX_INBOUND_SECONDS` was asserted by nothing at all — deleting it left the suite green.
+
+## The pattern across both rounds, since it is the useful part
+
+**Nine defects this work order. Eight were found by an instrument or a reviewer, not by
+reading.** And the instruments were wrong six more times — including one that compared a
+number to itself, one that read the variable its own plant removed, one that performed the
+validation whose absence it was meant to detect, and one whose branch no input could reach.
+
+**Every one of those instrument defects was found by planting, not by inspection.** That is
+the argument for controls files, and it is why check 24 — which had none — was hiding a
+defect in its first section for two work orders.
+
+## Still open, still not mine
+
+- **The audience.** Unchanged and unchanged deliberately; CC-A is putting it to Scotty as
+  its own numbered item.
+- **`did` on the other seven broadcast sites.** A stable device id travels with every
+  canvas stroke, map stamp and photo, and **nothing anywhere reads one**. Dropped from
+  voice; the rest is a one-line change per site in panels this work order does not own.
+- **Acceptance item 5.** Unchanged: needs Scotty and a person who has not seen the app.
+
+---
+
+# ROUND 3 — the targeted pass on the P1/P5 fixes
+
+CC-A asked for one more pass aimed at those two fixes because both are the same class:
+**an async continuation checked the wrong thing.** It found a third instance of that
+class **that I introduced with the P2 fix**, and two guards that nothing in the suite
+asserted.
+
+## The new defect is mine, and my own comment asserted it away
+
+`closeVoice` zeroes `voiceDecoding` for the whole generation. A decode still in flight
+then settled and **decremented a counter that no longer owed it anything** — so the
+ordinary gesture of tapping back while a clip is decoding left the counter at −1 **for
+the life of the page**, and every repeat drove it lower. Measured: 4 concurrent decodes
+against a cap of 3 after one cycle, **24 after seven**. The bound whose entire stated
+purpose is to stop the allocation stopped bounding it.
+
+**And the comment I wrote in `closeVoice` said the opposite:** *"their callbacks check
+`gen` and will not sound, so the counter is simply reset with them."* They checked `gen`
+for **sounding**. They did not check it for **decrementing**. **One guard, applied to one
+of two effects, with a comment that read as though it covered both.**
+
+**The check could not see it because its own setup created the state that hides it.**
+§16 opened with `closeVoice(); openVoice();` — and that `closeVoice` is exactly what
+resets the counter. Run the same flood without the leading teardown and the peak doubles.
+Its pass line was true only of a state its own setup manufactured.
+
+## Two guards the whole suite left unasserted
+
+Deleting either left **35 assertions green and exit 0**, while:
+
+- **the rejected-permission path reintroduced a live orphaned microphone.** §15 stages a
+  race in which every grant *succeeds*. A **denied** permission is the likeliest first-use
+  path there is — the adult reads the bubble and says no — and nothing tested it.
+- **a dead panel's clip was broadcast on the new panel's channel.** The child's recorded
+  voice leaving the device after he has left the panel, which is precisely what §S.1
+  forbids, on the only identifying data this app handles.
+
+Both are now asserted, each with a plant. **The code was right; the evidence for it did
+not exist.**
+
+## One finding I am NOT fixing, and one I fixed anyway
+
+- **`finish()`'s guard is unasserted and every route into it is blocked upstream.** The
+  pass could not construct a reachable harm. **Asserting it would be asserting the
+  installation rather than an effect** — there is no effect to observe. Recorded as
+  defence in depth rather than papered over with a check that proves nothing.
+- **`rec.onstop`'s prefix was measured UNREACHABLE** — `onstop` is queued before the second
+  `getUserMedia` is even issued, and the shortest human gap between "back" and "record" is
+  over 200 ms; zero clobbers in every trial. **Fixed anyway**, two lines, because it is the
+  same class CC-A asked me to close and the cost of leaving it is a future reader having to
+  re-derive that it is safe.
+
+## The count, since it is the honest summary of this work order
+
+**Twelve real defects. One I found by reading. Eleven found by an instrument, a reviewer,
+or an adversarial pass.** And the instruments were themselves wrong **eleven** times —
+including one that compared a number to itself, one that read the variable its own plant
+removed, one that performed the validation whose absence it was meant to detect, one whose
+branch no input could reach, one whose setup created the state that hid the defect, and
+one that raced the thing it was timing.
+
+**Every single one of those instrument defects was found by planting.** Not one was found
+by reading the check.
