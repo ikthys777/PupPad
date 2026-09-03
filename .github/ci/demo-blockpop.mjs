@@ -201,6 +201,11 @@ async function shape(vp, pin = 0) {
   await ctx.addInitScript(HARNESS, pin);
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
+  /* Local-only reproduction lever for CI's slower CPU. Unset in CI and in every normal
+   * run, so it changes nothing that ships; it exists so a wall-clock assertion can be
+   * shown surviving the conditions that broke it. */
+  { const t = Number(process.env.PUPPAD_THROTTLE || 0);
+    if (t > 1) { try { await cdp.send('Emulation.setCPUThrottlingRate', { rate: t }); } catch (e) {} } }
   const errs = [];
   page.on('pageerror', (e) => errs.push(String(e)));
   const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points });
@@ -1651,27 +1656,56 @@ try {
     }));
     for (let c = 0; c < 5; c++) await s.placeAt(0, c);
     await s.page.evaluate(() => { window.__bp.anim.pop = 0; });
+
+    /* RECORD THE FLAIR AS IT APPEARS. DO NOT GO AND LOOK FOR IT.
+     *
+     * This block used to place the piece, sleep, and then poll the DOM — and the sleep
+     * was longer than the thing it was sampling. THE CLEAR WINDOW OPENS ON `pointerdown`,
+     * not on pointerup: `onCellDown` calls `place()` directly (games/blockpop.js), so the
+     * 280ms `CLEAR_MS` timer is already armed while the finger is still down. `placeAt`
+     * then spends fingerTap's own 40ms + 120ms, this block spent another 90, and 250 of
+     * the 280 were gone before the first byte of the query — leaving ABOUT 30ms for every
+     * CDP round trip in between. It passed on a 16-core desktop and failed in CI, which
+     * is the definition of a check that was measuring the machine.
+     *
+     * The paw is transient BY DESIGN, so there is no steady state to wait for and no
+     * sleep that fixes it — a longer one misses it, a shorter one races the animation's
+     * first frame. The instrument has to stop sampling and start LISTENING. `animationstart`
+     * fires once per stamped element the moment it is painted, which is the event the
+     * assertion was always about, and the record it leaves does not care when we read it.
+     *
+     * It is also strictly MORE than the poll could see: the poll could only ever count
+     * paws that survived until the query, so a build that stamped six and released five
+     * early was indistinguishable from one that stamped one. */
+    await s.page.evaluate(() => {
+      window.__flair = { stamps: [], sweeps: 0 };
+      document.addEventListener('animationstart', (e) => {
+        if (e.animationName === 'bp-sweep') { window.__flair.sweeps++; return; }
+        if (e.animationName !== 'bp-stamp') return;
+        const el = e.target;
+        /* Read at the instant it is painted. `indexOf('svg')` matches the MIME string in
+         * EVERY svg data URI, so a blank <svg></svg> passed as "a paw"; pawSVG draws five
+         * ellipses, so count them. */
+        const u = getComputedStyle(el).backgroundImage || '';
+        const candy = el.parentNode && el.parentNode.querySelector('.bp-candy');
+        window.__flair.stamps.push({
+          ellipses: (decodeURIComponent(u).match(/<ellipse/g) || []).length,
+          /* A stamp belongs to a cell that is DYING. One landing on a live candy is a
+           * paw over a filled cell, which is invariant 1 — and asking at stamp time is
+           * the only moment the answer is not trivially "no paws are left". */
+          overLiveCandy: !!(candy && !candy.hidden && !candy.classList.contains('bp-clear')),
+        });
+      }, true);
+    });
+
     await s.placeAt(0, 5);
     await s.wait(90);
-    /* Mid-clear: the paw is stamped and the arm is turning. */
-    const during = await s.page.evaluate(() => {
-      const st = [...document.querySelectorAll('.bp-stamp')].filter((e) => !e.hidden);
-      return {
-        stamps: st.length,
-        /* `indexOf('svg')` matches the MIME string in EVERY svg data URI, so a blank
-         * <svg></svg> passed as "a paw". pawSVG draws five ellipses; require them. */
-        withPaw: st.filter((e) => {
-          const u = getComputedStyle(e).backgroundImage || '';
-          const n = (decodeURIComponent(u).match(/<ellipse/g) || []).length;
-          return n >= 5;
-        }).length,
-        sweeps: document.querySelectorAll('.bp-sweeparm').length,
-        stampOverFilled: st.filter((e) => {
-          const c = e.parentNode.querySelector('.bp-candy');
-          return c && !c.hidden && !c.classList.contains('bp-clear');
-        }).length,
-      };
-    });
+    const during = await s.page.evaluate(() => ({
+      stamps: window.__flair.stamps.length,
+      withPaw: window.__flair.stamps.filter((x) => x.ellipses >= 5).length,
+      sweeps: window.__flair.sweeps,
+      stampOverFilled: window.__flair.stamps.filter((x) => x.overLiveCandy).length,
+    }));
     await s.page.waitForTimeout(900);
     const after = await s.page.evaluate(() => ({
       sweeps: document.querySelectorAll('.bp-sweeparm').length,
@@ -1684,7 +1718,7 @@ try {
     else if (!during.stamps) bad('a cleared line stamped no paw');
     else if (during.withPaw !== during.stamps) bad(`${during.stamps - during.withPaw} stamp(s) do not carry a paw`,
       'pawSVG draws five ellipses; a data URI without them is some other picture, or a blank one');
-    else if (during.stampOverFilled) bad(`${during.stampOverFilled} paw(s) are over a cell that is NOT clearing`,
+    else if (during.stampOverFilled) bad(`${during.stampOverFilled} paw(s) were stamped onto a cell that is NOT clearing`,
       'a stamp over a live candy masks it — invariant 1');
     else if (!during.sweeps) bad('the line clear ran no sweep');
     else if (after.sweeps || after.visibleStamps) bad('the flair outlived the clear',

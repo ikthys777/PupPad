@@ -236,14 +236,83 @@ or Gyre.
 
 ---
 
-## 9. Verdict
+## 9. The CI failure — diagnosed by experiment, and it is none of the three
+
+PR #61 came back red in CI on **one** assertion, in a section I did not write:
+
+```
+FAIL  a cleared line stamped no paw          (§13)
+```
+
+CC-A named three suspects and asked which, stated, rather than a green re-run. **It is
+none of them, and the defect predates this work order.** The experiment that settles it:
+
+| module | check | 1× | 6× CPU throttle |
+|---|---|---|---|
+| `main` @ `6c5fe9a` | `main` @ `6c5fe9a` | ok | **FAIL — "a cleared line stamped no paw"** |
+| this branch (pre-fix) | this branch (pre-fix) | ok | **FAIL — same message** |
+| this branch (fixed) | this branch (fixed) | ok | ok — and still ok at **8×** |
+
+Row 1 is the one that matters: **no parked cell, no celebration, no `comboReact`** — the
+tree CI has been passing for days — and it reproduces CI's exact message under throttling.
+
+- **Not the fixture change (suspect 2).** Ruled out by row 1: the failure occurs with the
+  fixture as it was.
+- **Not the celebration (suspect 3).** No celebration runs in this scenario at all — with
+  the cell parked it is a line clear, and `main` has no celebration code in any case.
+- **Not a defect in the paw path (suspect 1).** The instrumented trace shows the path
+  behaving exactly as designed: `beginClear` at t, stamps painted at t+10ms, released by
+  the `CLEAR_MS` timer at **t+281ms**.
+
+**THE CAUSE: THE CLEAR WINDOW OPENS ON `pointerdown`, AND THE CHECK BUDGETED AS THOUGH IT
+OPENED LATER.** `onCellDown` calls `place()` directly (`games/blockpop.js`), so the 280ms
+timer is armed **while the finger is still down**. §13 then spent `fingerTap`'s own 40ms +
+120ms, plus its own `wait(90)` — **250 of the 280ms gone before the first byte of the
+query**, leaving about **30ms** for every CDP round trip in between. That passes on a
+16-core desktop and fails on a 2-core runner. It was measuring the machine.
+
+My change is not innocent of the *timing*, but it is not the cause either: `comboReact`
+costs **~3ms of that ~30ms** (199ms → 202ms to the same sample point, measured both ways,
+twice each). Enough to tip a run that was already on the line; not enough to be called the
+reason. **I want that stated precisely rather than either claimed or hidden.**
+
+### The fix: stop sampling a transient, start listening for it
+
+The paw is transient **by design**, so there is no steady state to wait for and no sleep
+that fixes it — a longer one misses it, a shorter one races the animation's first frame.
+§13 now installs an `animationstart` recorder **before** the placement and asserts on what
+it captured. The record does not care when it is read.
+
+**It is also strictly stronger than the poll was.** A poll can only ever count paws that
+*survived until the query*, so a build that stamped six and released five early was
+indistinguishable from one that stamped one. And `stampOverFilled` was near-vacuous when
+sampled late — no paws left means no paws over live cells; asked at stamp time it is a
+real assertion, that a paw lands on a **dying** cell.
+
+Verified green at **4×, 6× and 8×** throttling, where the previous version failed at 6×.
+
+### `PUPPAD_THROTTLE`
+
+The lever that made this diagnosable is kept: `PUPPAD_THROTTLE=<n>` applies
+`Emulation.setCPUThrottlingRate` locally. Unset in CI and in every normal run, so it
+changes nothing that ships — it exists so a wall-clock assertion can be **shown surviving
+the conditions that broke it**, instead of being re-run until it passes.
+
+**The general lesson, and it is the one worth keeping:** *"it went green locally" is not
+evidence about CI, and neither is "it went green in CI twice".* The way to settle a
+timing failure is to **reproduce it deterministically** — a throttle rate is a knob; a
+re-run is a coin.
+
+---
+
+## 10. Verdict
 
 | | |
 |---|---|
 | check 1 (syntax) | **PASS** — `games/blockpop.js` parses as a module |
 | check 11 (games offline) | **PASS** — 3 modules scanned, no imports (see §4.1) |
 | check 12 (offline controls) | **PASS** — 48 controls |
-| check 21 | **PASS** at `fe9f7a8` — 19 sections |
+| check 21 | **PASS** — 19 sections, and green at 4×/6×/8× CPU throttling |
 | check 21 controls | **PASS** — **70 of 70 planted defects red, every one for its own stated reason** |
 | gate 2, assets, mutations, cache-name, load, error-caching, cache-isolation | **PASS** |
 
