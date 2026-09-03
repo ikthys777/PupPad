@@ -196,6 +196,35 @@ sw.js          asset manifest + cache identity
 a controlled target. PupPad publishes to GitHub Pages from a branch. §6 records how
 the firebreak is reconstructed rather than assumed.
 
+**A REQUIREMENT AND ITS BACKSTOP MUST NOT BE THE SAME NUMBER.** *(Ruled 2026-09-03.
+**CC-B's, and it REFINES §6.1's two-expressions family rather than contradicting it.**
+They refused half a CC-A ruling and measured before deciding.)*
+
+CC-A ruled the picker's tile floor from an unmeasured `150` to a stated `96`, and then
+added: *"reconcile the CSS `min-width` to the same source — one number, one place."*
+**That instruction would have made the check unfalsifiable.** Demonstrated, not argued:
+
+| CSS `min-width` | tile calc | renders | check `w >= 96` |
+|---|---|---|---|
+| 96 | `min(38vh,42vw,132px)` | 132 | green |
+| **96** | **broken to `20px`** | **96** | **GREEN — cannot fail** |
+| 64 | broken to `20px` | 64 | **RED** |
+
+**`min-width` floors the COMPUTED size, so setting it equal to the assertion's threshold
+guarantees the assertion passes** — architecture §6.1 member 1, arriving through a
+*correction* to an invented number, with a better number.
+
+**So they are deliberately different and do different jobs: `96` is THE REQUIREMENT and
+lives in the check; `64` is THE RUNTIME BACKSTOP and lives in the CSS, at the board cell
+Buddy demonstrably plays.** A broken calc then lands *under* the requirement and goes
+red, while never handing a child a target smaller than one he already hits.
+
+**THE REFINEMENT, and it is the durable half: the defect is two places holding the same
+number FOR THE SAME REASON.** Two places holding **different** numbers for **different**
+reasons, where one is asserted to lie below the other, is **a constraint** — and it is
+**the only arrangement in which the check can watch the implementation fail.** *Same
+shape as the fireworks ruling: duplication of a technique is not duplication of a fact.*
+
 **AN OPERATOR QUESTION IS A SHARED RESOURCE, AND TWO SESSIONS ASKED THE SAME ONE
 MINUTES APART.** *(Ruled 2026-09-02. **CC-B's, and it is the first defect in this project
 that belongs to the PAIR rather than to either session.**)*

@@ -102,8 +102,21 @@ survived.**
    132 clears it with room, so the check keeps its teeth against a genuinely small tile.
 
    **Write the basis at the line.** A floor whose justification lives in a work order is
-   the same defect as the one being replaced. And **reconcile the CSS `min-width` /
-   `min-height` to the same source** — one number, one place, or it is the family again.
+   the same defect as the one being replaced.
+
+   > ~~**And reconcile the CSS `min-width`/`min-height` to the same source** — one
+   > number, one place, or it is the family again.~~
+   >
+   > **WITHDRAWN. THAT INSTRUCTION WOULD HAVE MADE THE CHECK UNFALSIFIABLE**, and CC-B
+   > refused it with a measurement rather than an argument: at `min-width:96` a tile calc
+   > **broken to `20px` still renders 96×96 and check 17 goes GREEN.** `min-width` floors
+   > the computed size, so setting it equal to the assertion's threshold guarantees the
+   > assertion passes.
+   >
+   > **Built as `96` in the check (the requirement) and `64` in the CSS (the backstop, at
+   > the board cell Buddy plays).** A broken calc lands under the requirement and goes
+   > red; a child is never handed a target smaller than one he already hits.
+   > **Architecture §5 now carries the general rule.**
 
 3. **Keep `align-content:safe` and `justify-content:safe`.** They are what stop a centred
    overflowing grid pushing rows above `scrollTop: 0` where no gesture reaches them.
