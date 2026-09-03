@@ -32,7 +32,13 @@ has never worked on an Android phone**, and nobody long-pressed the radar on one
 now. *Calling it a regression would put the blame on recent work and, worse, would imply
 the earlier build was verified on hardware when it was not.*
 
-**ONE ALTERNATIVE MUST BE TESTED BEFORE THAT IS ACCEPTED, AND IT IS CHEAP.** Scotty's
+> **STRUCK 2026-09-03 — ANSWERED BY `PUP-WO-0603` §1. The S10+ is the INSTALLED PWA.**
+> The context menu was reported on that same device, so it fires **in the installed app**
+> and the tab-versus-installed alternative below is closed. **Do not test it again.**
+> `display:fullscreen` does not suppress `contextmenu`, and the fix is in-page. *(The
+> question was still worth asking: one asking answered it for two work orders.)*
+
+~~**ONE ALTERNATIVE MUST BE TESTED BEFORE THAT IS ACCEPTED, AND IT IS CHEAP.**~~ Scotty's
 screenshots are **Chrome tabs**. `manifest.json` declares `display: fullscreen`, and an
 **installed PWA can handle long-press differently from a browser tab.** *If it works
 installed and fails in a tab, this is an environment difference rather than a dead

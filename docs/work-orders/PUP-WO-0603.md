@@ -45,21 +45,28 @@ candidate is *"a universal `touch-action` rule rather than 16 hand-placed ones."
 strips would break *silently*, because they rely on the browser default today and no
 check asserts they scroll. **That is a lockout fix that creates five smaller lockouts.**
 
-## 1. ANSWER THIS BEFORE WRITING CODE — IT GATES THIS WORK ORDER AND `PUP-WO-0602`
+## 1. ANSWERED — THE S10+ IS THE INSTALLED PWA, AND IT STILL ZOOMS
 
-**Is the S10+ running the INSTALLED app, or a Chrome tab?**
+**Scotty, 2026-09-03: the S10+ is running the INSTALLED app, not a browser tab.**
 
-- `manifest.json` declares **`"display": "fullscreen"`**. **Installed, Chrome honours
-  scale locking and pinch-zoom is off. In a plain tab it does not.**
-- `index.html:5` already carries **`user-scalable=no`** — and it **buys nothing**.
-  Android Chrome has **deliberately ignored that directive since Chrome 48** as an
-  accessibility policy. **DO NOT "FIX" THIS BY ADDING `maximum-scale`; it is ignored the
-  same way.** Adding it would look like a fix, change nothing, and close the ticket.
+**THE INSTALL HYPOTHESIS IS DEAD. Do not scope any part of this as a setup issue and do
+not let this work order conclude "install it properly."** It is installed, `display` is
+`fullscreen`, and it still zooms.
 
-**THE SAME QUESTION GATES THE RADAR X (`PUP-WO-0602` §0).** Two device-level defects,
-one possible shared root cause. **Ask it once, get both answers.** If the S10+ is a tab,
-then part of both is an **install** issue, and the code fix is the fallback for the tab
-case rather than the whole story. **I would rather know than patch around it.**
+**That makes the fix NARROWER, not wider**, and it eliminates one whole branch:
+
+- **`user-scalable=no` (`index.html:5`) is inert and standalone does not rescue it.**
+  Chrome's accessibility override ignores the directive **regardless of display mode**.
+  **ADDING `maximum-scale` IS A FLAG-AND-STOP** — it would look like a fix, change
+  nothing, and close the ticket.
+- **So the only effective in-page defence is `touch-action`, which Chrome DOES honour,
+  plus an explicit multi-touch guard.** That is the whole surface. Everything else is
+  either inert or out of reach.
+
+**AND IT KILLS THE SAME HYPOTHESIS IN `PUP-WO-0602`.** The radar's context menu was
+reported **on this same S10+**, so it is firing **in the installed PWA too** — that work
+order's §0 alternative is closed by this answer and must be struck rather than tested
+again.
 
 ## 2. THE CODE HOLE — `touch-action` IS NOT INHERITED
 
@@ -72,6 +79,18 @@ full-bleed **panel and overlay containers** — the surfaces that should never s
 **leave every scroller's existing `pan-x`/`pan-y` alone.** The five `overflow-x:auto`
 strips must **gain `touch-action:pan-x`**, not lose their gesture: they are unprotected
 today *and* would be frozen by a blanket rule, so they need the opposite of both.
+
+**AND PROVE IT WITH A CHECK THAT CAN GO RED — "we added it everywhere" is a convention,
+and conventions are what this codebase keeps paying for.**
+
+> **THE TRAP: a hand-maintained list of containers is the convention wearing a check's
+> clothes.** It goes stale exactly the way the sixteen hand-placed declarations went
+> stale, and the next panel added is the one missing from both. **Derive the set from a
+> STRUCTURAL property** — walk the live DOM and assert that every element which is
+> full-bleed and positioned, or which hosts the app's own pointer wiring, has a computed
+> `touch-action` that is not `auto`. **Then plant a new container without it and show the
+> check goes red.** If the set cannot be derived structurally, say so and stop — a check
+> over a list someone must remember to update is not a check.
 
 **And add the multi-touch guard.** `touches.length` is tested in exactly **2** places
 today *(not 3)*. A guard that `preventDefault`s when `touches.length > 1` on the
@@ -91,6 +110,11 @@ top-left — `#gameBack` and `#pickerBack` both sit at `max(10px, env(safe-area-
 — **so bringing the viewport home brings the way out back within reach even while the
 page is still zoomed.** That satisfies invariant 5 with the capability the platform
 actually gives us.
+
+**THE RECOVERY PATH IS NOT OPTIONAL AND IT IS NOT SECOND.** *(Scotty, explicitly.)*
+**Prevention that is 99% correct still locks him out on the hundredth time, and he cannot
+tell anyone what happened.** Build both, and treat a zoom that slips through as a case
+the app must survive rather than one it must prevent.
 
 **Assert the property, not the mechanism:** after a synthetic zoom, **the exit's rect
 intersects the visual viewport** and **a tap at its centre still hits it.** A check that
