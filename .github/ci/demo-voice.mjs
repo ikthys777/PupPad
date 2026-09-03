@@ -172,7 +172,18 @@ try {
       const same = spec.pairs.filter((p) => p.d < DIST_MIN);
       if (same.length) bad(`${same.length} preset pair(s) are NOT audibly distinct`,
         same.map((p) => `${p.a} vs ${p.b}: spectral distance ${p.d.toFixed(4)} < ${DIST_MIN}`).join(' | '));
-      else ok(`all ${spec.pairs.length} preset pairs differ spectrally (min ${Math.min(...spec.pairs.map((p) => p.d)).toFixed(3)}) — rendered through the SHIPPING graph builder`);
+      else {
+        ok(`all ${spec.pairs.length} preset pairs differ spectrally (min ${Math.min(...spec.pairs.map((p) => p.d)).toFixed(3)}) — rendered through the SHIPPING graph builder`);
+        /* WHAT THIS SECTION DOES NOT SHOW, SAID OUT LOUD RATHER THAN IMPLIED BY ITS PASS
+         * LINE. Each preset is rendered at its DEFAULT slider value only. A 13-band
+         * Goertzel on a 200/400/800 Hz source cannot resolve ring-modulation frequency or
+         * delay time, so sweeping robot or cave across their own ranges registers as
+         * "same" by this instrument's own criterion -- which is a limit of the instrument,
+         * not evidence about the sound. Acceptance item 3 is proven at four points of a
+         * continuous two-dimensional space, and item 5 (a human who has not seen the app)
+         * is the thing that can speak to the rest. */
+        console.log('        (proven at the four DEFAULT slider values only — this instrument cannot resolve ring frequency or delay time; see item 5)');
+      }
     }
   }
 
@@ -221,7 +232,44 @@ try {
     else ok(`absurd, negative and NaN values are all clamped before reaching an AudioParam`);
     if (cl.fb.some((v) => v >= 1)) bad(`a feedback gain is ${Math.max(...cl.fb)} — a delay line that never decays`,
       'it grows until it clips and it does not stop when the clip ends');
-    else ok(`the cave feedback gain stays below 1 (${cl.fb.join(', ')}) — the delay line decays`);
+    else ok(`the cave feedback gain stays below 1 (${cl.fb.map((v) => v.toFixed(2)).join(', ')}) — the delay line decays`);
+
+    /* HEADROOM IS NOT DECAY, AND ASSERTING THE FEEDBACK CONSTANT CHECKED ONLY ONE OF THEM.
+     * A bounded feedback gain guarantees the tail dies and says nothing about how loud the
+     * SUM of dry and every echo gets. Measured on the first build: peak 1.78 against a 0.70
+     * source, clipping on seven of nine cave slider positions. Swept across every preset's
+     * whole range, because "a number is only correct at the value it was measured at". */
+    const peaks = await page.evaluate(async () => {
+      const SR = 24000, DUR = 0.4;
+      const out = [];
+      for (const p of window.__voice.presets) {
+        for (let i = 0; i <= 8; i++) {
+          const v = p.min + (p.max - p.min) * (i / 8);
+          const probe = new OfflineAudioContext(1, 8, SR);
+          const mk = (c) => { const b = c.createBuffer(1, Math.floor(SR * DUR), SR); const d = b.getChannelData(0);
+            for (let k = 0; k < d.length; k++) { const t = k / SR;
+              d[k] = 0.5 * Math.sin(2 * Math.PI * 200 * t) + 0.3 * Math.sin(2 * Math.PI * 400 * t) + 0.2 * Math.sin(2 * Math.PI * 800 * t); }
+            return b; };
+          const secs = window.__voice.renderSeconds(mk(probe), p.id, v);
+          const off = new OfflineAudioContext(1, Math.ceil(SR * secs), SR);
+          const g = window.__voice.buildGraph(off, mk(off), p.id, v);
+          g.out.connect(off.destination); g.source.start();
+          const r = await off.startRendering();
+          const d = r.getChannelData(0);
+          let pk = 0, sum = 0;
+          for (let k = 0; k < d.length; k++) { const a = Math.abs(d[k]); if (a > pk) pk = a; sum += d[k] * d[k]; }
+          out.push({ id: p.id, v: Number(v.toFixed(3)), peak: pk, rms: Math.sqrt(sum / d.length) });
+        }
+      }
+      return out;
+    });
+    const clipped = peaks.filter((x) => x.peak > 1);
+    const silent = peaks.filter((x) => x.rms < 0.005);
+    if (clipped.length) bad(`${clipped.length} of ${peaks.length} preset/slider positions CLIP (peak > 1)`,
+      clipped.slice(0, 4).map((x) => `${x.id}@${x.v} peak ${x.peak.toFixed(2)}`).join(' | ') + ' — hard clipping is a buzz in a child\'s ear');
+    else if (silent.length) bad(`${silent.length} position(s) are effectively SILENT`,
+      silent.slice(0, 4).map((x) => `${x.id}@${x.v} rms ${x.rms.toFixed(4)}`).join(' | '));
+    else ok(`no clipping and no silence at any of ${peaks.length} preset/slider positions (worst peak ${Math.max(...peaks.map((x) => x.peak)).toFixed(2)})`);
   }
 
   /* ---- §4. ACCEPTANCE 8 — NO MICROPHONE SURVIVES TEARDOWN --------------- */
@@ -417,7 +465,64 @@ try {
     const uniq = new Set(g.icons);
     if (g.n < 4) bad(`only ${g.n} presets`);
     else if (uniq.size !== g.icons.length) bad('two presets share a glyph', JSON.stringify(g.icons));
-    else ok(`${g.n} presets, ${uniq.size} distinct glyphs, no word painted at the child (aria only: ${g.labels.join(', ')})`);
+    else {
+      ok(`${g.n} presets, ${uniq.size} distinct code points, no word painted at the child (aria only: ${g.labels.join(', ')})`);
+
+      /* STRING INEQUALITY IS NOT VISUAL DISTINCTNESS, AND INVARIANT 1 IS ABOUT WHAT A
+       * NON-READER SEES. `new Set(icons).size` would pass 🐕 against 🐶 — the exact pair
+       * the design says it exists to avoid — and it would pass four glyphs that all render
+       * as the SAME EMPTY BOX on a device whose font lacks them. So the glyphs are drawn
+       * and the PIXELS compared.
+       *
+       * AND THE INSTRUMENT DECLARES WHETHER IT CAN SEE. A deliberate never-a-glyph control
+       * (U+10FFFF, unassigned, guaranteed to render as the missing-glyph box) is drawn
+       * alongside. If every preset matches that box, this machine has no emoji font and
+       * the comparison is meaningless — which is reported as UNRESOLVED, not as a pass and
+       * not as a failure. THIS CI CONTAINER IS SUCH A MACHINE: every glyph already
+       * shipping on the console pad renders as a box here too, so a red would be about
+       * fontconfig and nothing else. */
+      const pix = await page.evaluate((icons) => {
+        const PAD = (typeof BTNS_LEFT !== 'undefined')
+          ? BTNS_LEFT.concat(BTNS_RIGHT).map((b) => b.emoji) : [];
+        const draw = (ch) => {
+          const c = document.createElement('canvas');
+          c.width = 64; c.height = 64;
+          const x = c.getContext('2d');
+          x.clearRect(0, 0, 64, 64);
+          x.font = '44px sans-serif';
+          x.textAlign = 'center'; x.textBaseline = 'middle';
+          x.fillText(ch, 32, 32);
+          return Array.from(x.getImageData(0, 0, 64, 64).data).join(',');
+        };
+        const tofu = draw('\u{10FFFF}');
+        return { shots: icons.map(draw), tofu, pad: PAD.map(draw) };
+      }, g.icons);
+
+      /* THE BASELINE IS THE APP'S OWN SHIPPING GLYPHS, NOT AN ABSOLUTE.
+       *
+       * The eight console-pad emoji are in daily use on the fleet and are not in dispute.
+       * If THEY do not render here, this machine's font set is not the fleet's and nothing
+       * it says about glyphs is evidence -- a red would be about fontconfig. So the pad is
+       * the control, and it decides whether this section can speak at all. AN INSTRUMENT
+       * MUST DEMONSTRATE IT WOULD HAVE SEEN THE THING. */
+      const padTofu = pix.pad.filter((h) => h === pix.tofu).length;
+      const asTofu = pix.shots.filter((h) => h === pix.tofu).length;
+      if (padTofu > 0) {
+        console.log(`  ----  UNRESOLVED: ${padTofu} of ${pix.pad.length} glyphs ALREADY SHIPPING on the console pad`);
+        console.log(`        render as the missing-glyph box on this machine, so its font set is not the fleet's.`);
+        console.log(`        (${pix.shots.length - asTofu} of ${pix.shots.length} preset glyphs did render here — information, not a verdict.)`);
+        console.log('        A red here would be about fontconfig. Acceptance item 5 — a person who has not seen');
+        console.log('        the app, on the fleet — is what settles glyph identifiability.');
+      } else if (asTofu > 0) {
+        bad(`${asTofu} of ${pix.shots.length} preset glyphs render as an empty box on a machine whose pad glyphs all render`,
+          'a preset a non-reader cannot see is not a preset, and here it is not even a shape');
+      } else {
+        const dupes = pix.shots.length - new Set(pix.shots).size;
+        if (dupes) bad(`${dupes} preset glyph(s) render IDENTICALLY despite differing code points`,
+          'string inequality is not visual distinctness — this is the 🐕-against-🐶 case');
+        else ok(`all ${pix.shots.length} preset glyphs render as visually distinct bitmaps`);
+      }
+    }
   }
 
   /* ---- §10. THE SLIDER PAINTS WHERE IT VALUES -------------------------- */
@@ -557,6 +662,197 @@ try {
     }
   }
 
+  /* ---- §12. THE ORPHANED MICROPHONE -------------------------------------
+   *
+   * THE STATE REPORTER CANNOT SEE THIS AND NEITHER COULD §4 OR §5. `state().liveTracks`
+   * reads `voiceStream` -- the SURVIVING reference -- and an orphan is by definition a
+   * stream that variable no longer points at. It reported 0 while four microphones were
+   * live. So this section holds EVERY stream getUserMedia ever handed out and asks the
+   * TRACKS, which are the only witnesses that cannot be orphaned.
+   *
+   * The gesture is the ordinary one: the child taps the microphone, nothing on screen
+   * changes yet because the grant has not landed, so he taps again. On first use a parent
+   * is reading the permission bubble and he taps five times. */
+  if (run(12)) {
+    for (const [label, taps, delayMs] of [['two taps', 2, 300], ['five taps during a permission prompt', 5, 1200]]) {
+      const r = await page.evaluate(async ({ taps, delayMs }) => {
+        const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        const all = [];
+        navigator.mediaDevices.getUserMedia = (c) => real(c).then((st) => {
+          all.push(st);
+          return new Promise((res) => setTimeout(() => res(st), delayMs));
+        });
+        try {
+          closeVoice(); openVoice();
+          const b = document.getElementById('voiceRecBtn');
+          for (let i = 0; i < taps; i++) {
+            b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+            b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+            await new Promise((r2) => setTimeout(r2, 40));
+          }
+          await new Promise((r2) => setTimeout(r2, delayMs + 500));
+          closeVoice();
+          await new Promise((r2) => setTimeout(r2, 500));
+          return {
+            granted: all.length,
+            liveAfterClose: all.reduce((n, st) => n + st.getTracks().filter((t) => t.readyState === 'live').length, 0),
+            reported: window.__voice.state().liveTracks,
+          };
+        } finally { navigator.mediaDevices.getUserMedia = real; }
+      }, { taps, delayMs });
+
+      if (!r.granted) bad(`${label}: no microphone was granted at all`, 'this section proved nothing');
+      else if (r.liveAfterClose > 0) bad(`${label}: ${r.liveAfterClose} microphone track(s) LIVE after the child left`,
+        `${r.granted} stream(s) were granted and the panel's own reporter says ${r.reported} — an orphan is a stream no variable points at, so nothing in the app can ever stop it`);
+      else ok(`${label}: ${r.granted} grant(s), 0 tracks live after teardown — no orphan`);
+    }
+  }
+
+  /* ---- §13. THE SEND MUST SURVIVE THE CHILD, AND NOT SURVIVE THE EXIT ----
+   *
+   * Two opposite failures with one cause: the render graph sharing a node list with
+   * playback, and its stop timer sharing a list with everything teardown clears. */
+  if (run(13)) {
+    const trunc = await page.evaluate(async () => {
+      let captured = null;
+      const realGet = window.getSupabaseClient;
+      window.getSupabaseClient = () => ({
+        channel: () => ({ on() { return this; }, subscribe() { return this; },
+                          send(m) { captured = m && m.payload && m.payload.dataUrl; } }),
+        removeChannel() {},
+      });
+      try {
+        closeVoice(); openVoice(); window.voiceChannel = null; joinVoiceChannel();
+        const b = document.getElementById('voiceRecBtn');
+        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 1400));
+        stopVoiceRecording();
+        await new Promise((r) => setTimeout(r, 800));
+        if (window.__voice.state().stage !== 'ready') return { noClip: true };
+        const dur = window.voiceBuffer.duration;
+        sendVoice();
+        /* The child taps PLAY to hear it again while it is still going out. */
+        await new Promise((r) => setTimeout(r, 350));
+        playVoice();
+        await new Promise((r) => setTimeout(r, 3000));
+        closeVoice();
+        return { dur, len: captured ? captured.length : 0 };
+      } finally { window.getSupabaseClient = realGet; }
+    });
+    if (trunc.noClip) bad('no clip was produced', 'this section proved nothing');
+    else {
+      /* Compared against the clip's OWN duration, not a hard-coded byte count: a
+       * threshold in bytes would be a number only correct at one bitrate. */
+      const floor = Math.round(trunc.dur * 4000);
+      if (trunc.len < floor) bad(`tapping PLAY during a send truncated the clip on the wire`,
+        `${trunc.len} base64 chars for a ${trunc.dur.toFixed(2)}s clip — playback and the render shared a node list, so a playback control stopped the render's source mid-flight`);
+      else ok(`a playback control pressed during a send does not truncate it (${trunc.len} chars for ${trunc.dur.toFixed(2)}s)`);
+    }
+
+    const orphanRec = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const b = document.getElementById('voiceRecBtn');
+      b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 1200));
+      stopVoiceRecording();
+      await new Promise((r) => setTimeout(r, 800));
+      if (window.__voice.state().stage !== 'ready') return { noClip: true };
+      sendVoice();
+      await new Promise((r) => setTimeout(r, 200));
+      const during = window.__voice.state().sendRecorder;
+      closeVoice();
+      await new Promise((r) => setTimeout(r, 2000));
+      const st = window.__voice.state();
+      return { during, after: st.sendRecorder, sendNodes: st.sendNodes };
+    });
+    if (orphanRec.noClip) bad('no clip was produced for the exit-during-send probe');
+    else if (orphanRec.during !== 'recording') bad('the render was not running when the exit was pressed', 'this probe proved nothing');
+    else if (orphanRec.after !== 'none') bad(`the render's recorder is STILL ${orphanRec.after} after teardown`,
+      'its only stop trigger was a timer in the list closeVoice clears, so it encodes silence on the shared context forever — once per send-then-exit');
+    else ok(`the render's recorder was running, and teardown stopped it (${orphanRec.sendNodes} send nodes left)`);
+  }
+
+  /* ---- §14. A REMOTE CLIP IS AUDIO THE CHILD DID NOT START -------------- */
+  if (run(14)) {
+    const inb = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const ctx = getAudioCtx();
+      /* TWO INSTRUMENTS THAT DO NOT DEPEND ON THE APP'S OWN BOOKKEEPING.
+       *
+       * The first version of this section used `state().inbound` both as the witness that
+       * a clip had STARTED and as the test of whether the exit could REACH it — the same
+       * variable for the subject and the instrument. Untracking the source therefore made
+       * the section report "nothing ever played", not "nothing could stop it". So every
+       * started BufferSource is recorded here, independently, and `onended` tells us which
+       * are still sounding.
+       *
+       * The second instrument counts decodeAudioData calls, because the byte cap's whole
+       * job is to prevent the ALLOCATION — and a payload the decoder rejects looks exactly
+       * like a payload the cap refused if you only watch what plays. */
+      const started = [];
+      const realStart = AudioBufferSourceNode.prototype.start;
+      AudioBufferSourceNode.prototype.start = function (...a) {
+        const rec = { node: this, ended: false };
+        started.push(rec);
+        this.addEventListener('ended', () => { rec.ended = true; });
+        return realStart.apply(this, a);
+      };
+      let decodes = 0;
+      const realDecode = ctx.decodeAudioData.bind(ctx);
+      ctx.decodeAudioData = function (...a) { decodes++; return realDecode(...a); };
+      /* A real, long, legitimate clip, encoded the way the app encodes. */
+      const secs = 6;
+      const off = new OfflineAudioContext(1, 48000 * secs, 48000);
+      const buf = off.createBuffer(1, 48000 * secs, 48000);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = 0.3 * Math.sin(2 * Math.PI * 300 * (i / 48000));
+      const dest = ctx.createMediaStreamDestination();
+      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(dest); src.start();
+      const rec = new MediaRecorder(dest.stream);
+      const chunks = [];
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      const url = await new Promise((res) => {
+        rec.onstop = () => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.readAsDataURL(new Blob(chunks, { type: (chunks[0].type || 'audio/webm').split(';')[0] }));
+        };
+        rec.start(); setTimeout(() => rec.stop(), 2200);
+      });
+      try { src.stop(); src.disconnect(); } catch (e) {}
+
+      const beforeStart = started.length;
+      playRemoteVoice(url);
+      await new Promise((r) => setTimeout(r, 900));
+      const mine = started.slice(beforeStart);
+      const playing = mine.filter((r) => !r.ended).length;
+      closeVoice();
+      await new Promise((r) => setTimeout(r, 400));
+      const stillPlaying = mine.filter((r) => !r.ended).length;
+      const after = window.__voice.state();
+
+      /* The cap's job is to stop the ALLOCATION, so the evidence is that the decoder was
+       * never reached — not that nothing played, which a corrupt payload also achieves. */
+      const decodesBefore = decodes;
+      playRemoteVoice('data:audio/webm;base64,' + 'A'.repeat(2 * 1024 * 1024));
+      await new Promise((r) => setTimeout(r, 200));
+      const refusedBeforeDecoding = decodes === decodesBefore;
+
+      AudioBufferSourceNode.prototype.start = realStart;
+      ctx.decodeAudioData = realDecode;
+      return { playing, stillPlaying, popups: after.popups, overLong: refusedBeforeDecoding };
+    });
+    if (!inb.playing) bad('an inbound clip never started playing', 'this section proved nothing');
+    else if (inb.stillPlaying > 0) bad(`${inb.stillPlaying} remote clip(s) STILL PLAYING after the exit`,
+      'the child pressed the one control this app promises from every state and a stranger’s audio kept playing over the console with nothing able to stop it');
+    else if (inb.popups > 0) bad(`${inb.popups} INCOMING popup(s) outlived the panel`);
+    else if (!inb.overLong) bad('an oversized inbound audio payload was accepted for decoding',
+      'decodeAudioData was reached — the byte cap bounds the STRING, and the decoder allocates the full PCM, which low-bitrate Opus expands by hundreds of times');
+    else ok(`a remote clip plays, the exit stops it, no popup outlives the panel, and an oversized audio payload is refused before decoding`);
+  }
+
 } finally { await browser.close(); server.close(); }
 
 if (failures.length) {
@@ -565,4 +861,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, four glyphs are distinct, the slider's knob lands under the finger, and a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, the four preset glyphs are distinct code points (whether they render distinctly is UNRESOLVED wherever the pad's own glyphs do not), nothing clips or goes silent across 36 preset/slider positions, no orphaned microphone survives repeated taps, a send survives a playback tap and does not survive the exit, a remote clip is stopped by the exit, the slider's knob lands under the finger, and a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused.`);

@@ -119,7 +119,7 @@ plan(4, 'teardown closes the shared AudioContext', {
 /* §5 — THE RACE. getUserMedia resolves asynchronously, so closeVoice can run BEFORE the
  * track exists. Removing the on-arrival guard is the whole defect. */
 plan(5, 'the on-arrival guard is removed — a grant that lands after teardown', {
-  mutate: (s) => sub(s, "    if (!document.getElementById('voiceOverlay')) {\n      stream.getTracks().forEach(function(t) { t.stop(); });\n      return;\n    }",
+  mutate: (s) => sub(s, "    if (gen !== voiceGen || !document.getElementById('voiceOverlay')) {\n      stream.getTracks().forEach(function(t) { t.stop(); });\n      return;\n    }",
                         "    /* PLANT: nothing checks whether the panel is still there. */"),
   expectText: 'LIVE after closing the panel',
 });
@@ -208,6 +208,48 @@ plan(11, 'the inbound handler drops every payload', {
   mutate: (s) => sub(s, "    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'audio');\n    if (!url) return;\n    playRemoteVoice(url);",
                         "    return;"),
   expectText: 'produced NOTHING on the second device',
+});
+
+/* §12 — THE ORPHAN. Restoring the single guard is the code as first written: voiceRecorder
+ * is not assigned until the grant lands, so every tap in that window opens a microphone
+ * that nothing will ever hold a reference to. */
+plan(12, 'the pending-grant guard is removed — taps during the window orphan microphones', {
+  mutate: (s) => sub(s, "  if (voiceRecorder || voicePending) return;", "  if (voiceRecorder) return;"),
+  expectText: 'LIVE after the child left',
+});
+
+/* AND THE OTHER HALF: a grant belonging to a panel that has been closed and REOPENED. */
+plan(5, 'the generation token is dropped — a stale grant is adopted by the new panel', {
+  mutate: (s) => sub(s, "    if (gen !== voiceGen || !document.getElementById('voiceOverlay')) {",
+                        "    if (false) {"),
+  expectText: 'LIVE after closing the panel',
+});
+
+/* §13 — THE SHARED NODE LIST. Putting the render back in the playback list restores the
+ * defect exactly: any playback control stops the send's source mid-flight. */
+plan(13, 'the render graph shares the playback node list again', {
+  mutate: (s) => sub(s, "  g.nodes.forEach(function(n) { voiceSendNodes.push(n); });\n  voiceSendNodes.push(g.out, dest);",
+                        "  g.nodes.forEach(voiceTrack);\n  voiceTrack(g.out);"),
+  expectText: 'truncated the clip on the wire',
+});
+
+/* AND THE RENDER'S RECORDER, whose only stop trigger used to be a timer teardown clears. */
+plan(13, "teardown stops clearing the render's recorder", {
+  mutate: (s) => sub(s, "  if (voiceSendRec) { try { voiceSendRec.stop(); } catch (e) {} voiceSendRec = null; }", "  /* PLANT: the render runs on. */"),
+  expectText: 'STILL recording after teardown',
+});
+
+/* §14 — THE UNSTOPPABLE CLIP. Untracking the inbound source puts it beyond the reach of
+ * the one control this app promises from every state. */
+plan(14, 'an inbound clip is not tracked, so the exit cannot stop it', {
+  mutate: (s) => sub(s, "    voiceInbound.push(s);", "    /* PLANT: held by nothing. */"),
+  expectText: 'STILL PLAYING after the exit',
+});
+
+/* AND THE BOUND ON THE QUANTITY THAT COSTS. */
+plan(14, 'the audio payload cap is removed — the decoder is handed the string cap', {
+  mutate: (s) => sub(s, "  if (dataUrl.length > MAX_INBOUND_AUDIO_BYTES) return;", "  /* PLANT: unbounded. */"),
+  expectText: 'oversized inbound audio payload was accepted',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);
