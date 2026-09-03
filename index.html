@@ -225,12 +225,19 @@ var BTNS_RIGHT=[
  * cold offline device, and a Gyre sitting second would be unreachable until the
  * picker ships: shipped, cached, and invisible to the child it was built for.
  * Reordering data is not building a chooser, so this does not cross into 0201.
- * `hello` stays as the contract demonstration checks 13 and 14 corrupt on purpose. */
+ * `games/hello.js` STAYS AS A FILE AND IS NO LONGER A REGISTRY ENTRY (PUP-WO-0111 §3).
+ * Scotty: "not needed now that we have at least 2 games behind the games tab." It is
+ * still the contract demonstration checks 13 and 14 corrupt on purpose, and still the
+ * live proof of mountControlPanel's FIRST guard — a module that publishes nothing gets
+ * no panel and no error, which `blockpop` cannot demonstrate because it publishes a seam
+ * and fails at the FOURTH guard instead. Different branches.
+ *
+ * The checks that need a tile for it PUSH THEIR OWN ENTRY (the precedent is
+ * demo-picker.mjs's GAMES.push), which keeps their finger path end to end while Buddy
+ * cannot see it BY CONSTRUCTION rather than by a filter that has to keep working. */
 var GAMES=[
   {id:'gyre',module:'./games/gyre.js',label:'Gyre',icon:'\uD83C\uDF00',
    color:'#06B6D4',glow:'#67E8F9',sound:'twinkle',players:1,params:{}},
-  {id:'hello',module:'./games/hello.js',label:'Hello',icon:'\uD83D\uDC4B',
-   color:'#8B5CF6',glow:'#A78BFA',sound:'chime',players:1,params:{}},
   {id:'blocks',module:'./games/blockpop.js',label:'Blocks',icon:'\uD83E\uDDF1',
    color:'#F59E0B',glow:'#FCD34D',sound:'blip',players:1,params:{mode:'easy'}}
 ];
@@ -2237,8 +2244,14 @@ function mountControlPanel(chrome, host, entry) {
     + 'pointer-events:none;-webkit-tap-highlight-color:transparent';
 
   var dock = document.createElement('div');
+  /* THE DOCK MAY NOT EXCEED THE SURFACE, AND THE DRAWER IS WHAT GIVES. Without this the
+   * bar and the drawer simply added up: at 412px of height 78vh is 321 and the bar is ~98,
+   * so the column was 419 tall in a 412 box and the BAR WAS PUSHED OFF THE TOP — the dice
+   * measured at y=-7, clipped by the screen. `max-height:100%` plus `min-height:0` on the
+   * drawer below makes the drawer absorb the shortfall instead, at every height, with no
+   * number to be wrong. */
   dock.style.cssText = 'position:absolute;left:0;right:0;bottom:0;display:flex;'
-    + 'flex-direction:column;align-items:stretch;pointer-events:none';
+    + 'flex-direction:column;align-items:stretch;max-height:100%;pointer-events:none';
 
   var bar = document.createElement('div');
   /* THE LEFT INSET IS NOT PADDING, IT IS THE EXIT'S COLUMN, AND ITS ABSENCE WAS THE WORST
@@ -2295,9 +2308,19 @@ function mountControlPanel(chrome, host, entry) {
      * point its top rows slid up under the exit again. #gameBack owns x 10-74 at every
      * height and every scroll position; keeping the drawer's content out of that column
      * is a rule no scroll can defeat, and it lets the drawer keep its full height. */
-    + 'max-height:78vh;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;'
+    /* NO `78vh`. A fraction of the screen is architecture §5's own anti-pattern and this
+     * was the file's worst instance: 78vh is 500 on the 640px screen it was measured at
+     * and 321 on the 412px screen the toy runs on, where it left 91px of playfield and
+     * pushed the bar off the top. `flex:0 1 auto` with `min-height:0` says the thing that
+     * is actually meant — TAKE WHAT IS LEFT AFTER THE BAR — and it holds at any height. */
+    + 'flex:0 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;'
     + 'padding:10px 10px calc(10px + env(safe-area-inset-bottom)) max(84px,calc(env(safe-area-inset-left) + 74px));'
-    + 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));'
+    /* 176, NOT 230. At 230 the fleet's 785px of usable width takes exactly THREE columns,
+     * which stacks sixteen controls into 406px of content inside a ~300px drawer — a pan
+     * that is MANDATORY rather than optional, and a non-reader does not discover a pan.
+     * 176 takes four columns there and the content fits without one. Wider screens simply
+     * get more columns, which is what auto-fit is for. */
+    + 'display:grid;grid-template-columns:repeat(auto-fit,minmax(176px,1fr));'
     + 'gap:8px;align-content:safe start';
 
   /* Every control registers a repaint here. `randomize()` changes nine settings at once
@@ -2609,8 +2632,37 @@ function mountControlPanel(chrome, host, entry) {
     handle.setAttribute('aria-expanded', open ? 'true' : 'false');
     try { localStorage.setItem(OPEN_KEY, open ? '1' : '0'); } catch (e) {}
   }
-  var startOpen = true;
-  try { startOpen = localStorage.getItem(OPEN_KEY) !== '0'; } catch (e) { startOpen = true; }
+  /* THREE-WAY PRECEDENCE, AND THE ONE-CHARACTER VERSION IS THE REGRESSION.
+   *
+   *   stored '1' or '0'  ->  THE CHILD'S CHOICE WINS, always, whatever the module says
+   *   absent             ->  seam.controlsOpen === true, else CLOSED
+   *
+   * Flipping `!== '0'` to `=== '1'` would look like the same change and is not: it makes
+   * ABSENT mean closed for every game, silently discarding controlsOpen and handing Gyre
+   * a shut drawer on a fresh install. The stored value has to be read as three states —
+   * '1', '0', and nothing — not as a boolean.
+   *
+   * WHY THE DEFAULT MOVES AT ALL: hard-coded open, the drawer is 321px of a 412px fleet
+   * screen, leaving 91px of playfield. §8.8 puts the default on the seam.
+   *
+   * THERE WERE THREE `true`s HERE AND ONLY TWO WERE LIVE. The initializer was shadowed
+   * because both the try and its catch assigned; this rewrite lets the try FALL THROUGH,
+   * which puts the initializer on a reachable path for the first time. "It is dead code"
+   * was true right up until this line landed. So the initializer is now `false` — the
+   * ruled fallback — and the catch is explicit rather than a repeat of it.
+   *
+   * `controlsOpen` IS MODULE-SUPPLIED AND THEREFORE UNTRUSTED, exactly as the seam is:
+   * absent is not an error, a throwing getter must not take the panel down, and the test
+   * is `=== true` rather than truthiness — a module returning the string 'false', or 0,
+   * or a Proxy, must not be able to decide this by accident. */
+  var wants = false;
+  try { wants = seam.controlsOpen === true; } catch (e) { wants = false; }
+  var startOpen = wants;
+  try {
+    var stored = localStorage.getItem(OPEN_KEY);
+    if (stored === '1') startOpen = true;
+    else if (stored === '0') startOpen = false;
+  } catch (e) { startOpen = wants; }
 
   bar.appendChild(left);
   bar.appendChild(handle);
@@ -2968,7 +3020,18 @@ function pickerTile(entry) {
   /* BIG, because a three-year-old's aim is not an adult's, and the work order prefers
    * fewer bigger tiles to a grid that fits more. The floor is absolute so a narrow
    * viewport cannot shrink a tile below a thumb. */
-  t.style.cssText = 'width:min(42vw,240px);height:min(42vw,240px);min-width:150px;min-height:150px;'
+  /* SIZED OFF THE AXIS THAT BINDS. `min(42vw,240px)` on both sides of a SQUARE tile
+   * measured it entirely against the plentiful axis — 891px of width — and never against
+   * the 411px that actually runs out. Scotty: "twice as big as they need to be... cut them
+   * in half... centre them into a grid that fits on the one screen."
+   *
+   * `min(38vh, 42vw, 132px)` reads the binding axis first and still cannot exceed the old
+   * width term or the halved ceiling. At 411px of height that is 132px, so TWO ROWS plus
+   * the gap and padding come to 320 of 411 and the grid stays centred without scrolling.
+   * The floor drops to 96px — a tile is a whole-hand target for a three-year-old and 96
+   * is still more than twice the 44px minimum — because a 150px floor at 411px of height
+   * re-creates the clipping the ceiling just fixed. */
+  t.style.cssText = 'width:min(38vh,42vw,132px);height:min(38vh,42vw,132px);min-width:96px;min-height:96px;'
     + 'border-radius:28px;border:3px solid ' + entry.glow + ';'
     + 'background:linear-gradient(160deg,rgba(255,255,255,0.12),rgba(0,0,0,0.30)),' + entry.color + ';'
     + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;'
@@ -2988,13 +3051,13 @@ function pickerTile(entry) {
     + 'padding:0;-webkit-tap-highlight-color:transparent';
   var icon = document.createElement('div');
   icon.textContent = entry.icon;
-  icon.style.cssText = 'font-size:min(18vw,92px);line-height:1;pointer-events:none';
+  icon.style.cssText = 'font-size:min(20vh,18vw,64px);line-height:1;pointer-events:none';
   /* THE WORD IS FOR THE ADULT AND FOR THE CHILD WHO WILL ONE DAY READ IT. The ICON is
    * what has to work today — roadmap P2 gate 3 covers all the text and asks a stranger to
    * name the tile, so anything the word is carrying alone is a gate 3 failure. */
   var word = document.createElement('div');
   word.textContent = entry.label;
-  word.style.cssText = 'font-size:22px;font-weight:700;letter-spacing:1px;color:#fff;'
+  word.style.cssText = 'font-size:16px;font-weight:700;letter-spacing:1px;color:#fff;'
     + 'text-shadow:0 2px 4px rgba(0,0,0,0.65);pointer-events:none';
   t.appendChild(icon);
   t.appendChild(word);
@@ -3025,12 +3088,26 @@ function renderPickerTiles(host) {
      * picker rather than a data change. `safe` degrades to flex-start exactly when
      * centring would push content out of reach.
      *
-     * The top padding clears the exit's 64px HIT BOX (which ends at y=126), not just its
-     * paint: the transparent margin still hit-tests, so a tile overlapping it lost a
-     * strip of its left edge to the exit — measured in 165 of 440 viewport-by-count
-     * configurations. A mis-hit here teaches a child the toy is broken, which is the same
-     * lesson a dead button teaches. */
-    + 'align-content:safe center;justify-content:safe center;gap:24px;padding:140px 20px 24px;'
+     * THE EXIT CLEARANCE IS A COLUMN NOW, NOT A BAND, and that is architecture §5 applied
+     * to this file's own worst number. `padding-top:140px` was measured on a 768px-tall
+     * tablet; on the 411px fleet screen 140 + a 240px tile + 24 = 404 of 411, so ONE ROW
+     * BARELY FITS AND CLIPS and "Blocks" was below the fold. Scotty found it with
+     * screenshots. The panel had already solved the same problem the other way — a left
+     * gutter at x >= 84 that holds at EVERY height — and the height rule failed while the
+     * column rule survived, in this same file, on the same day.
+     *
+     * AND THE COLUMN IS DERIVED FROM THE EXIT, NOT WRITTEN DOWN. makeBackButton puts the
+     * exit at `left:max(10px, env(safe-area-inset-left))`, 64px wide, so on this fleet —
+     * where the left inset measures ~30px — it occupies x 30-94, NOT the x 10-74 that a
+     * literal would encode. A hardcoded column is the same defect as a hardcoded band,
+     * one axis over. `env()` is the only thing that knows.
+     *
+     * The clearance is the hit box, not the paint: the transparent margin still
+     * hit-tests, so a tile overlapping it lost a strip of its left edge to the exit —
+     * measured in 165 of 440 viewport-by-count configurations. A mis-hit here teaches a
+     * child the toy is broken, which is the same lesson a dead button teaches. */
+    + 'align-content:safe center;justify-content:safe center;gap:20px;'
+    + 'padding:16px 20px 20px max(94px,calc(env(safe-area-inset-left) + 84px));'
     + 'box-sizing:border-box;overflow:auto;touch-action:pan-y';
   /* AN INVALID ENTRY IS NOT A TILE. registryEntryIsValid enforces PUP-WO-0000 §9.1, and a
    * tile the shell would then refuse to load is a control that lies — the same reason

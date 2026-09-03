@@ -55,7 +55,14 @@ const bad = (m, d) => { failures.push({ m, d }); console.log(`  FAIL  ${m}`); if
 const browser = await chromium.launch({ channel: 'chromium' });
 /* A TOUCH CONTEXT. `(pointer: coarse)` must match or this is measuring a device nobody
  * owns — and the glow, which §2.2b turns into a control, draws differently on each. */
-const ctx = await browser.newContext({ viewport: { width: 1024, height: 640 }, hasTouch: true });
+/* THE FLEET, AND NOTHING ELSE. Architecture §3: three phones at 869x412, 915x412 and
+ * 883x412. This file ran 1024x640 and swept 800x480 / 1024x600 / 640x480 — THE SHORTEST
+ * IT HAD EVER SEEN WAS 480 AND THE FLEET IS 412 — which is exactly where the drawer's
+ * `max-height:78vh` starts to bind, so every panel measurement this project has reported
+ * was taken in the regime where the cap does not. That is the root cause of the picker
+ * defect Scotty found and of the clipped dice, and it is architecture §5 in one line: a
+ * number is only ever correct at the viewport it was measured at. */
+const ctx = await browser.newContext({ viewport: { width: 869, height: 412 }, hasTouch: true });
 const page = await ctx.newPage();
 const cdp = await ctx.newCDPSession(page);
 const pageErrors = [];
@@ -981,6 +988,20 @@ if (afterDeath.panelGone && afterDeath.chromeGone && afterDeath.setResult === fa
 console.log('\n--- 9. a module that publishes nothing gets no panel, and that is not an error ---');
 await page.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
+/* THE FIXTURE IS SUPPLIED HERE, BECAUSE `hello` LEFT THE CHILD'S PICKER.
+ * PUP-WO-0111 §3 removed its registry entry — Scotty does not want a third tile — while
+ * keeping the FILE, which is still the only live proof of mountControlPanel's first
+ * guard: a module that publishes nothing at all. `blockpop` cannot stand in, because it
+ * publishes a seam and is refused at the FOURTH guard instead; that is a different branch.
+ *
+ * Pushing the entry rather than hiding the tile keeps THIS CHECK'S FINGER PATH END TO END
+ * — it still waits for a real tile and taps it — on the exact surface where "a synthetic
+ * click is not a finger" was learned. Mounting the module directly would have downgraded
+ * that to an internals call. Precedent: demo-picker.mjs:351-355. */
+await page.evaluate(() => {
+  GAMES.push({ id: 'hello', module: './games/hello.js', label: 'Hello', icon: '\uD83D\uDC4B',
+    color: '#8B5CF6', glow: '#A78BFA', sound: 'chime', players: 1, params: {} });
+});
 await fingerTap('.pad-btn[data-id="7"]');
 await page.waitForSelector('.pickerTile[data-game="hello"]', { timeout: 10000 });
 await fingerTap('.pickerTile[data-game="hello"]');
@@ -1009,7 +1030,7 @@ else bad('could not leave the module with no panel');
  * at three shapes rather than one. A check that only ever runs at the size where the
  * layout happens to fit is a check about the check's own viewport. */
 console.log('\n--- 10. the same panel on the shapes this actually runs on ---');
-for (const vp of [{ width: 800, height: 480 }, { width: 1024, height: 600 }, { width: 640, height: 480 }]) {
+for (const vp of [{ width: 869, height: 412 }, { width: 915, height: 412 }, { width: 883, height: 412 }]) {
   const ctx2 = await browser.newContext({ viewport: vp, hasTouch: true });
   await ctx2.addInitScript(SAMPLER);
   const p2 = await ctx2.newPage();
