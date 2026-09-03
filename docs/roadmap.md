@@ -467,7 +467,7 @@ Stated because folding it into either was the obvious move and both are wrong.
 5. No credential renders into the DOM in a state reachable without an adult action
    whose containment is specified.
 
-## 4·RESUME — the position as of 2026-09-03, `main` = `7741b9f`
+## 4·RESUME — the position, as of the commit that carries this section
 
 *Written for a context-less reader picking this up cold. **This section is the queue.**
 If it disagrees with anything remembered, this wins.*
@@ -479,7 +479,7 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0701` part 2 — the voice panel** | **authored, part 1 MERGED**, acceptance items **3–8 open**: recorder, presets, sliders, playback, send | nobody |
+| 1 | **`PUP-WO-0701` part 2 — the voice panel** | **DISPATCHED to CC-B 2026-09-03.** Part 1 merged; the build directive is `PUP-WO-0701.md` §S2; acceptance **3–8 open** | in flight |
 | 2 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
 | 4 | `PUP-WO-0112` — the CI job split | scoped, no file | nobody |

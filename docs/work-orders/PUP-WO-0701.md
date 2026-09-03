@@ -317,3 +317,176 @@ or riskier to merge — it does neither:**
 *Added 2026-09-03. `SendMessage` appeared in **zero** work orders while being a line in
 `architecture.md`, which made the handoff a convention — and a green PR once sat unclaimed
 for three hours because a park never woke the reviewer. See `docs/work-orders/TEMPLATE.md`.*
+
+---
+
+# §S2 — PART 2: THE PANEL ITSELF. RULED AND DISPATCHED 2026-09-03
+
+**Base:** `main` = `9ae4207` (**verify live HEAD**). **Branch:** `build/wo-0701-voice`.
+**Subject SHA:** every citation below resolved at `9ae4207` and is **paired with the
+symbol it sits in — the symbol is the anchor, the number is a hint.**
+
+**Part 1 is MERGED at `7741b9f` (PR #64).** Verified at source, not from the report:
+
+| shipped | where | state |
+|---|---|---|
+| the inbound gate | `safeMediaUrl(raw, kind)` | **already accepts `kind === 'audio'`** — the audio half was built ahead. Part 2 **uses** it; do not write a second one. |
+| the inbound bound | `MAX_INBOUND_BYTES` = 3 MiB | the receiving half of §1.0a's bound. |
+| the camera channel release | `closeCamera` | the precedent this part copies. |
+| the capped gallery | `galleryPush` / `GALLERY_MAX` | §1.0a's first instance. |
+| check 25 | `.github/ci/check-registered.mjs` | registration equality, per §S.6. |
+
+**Acceptance items 3–8 are what remains.** Item 1 (the fence) and item 9 (every
+demonstration asserts the commit and the failing step name) apply throughout. Item 2
+is the spike gate and is closed.
+
+## §S2.1 — THE ENTRY POINT IS BUTTON id 0, AND THAT IS A RULING, NOT A DEFAULT
+
+**`BTNS_LEFT` id 0 — `Comms`, 📡 — becomes the voice panel's door.** Change its
+`label` to `Voice` and its `emoji` to 🎤 **in that data line and nowhere else.**
+
+Three reasons, and the third is the one that matters:
+
+1. **It costs no layout.** The pad is 4 + 4 at a 412 px CSS viewport height. A ninth
+   button re-flows the grid on the only device that counts. *A number is only ever
+   correct at the viewport it was measured at* — so do not introduce one.
+2. **There is no behaviour to disrupt.** `Comms` today is `doSound` plus a `msg`
+   toast. It is one of three decorative buttons; this makes it real.
+3. **Northstar invariant 1 is served better by a microphone than a satellite dish.**
+   A non-reader identifies the panel from the glyph or not at all. 📡 does not say
+   *"talk to Grampa"* to a three-year-old and 🎤 has a chance.
+
+**Say in `FEEDBACK.md` that this was a choice.** It is reversible in one data line and
+Scotty may want the console fiction back.
+
+## §S2.2 — THE TWO OLDER SIBLINGS. FIRST COMMIT, BEFORE ANY AUDIO CODE
+
+**`closeCamera`'s own comment says "THREE SUPABASE CHANNELS WERE SUBSCRIBED AND ZERO
+WERE EVER RELEASED." Part 1 released ONE.** Measured at `9ae4207`:
+
+- `joinCanvasChannel` → `canvasChannel.subscribe(...)` — **`closeCanvas` releases nothing.**
+- `joinMapChannel` → `mapChannel.subscribe(...)` — **`closeTreasureMap` releases nothing.**
+- (`mountControlPanel`'s seam `subscribe` is not a Supabase channel and does release
+  via `panelTeardown`. Counted and resolved. It is not one of these.)
+
+**So the symptom that comment describes is still live for two of the three panels:**
+open Draw once and remote strokes keep arriving over the console, over a game, over
+anything, for the rest of the session.
+
+**RULED: fixed HERE, in a commit of its own that touches nothing else.** This is
+§S.6's test applied honestly — it makes the PR neither harder to review nor riskier to
+merge, because it is a **mechanical repeat of an already-merged, already-reviewed
+fix**, isolated so a reviewer can see that in one diff.
+
+**And it is this project's most-paid-for lesson by name: *which code is older than the
+rule?*** The release discipline was extracted for camera. Canvas and map are the two
+siblings that predate it, and they are exactly the code nobody re-reads. Leaving them
+for a number means the next session finds a rule that is true of one panel out of
+three — which is a convention, not a rule.
+
+Copy `closeCamera`'s exact shape: `removeChannel` with an `.unsubscribe()` fallback in
+the `catch`, then null the handle.
+
+## §S2.3 — THE RECORDER: A BOUND THAT IS NOT THE BACKSTOP, AND A HARD STOP
+
+**Record raw.** No effect is applied at capture time — see §S2.4.
+
+- **`MAX_RECORD_MS` = 15000, enforced by a timer that stops the recorder**, not by
+  trusting the child to lift a finger. A three-year-old will hold a button.
+- **This is the REQUIREMENT. `MAX_INBOUND_BYTES` is the BACKSTOP. They must not be
+  the same number and they are not** — a duration cap and a byte cap fail differently
+  and a clip that somehow exceeds 3 MiB must still be refused at the sink.
+- **A visible countdown** — the ring, the radar sweep, anything with no text. The
+  child must be able to see the recording end coming.
+- **Every control through `wireTap`, never bare `click`.** *A synthetic click is not a
+  finger*: multi-touch and a tap that slides emit no click at all, and this panel will
+  be pressed by two hands. This is acceptance item 6's real content.
+
+**TEARDOWN IS A FLAG-AND-STOP SURFACE.** On close, from any state including
+mid-record and mid-playback: `MediaRecorder.stop()`, **every track from
+`getUserMedia` stopped individually** (`stream.getTracks().forEach(t => t.stop())` —
+`startCameraStream`'s existing pattern), the graph disconnected, the timer cleared,
+the channel released, every object URL revoked.
+
+## §S2.4 — FOUR PRESETS, PURE WEB AUDIO, APPLIED AT PLAYBACK
+
+**No library** — §2.1's ruling stands and the pieces are all present.
+
+Four that are **distinct by construction**, so acceptance item 3's spectra cannot come
+out the same by accident:
+
+| preset | mechanism |
+|---|---|
+| **puppy** (up) | `AudioBufferSourceNode.playbackRate` > 1 |
+| **big dog** (down) | `playbackRate` < 1 |
+| **robot** | ring modulation — an oscillator into a `GainNode`'s gain |
+| **cave** | `DelayNode` with a feedback `GainNode` |
+
+**The sliders are the point, not a garnish** — §2.3, from Scotty watching him: *he
+likes moving a control and hearing it change.* One slider per preset, bound to that
+preset's own parameter, **live during playback**.
+
+**Clamp every value that reaches an `AudioNode`.** The bounds are a child's ears and a
+child's patience, exactly as `TONE_WAVES` / `TONE_MAX_VOICES` already record for
+`api.tone` — an unbounded `playbackRate` or feedback gain is a bang, and feedback ≥ 1
+is a delay line that never decays.
+
+## §S2.5 — SEND RENDERS AUDIO. IT NEVER SENDS PARAMETERS. *(security ruling)*
+
+**The temptation is to broadcast the raw clip plus `{preset, value}` and let the other
+device apply it. Do not.** That puts a stranger's numbers into a live `AudioContext`
+on Buddy's device, which is the precise hazard `api.tone`'s clamp comment already
+names — and it opens a **second** inbound surface beside `safeMediaUrl`, when §S.1's
+whole ruling is that the transport is one mechanism.
+
+**So: apply the effect locally, render, and send bytes.** Route the graph through a
+`MediaStreamAudioDestinationNode` into a second `MediaRecorder`, base64 the result,
+broadcast it. Real-time re-record is acceptable at a 15-second cap.
+
+**Local playback uses `URL.createObjectURL` and is revoked on close** — §1.0a
+ratified. **The wire uses a `data:audio/…;base64,…` URL** because that is the only
+shape `safeMediaUrl(raw, 'audio')` accepts. **Two representations, on purpose.**
+
+**Inbound audio goes through `safeMediaUrl(raw, 'audio')` before it touches
+`audio.src`, for the same reason part 1 gated the image: assignment still fetches.**
+
+## §S2.6 — DO NOT CLOSE THE SHARED AudioContext
+
+`audioCtx` is **one** context, shared with every console cue through `getAudioCtx()`.
+`getAudioCtx` re-creates on `state === 'closed'`, so closing it is not fatal — **but
+every node still connected to the old context dies with it**, including a clip that is
+mid-playback. **Disconnect your nodes on teardown. Never call `audioCtx.close()`.**
+
+## §S2.7 — ACCEPTANCE 3–8, AND WHICH TWO NEED A HUMAN
+
+| # | how it is proven |
+|---|---|
+| 3 | **Measured, not asserted:** render each preset offline and show the spectra differ. |
+| 4 | A sent clip arrives on a second device. |
+| 5 | **NEEDS SCOTTY. Do not simulate it** — `PUP-WO-0201` §7. **Record the prediction first**, then park it as open. |
+| 6 | One tap back from every state, **mid-record and mid-playback**, pressed with a finger. |
+| 7 | Supabase unconfigured: records and plays back locally; send degrades exactly as the camera's does. |
+| 8 | **No microphone survives teardown.** Prove it — a `getUserMedia` track left live is the flag-and-stop this WO cares most about. |
+
+**Item 5 does NOT block the PR.** Build it, predict it, say it is unverified, and open
+the PR. *Where a claim needs a human, build the check, state that it is UNVERIFIED,
+and stop.* **Do not idle the branch on it.**
+
+## §S2.8 — NOT IN PART 2
+
+- **The camera panel's bare `click` controls** — §S.4 ruled it its own number. Voice's
+  own controls use `wireTap`; the camera's existing ones are not yours to touch.
+- **Realtime / co-op voice** — architecture §7.
+- **A per-clip audience, addressing, or revocation** — §S.5. **But say in
+  `FEEDBACK.md` that voice inherits today's audience**, so it stays a recorded choice.
+- **An adult "what has this app stored" surface** — §S.5, and under §S.1 nothing is
+  stored, so it is not needed to ship voice.
+- **`sw.js`, `manifest.json`, the icons, `games/`** — §0a, unchanged. **Nothing in
+  part 2 needs a `urlsToCache` line: it is all inside `index.html`, which is already
+  cached.** Checked, because a fence that forbids what its own body requires has
+  happened here four times.
+
+**Everything else — §0a's fence, §3's acceptance, §5's adversarial pass, §6's feedback
+file, §7's flag-and-stop, and the four-step CLOSING SEQUENCE — is inherited from above
+UNCHANGED. It is not restated here, because two copies drift and then one is wrong
+while both look authoritative.**
