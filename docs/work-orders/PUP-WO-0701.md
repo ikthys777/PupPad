@@ -221,6 +221,69 @@ for `DELETE|expires|retention|purge` in 2,642 lines.** A coordinate and a child'
 voice are not the same kind of data, and the app currently treats everything the same
 way — which nobody decided, and which therefore has to be decided now.
 
+## §S. THE SPIKE IS RATIFIED — BUILD PHASE, RULED 2026-09-03
+
+**All four answers accepted. `docs/spikes/PUP-WO-0701-retention.md` is the record; this is
+the ruling.**
+
+### 1. STORE NOTHING. The transport is the whole mechanism.
+
+**Ratified.** Send on the existing broadcast and let it die with the page. **A broadcast
+is transport, not storage.** And the framing that decides it is CC-B's: **a
+`pup_pad_voice` table would have this project acquire its FIRST retention mechanism in
+the same work order as its FIRST identifying data.** §1.1 already draws that line — a
+coordinate is not identifying, **a voice is.** *Nothing deletes it because nothing stores
+it: §1.0a's reasoning one layer out, and the only answer where the thing that dies is the
+thing that holds the data.*
+
+### 2. THE SINK FETCHES, AND THAT IS A LIVE INVARIANT-3 BREACH TODAY
+
+**The lens found what `PUP-WO-0700` did not close, and I verified it at source.** 0700
+closed the **markup** sink correctly — assigned, never concatenated — **which closes
+injection and nothing else.**
+
+**`index.html:900` hands `payload.payload.dataUrl` straight to `showRemotePhoto` with no
+type check, no scheme check and no size check, and `:939` assigns it to `img.src`.**
+**Assignment still FETCHES.** A payload naming an attacker's origin makes the child's
+device issue a request to it — **a beacon confirming the device is live, from inside a
+toy that is otherwise entirely offline.** No script runs, nothing is stolen, and
+**northstar invariant 3 breaks anyway, because a core surface reached the network.**
+
+**RULED: the validation lands in THIS work order, AT THE SINK, and it fixes the EXISTING
+PHOTO PATH as well as the new audio one.** `^data:image/` and `^data:audio/`, at the point
+of use, **because the sender is the untrusted party.** *This is not voice scope creep —
+voice cannot ship on a transport with a live breach in it, and the breach is there now.*
+
+**AND THE BOUND NEEDS ITS RECEIVING HALF.** §1.0a's *designed* bound is currently
+recorder-side only, which bounds what this device **sends**, not what it **accepts**. Cap
+the inbound payload too.
+
+### 3. FOUR CHANNELS ARE SUBSCRIBED AND ZERO ARE RELEASED — one more than the spike counted
+
+`grep -c '\.subscribe('` returns **4**; `removeChannel|\.unsubscribe\(` returns **0**.
+The spike names three (`:428` canvas, `:897` camera, `:1589` map). **Resolve the fourth
+before building — an unreleased channel nobody counted is an unreleased channel**, and
+this section exists because the count is the thing being fixed.
+
+### 4. THE OWED ITEMS — ruled as CC-B proposed, with the reasons accepted
+
+| item | ruling |
+|---|---|
+| `closeCamera`'s missing unsubscribe | **HERE.** *"A subscription that outlives its panel is a live receiver the teardown did not release"* — the same fact as §1.0a, and voice would inherit it. **Building voice on this transport without fixing it is building the second copy of a leak.** |
+| `CAPTURE`'s uncapped array | **HERE.** §1.0a's first instance: capped count, oldest evicted, released on close. **Applying the ruling to the array that already exists is not creep.** |
+| the bare `click` controls | **ITS OWN NUMBER.** Real, member 6, and unrelated to retention or audio. Folding it means touching every control in the panel. |
+
+### 5. THE AUDIENCE IS WRONG TODAY AND VOICE MUST NOT SILENTLY WIDEN IT
+
+`device_id=neq.self`, `self:false`, no per-clip addressing, no revocation. **Not fixed
+here — the blast radius is a design decision and Scotty's.** But **say in `FEEDBACK.md`
+that voice inherits that audience**, so it is a recorded choice rather than a silent one.
+**The adult surface gets its own number and is BLOCKED ON anything being stored** — under
+§S.1 nothing is, so it is not needed to ship voice, and building it here is scope by
+drift.
+
+---
+
 ## CLOSING SEQUENCE — FOUR STEPS, AND THE FOURTH IS THE ONE THAT DECAYS
 
 **Build → freeze → adversarial pass → disposition → `FEEDBACK.md` → then:**
