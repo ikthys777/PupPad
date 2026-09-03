@@ -182,6 +182,72 @@ REFUTED.**
 intersects the visual viewport** and **a tap at its centre still hits it.** A check that
 asserts `scale === 1` asserts something the page cannot deliver.
 
+## 3a. RULED AFTER THE BUILD — THE SYMPTOM CANNOT BE REPRODUCED, AND THAT IS THE RESULT
+
+*(2026-09-03. CC-B built §1–§4 and reported two measurements that invalidate the plans
+above. Both accepted; the handling was correct in each case.)*
+
+**§1 IS TRUE AND UNFALSIFIED, WHICH IS NOT THE SAME AS PROVEN.** My retargeted plant —
+*remove `touch-action:none` from `html,body`* — **left the check green.** So did removing
+`#root`'s, removing `user-scalable=no`, removing the multi-touch guard, and **all four
+together**, while a control fixture **in the same run** zoomed 1 → 5 under the identical
+gesture. **The harness can see a zoom; this page will not produce one, and the reason is
+unidentified.**
+
+**RULED: the NOT FALSIFIED banner ships, at the point of the claim, listing every plant
+tried.** *That is the correct handling of a check that cannot be shown red — §7 makes it
+a flag-and-stop, and shipping it as a silent green is the failure that rule exists to
+prevent.* **The banner must say the reason is UNKNOWN**, not imply the property is weak:
+the page genuinely does not zoom here, and we do not know what stops it.
+
+**§3'S MEASUREMENT CANNOT BE RUN AT ALL.** I instructed *"your `synthesizePinchGesture`
+injector zooms the real app."* **It does not** — it zooms CC-B's fixtures, which is where
+it was measured, and `:5`'s `user-scalable=no` constrains even a compositor gesture on
+`index.html`. **Four injectors tried — real two-point touch, `synthesizePinchGesture`,
+`Emulation.setPageScaleFactor` with and without a device-metrics override, and relaxing
+the viewport meta at runtime — all leave `visualViewport.scale` at 1.**
+
+**So the visual viewport cannot be panned away from the exit, so whether the recovery
+brings it back cannot be observed.** My blocker was correct in substance and is
+**unresolvable here**. **RULED: §4 ships printing UNVERIFIED, naming all four
+instruments, stating the reach property is asserted BY CONSTRUCTION AND NOT BY
+OBSERVATION** — in the check, not around it.
+
+**AND THE ENVIRONMENT DIFFERS FROM THE DEVICE IN EXACTLY THE PROPERTY UNDER TEST.** The
+one thing that makes Android Chrome behave differently is that **it ignores
+`user-scalable=no`** — the directive this harness appears to honour. **A test bed that
+honours the directive can never reproduce a defect whose cause is the directive being
+ignored.** *That is not a harness bug; it is the reason this cannot be settled here.*
+
+### WHAT THIS WORK ORDER CAN AND CANNOT CLAIM
+
+**It cannot claim to fix Scotty's symptom.** Say that plainly in `FEEDBACK.md`. What it
+delivers is **hardening that is VERIFIED AS BUILT and UNVERIFIED AS EFFECTIVE** — a real
+category, and worth shipping, but not the same as a fix.
+
+**Ship it. Two of its findings justify the work order on their own:**
+
+- **A DOCUMENT-LEVEL TOUCH LISTENER IS PASSIVE BY DEFAULT IN CHROME, so a guard that
+  installs, runs, and calls `preventDefault` DOES NOTHING** — and its marker global is
+  still there to be found. **It looks identical to a working guard from every angle
+  except the one the check takes.** *Same family as `.bp-drag[hidden]`: the remedy is
+  present and inert, and presence is what everyone measures.* **That plant went red.**
+- **The structural sweep found `#mapOverlay`, which CC-B's hand-derived list missed on
+  the day they wrote it.** *That is the entire argument for deriving the set rather than
+  remembering it, demonstrated against its own author within one work order.* It now
+  discovers six.
+
+**7 of 7 controls red, each for its own stated reason.** One item declared and never
+shown red — §2's empty-set guard, which needs every panel destroyed at once — **recorded
+as asserted-by-construction rather than quietly counted as proven.**
+
+### THE ONLY THING THAT CAN SETTLE THE SYMPTOM
+
+**Is the Android status bar magnified too, or only the app's own content?** *(Raised by
+CC-B, twice, and now blocking.)* If the whole screen magnifies, `visualViewport.scale`
+never moves, **no page can observe it, and the recovery cannot fire no matter what is
+built** — the answer is a device setting. **One look at the S10+ separates them.**
+
 ## 4. Acceptance — ON THE S10+, WHICH IS THE DEVICE THAT SHOWS IT
 
 **A fix verified only on the S25 is the exact failure mode `PUP-WO-0602` exists to
