@@ -115,7 +115,12 @@ jobs:
     # job's comment asserting "every check in this file" goes stale the moment one moves.
     # Doing it is careful work, not forbidden work; this raise buys the room to do it
     # deliberately rather than under a red run.
-    timeout-minutes: 20
+    # 20 -> 32. FIVE browser-bound checks were registered at once (22, 23, 24 and two
+    # controls files), and this job already sat at 18m0s green on a 2-core runner. The
+    # last time this project guessed a CI budget it was CANCELLED AT 10m17s and the
+    # cancellation looked exactly like a failure. Raised before the first run rather
+    # than after it, because a timeout is the one failure that tells you nothing.
+    timeout-minutes: 32
     steps:
       - name: Check out the full history
         uses: actions/checkout@v7
@@ -497,6 +502,65 @@ jobs:
         # to be testing. Both were defects in the CHECK, and nothing else would have
         # found either.
         run: node .github/ci/demo-blockpop-controls.mjs .
+
+      # ===================================================================
+      # REGISTERED LATE, AND THE OMISSION IS THE FINDING.
+      #
+      # Checks 22, 23 and 24 were each written with their controls, each shown red
+      # against a planted defect, and NONE OF THEM WAS EVER ADDED HERE. Two of them
+      # (22 and 23) HAD ALREADY MERGED, so the zoom hardening and the radar fix have
+      # been on main with no CI protection at all.
+      #
+      # "A check never seen red is not a check, AND AN UNREGISTERED ONE DOES NOT RUN"
+      # is a sentence from this repo's own PUP-WO-0400 feedback, written by the same
+      # builder who then shipped three unregistered checks. It is the most ordinary
+      # way this happens: the check runs locally, goes red on the plant, does its
+      # whole job in front of you — and the step that makes it exist for everyone
+      # else LEAVES NO TRACE WHEN IT IS SKIPPED. Nothing fails. CI stays green.
+      # A missing check and a passing one are the same colour.
+      # ===================================================================
+
+      - name: "Check 22 — the zoom lockout and the way back"
+        # PUP-WO-0603. §1 asserts a real two-finger pinch does not zoom, against a
+        # control fixture that DOES zoom in the same run; §2 discovers every full-bleed
+        # container by walking the live DOM rather than from a list that goes stale;
+        # §4 asserts the recovery is installed and correctly INERT AT REST.
+        # §1 prints NOT FALSIFIED and §4 prints UNVERIFIED where the desktop cannot
+        # settle the claim — those banners are load-bearing, not decoration.
+        run: node .github/ci/demo-zoom.mjs .
+
+      - name: "Check 22 controls — every section of check 22, shown red"
+        run: node .github/ci/demo-zoom-controls.mjs
+
+      - name: "Check 23 — the radar's long press"
+        # PUP-WO-0602. The harness cannot RAISE a long-press contextmenu — zero, and
+        # zero on a plain selectable page too — but it can DELIVER one, so the
+        # suppression is asserted and the trigger is declared unverified.
+        run: node .github/ci/demo-radar.mjs .
+
+      - name: "Check 23 controls — every section of check 23, shown red"
+        run: node .github/ci/demo-radar-controls.mjs
+
+      - name: "Check 24 — the inbound gate"
+        # PUP-WO-0701 §S.2. THE ASSERTION IS THE NETWORK, NOT THE REGEX: a hostile
+        # payload is routed through the real receive path and the check asserts the
+        # browser MADE NO REQUEST. Restoring the pre-fix behaviour produces an actual
+        # HTTP request — "the child's device fetched an attacker-named origin".
+        # This is the only thing standing between a stranger's payload and a request
+        # from the child's phone; unregistered, a future change reopens it in silence.
+        run: node .github/ci/demo-inbound.mjs .
+
+      - name: "Check 25 — every demonstration in .github/ci/ actually runs"
+        # PUP-WO-0701 §6. FOUR check files reached main across three work orders without
+        # ever being added here; each was written with its controls and shown red, and
+        # none ran anywhere but a builder's machine. A MISSING CHECK AND A PASSING ONE
+        # ARE THE SAME COLOUR — passes-by-not-running moved from the ASSERTION, where
+        # every instinct in this repo is pointed, to the REGISTRATION, where none look.
+        #
+        # It asserts the EQUALITY, derived from the directory, never a list: a list goes
+        # stale exactly the way this file did, and the next check someone adds is the one
+        # missing from both. No browser, no network — it reads two files off disk.
+        run: node .github/ci/check-registered.mjs .
 
   # ==========================================================================
   # Publication — two copies, one Pages deployment.

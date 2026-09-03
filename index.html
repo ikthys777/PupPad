@@ -316,6 +316,36 @@ function isSupabaseConfigured() {
   return supabaseUrl && supabaseKey;
 }
 
+/* === THE INBOUND GATE — PUP-WO-0701 §S.2 ==================================
+ * EVERY BYTE THAT ARRIVES FROM ANOTHER DEVICE PASSES THROUGH HERE BEFORE IT REACHES A
+ * SINK. `PUP-WO-0700` closed the markup sink correctly — the URL is assigned, never
+ * concatenated — AND THAT CLOSES INJECTION AND NOTHING ELSE. ASSIGNMENT STILL FETCHES:
+ * `img.src = "https://attacker/x.png"` issues a request to an origin a stranger chose,
+ * and so would `audio.src`. No script runs and nothing is stolen, and NORTHSTAR
+ * INVARIANT 3 BREAKS ANYWAY, because a core surface reached the network on someone
+ * else's say-so — a beacon confirming a child's device is live, from inside a toy whose
+ * games are CI-enforced offline.
+ *
+ * VALIDATED AT THE SINK, NOT AT THE SENDER, because the sender is the untrusted party.
+ * A check on the broadcasting side protects nobody: the attacker is the one broadcasting.
+ *
+ * AND THE BOUND HAS A RECEIVING HALF. §1.0a's designed bound is recorder-side, which
+ * bounds what this device SENDS and not one byte of what it ACCEPTS. `MAX_INBOUND_BYTES`
+ * is that half. The base64 payload is measured as characters, which over-counts the
+ * decoded size by ~4/3 — deliberately, because the cap exists to bound MEMORY and the
+ * string is the thing held in memory. */
+var MAX_INBOUND_BYTES = 3 * 1024 * 1024;
+
+function safeMediaUrl(raw, kind) {
+  if (typeof raw !== 'string') return '';
+  if (raw.length > MAX_INBOUND_BYTES) return '';
+  /* Anchored, case-insensitive, and it must be a `data:` URL of the EXPECTED media type.
+   * Not a blocklist of schemes — a blocklist is a list of the ones someone thought of. */
+  var re = kind === 'audio' ? /^data:audio\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i
+                            : /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i;
+  return re.test(raw) ? raw : '';
+}
+
 function supabaseFetch(path, method, body) {
   if (!isSupabaseConfigured()) return Promise.resolve(null);
   var opts = {
@@ -803,7 +833,24 @@ function closeCanvas() {
 /* === Camera System === */
 var cameraChannel = null;
 var cameraStream = null;
+/* === §1.0a's FIRST INSTANCE — PUP-WO-0701 §S.4 ============================
+ * `cameraGallery` is a plain in-memory array persisted nowhere, and `closeCamera()`
+ * empties it — so photos already die with the panel, which is the shape §1.0a ruled.
+ * WHAT IT DID NOT HAVE WAS A BOUND. "Until the panel closes" is not a limit anyone
+ * chose, and within one session an unbounded array of base64 JPEGs grows the JS heap on
+ * a low-end phone. CAPTURE made that worse by pushing INBOUND bytes into it — an
+ * unbounded in-memory store on the trust boundary, fed by a stranger.
+ *
+ * A DESIGNED BOUND WHERE THERE WAS A LUCKY ONE: capped count, OLDEST EVICTED, released
+ * on close. One function so the two push sites cannot drift apart — they are two
+ * expressions of one rule, which is this project's most expensive recurring class. */
+var GALLERY_MAX = 24;
 var cameraGallery = [];
+
+function galleryPush(url) {
+  cameraGallery.push(url);
+  while (cameraGallery.length > GALLERY_MAX) cameraGallery.shift();
+}
 
 /* ============ THE STICKER'S SIZE — PUP-WO-0700 §1 =========================
  * A STICKER IS A FRACTION OF THE IMAGE'S WIDTH, AND THERE IS ONE OF IT.
@@ -898,7 +945,12 @@ function joinCameraChannel() {
     config: { broadcast: { self: false } }
   });
   cameraChannel.on('broadcast', { event: 'photo' }, function(payload) {
-    showRemotePhoto(payload.payload.dataUrl);
+    /* THE FIRST THING DONE WITH AN INBOUND BYTE, BEFORE IT REACHES ANY SINK. The old
+     * line handed payload.payload.dataUrl straight through with no type, scheme or size
+     * check at all. */
+    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'image');
+    if (!url) return;
+    showRemotePhoto(url);
   });
   cameraChannel.subscribe(function(status) {
     if (status === 'SUBSCRIBED') console.log('Camera channel joined');
@@ -999,7 +1051,7 @@ function showRemotePhoto(dataUrl) {
       return;
     }
     cap.dataset.done = '1';
-    cameraGallery.push(dataUrl);
+    galleryPush(dataUrl);
     if (typeof window.renderCameraGallery === 'function') {
       try { window.renderCameraGallery(); } catch (e) {}
     }
@@ -1318,7 +1370,7 @@ function openCamera() {
     thumbCanvas.height = Math.round(thumbW * ratio);
     thumbCanvas.getContext('2d').drawImage(reviewCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
     var thumbUrl = thumbCanvas.toDataURL('image/jpeg', 0.85);
-    cameraGallery.push(thumbUrl);
+    galleryPush(thumbUrl);
     renderGallery();
 
     /* broadcast compressed */
@@ -1555,6 +1607,27 @@ function closeCamera() {
     cameraStream = null;
   }
   cameraGallery = [];
+  /* === THE RECEIVER DIES WITH THE PANEL — PUP-WO-0701 §S.3/§S.4 =============
+   * THREE SUPABASE CHANNELS WERE SUBSCRIBED AND ZERO WERE EVER RELEASED:
+   * `removeChannel` and `.unsubscribe(` both returned 0 across the whole file. So once
+   * the camera had been opened, its channel stayed live for the rest of the session and
+   * the INCOMING SNAP popup kept appearing over the console, over a game, over anything.
+   *
+   * IT IS THE SAME FACT AS §1.0a, WHICH IS WHY IT IS FIXED HERE RATHER THAN LATER. That
+   * ruling is "released on close, because process death cannot fail to happen" — and a
+   * subscription that outlives its panel is A LIVE RECEIVER THE TEARDOWN DID NOT
+   * RELEASE. Voice ships on this same transport, so building it without this would be
+   * building the second copy of a leak. One mechanism, not two.
+   *
+   * (The fourth `.subscribe(` in the file, at the games control-panel seam, is NOT a
+   * Supabase channel and DOES release — its `unsub()` is called in panelTeardown. It was
+   * resolved before this was built, because an unreleased channel nobody counted is an
+   * unreleased channel.) */
+  if (cameraChannel) {
+    try { var c = getSupabaseClient(); if (c && c.removeChannel) c.removeChannel(cameraChannel); }
+    catch (e) { try { cameraChannel.unsubscribe(); } catch (e2) {} }
+    cameraChannel = null;
+  }
   try { delete window.renderCameraGallery; } catch (e) { window.renderCameraGallery = undefined; }
   if (window.__camStickerRO) { try { window.__camStickerRO.disconnect(); } catch (e) {} window.__camStickerRO = null; }
   var overlay = document.getElementById('cameraOverlay');

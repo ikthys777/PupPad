@@ -101,6 +101,25 @@ const ORIGIN = `http://127.0.0.1:${server.address().port}`;
  * and a number is only ever correct at the viewport it was measured at. */
 const S10 = { width: 869, height: 412 };
 
+/* DECLARED AT MODULE SCOPE, AND IT WAS NOT. It sat inside the `try` block at brace
+ * depth 1 while its only reader is the summary at depth 0 — and `let` IS BLOCK-SCOPED, so
+ * the binding did not exist where it was read. The file threw `ReferenceError:
+ * recoveryUnverified is not defined` EVERY TIME, on every machine, even with --only=99
+ * and no section running at all.
+ *
+ * IT SURVIVED BECAUSE THE THROW IS AFTER THE "CHECK 22 PASSED" LINE. Anyone reading the
+ * assertions or the summary saw a clean pass; ONLY THE EXIT CODE DISAGREED. That is the
+ * same trap as reading `$?` through a pipe — named on check 25 as cheaper to say twice
+ * than to make twice, and arriving here from the other direction on the same day.
+ *
+ * AND IT IS THE REGISTRATION FINDING PROVING ITSELF. This check sat on main unregistered;
+ * the first time it ever executed, it died — on the line that prints its own UNVERIFIED
+ * banner. "Written with its controls and shown red against a plant" was true when it was
+ * written and STOPPED BEING TRUE, and nothing noticed, because nothing ran it.
+ * REGISTRATION IS NOT BOOKKEEPING: IT IS THE ONLY THING THAT KEEPS A CHECK TRUE AFTER THE
+ * DAY IT WAS WRITTEN. */
+let recoveryUnverified = false;
+
 const browser = await chromium.launch({ channel: 'chromium' });
 
 async function shape() {
@@ -320,7 +339,6 @@ if (want(3)) {
 }
 
 /* ------------------------------------------------------------------ */
-let recoveryUnverified = false;
 if (want(4)) {
   console.log('\n--- 4. the way back out of a zoom — installed and inert at rest; REACH IS UNVERIFIED OFF-DEVICE ---');
   const s = await shape();
@@ -470,9 +488,13 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 22 PASSED at ${COMMIT.slice(0, 12)} — a real two-finger pinch does not zoom the app (OBSERVED, not proved: see the NOT FALSIFIED note in §1), every full-bleed container is discovered by walking the DOM rather than remembered, each named scroller keeps its gesture, the recovery is installed and correctly inert at rest, and a second finger is cancelled on the panels without ever being cancelled on a scroller.`);
 if (recoveryUnverified) {
+  /* PRINTED BEFORE THE SUMMARY, DELIBERATELY. It used to come after, and a reader
+   * skimming the log saw "CHECK 22 PASSED" in green and stopped. GREEN TEXT ABOVE A RED
+   * EXIT IS ITS OWN FAILURE MODE: the summary line must be the last thing the process
+   * says, so that what a human reads last is what the exit code means. */
   console.log(`\n  NOT VERIFIED BY THIS CHECK: that the way out is reachable AFTER a zoom. Chromium will not`);
   console.log(`  zoom this page by any instrument tried, so the recovery path has never been observed doing`);
   console.log(`  its job. It needs the S10+, and PUP-WO-0603 §4 is where that is recorded as open.`);
 }
+console.log(`\nCHECK 22 PASSED at ${COMMIT.slice(0, 12)} — a real two-finger pinch does not zoom the app (OBSERVED, not proved: see the NOT FALSIFIED note in §1), every full-bleed container is discovered by walking the DOM rather than remembered, each named scroller keeps its gesture, the recovery is installed and correctly inert at rest, and a second finger is cancelled on the panels without ever being cancelled on a scroller.`);
