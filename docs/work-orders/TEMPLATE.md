@@ -85,6 +85,25 @@ ships — was travelling by the one channel we already knew does not survive.**
 
 > **A review is an artifact. If it exists only in a context window, it does not exist.**
 
+### 9b. THE DISPATCH IS AN ARTIFACT TOO
+
+*Added 2026-09-04, after a dispatch was delivered to a live session that was not the one
+doing the work.*
+
+**The work order file has always been the artifact. What was still travelling by message was
+the DIRECTIVE TO ACT ON IT** — which round, which findings, what changed since.
+
+- **Put the instruction where the work is:** a PR comment for a returned PR, the work-order
+  file for a new one. **Addressed to the work, so any session, fork or restart finds it.**
+- **`SendMessage` carries the NUDGE and a pointer.** Nothing in it may be information that
+  cannot be reconstructed from the artifact.
+- **NEVER treat a send receipt as arrival.** `SendMessage` returning `success` means it was
+  delivered to the session that name resolved to — **which is not necessarily the session in
+  the pane.** A session that has forked keeps its name on the PARENT.
+- **Confirm arrival by an effect**, on the next cycle: a push, a comment, a PR that moved.
+  *If nothing moved, assume it did not arrive rather than that the builder is slow.*
+- **When you mean "whoever is working in that pane", address the PANE**, not a name.
+
 ### 9a. RECORD WHAT WAS EXAMINED AND UPHELD, NOT ONLY WHAT WAS CHANGED
 
 *Added 2026-09-04, same ruling.*

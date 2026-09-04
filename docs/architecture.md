@@ -270,6 +270,52 @@ empty `send()`, so a broadcast piggybacking on the camera's already-open channel
 for zero new channels and pass. **"No transport was used" and "no transport is possible"
 are different claims, and only the second is what a deletion buys.**
 
+**A MESSAGE IS ADDRESSED TO A SESSION; AN ARTIFACT IS ADDRESSED TO THE WORK. SESSIONS ARE
+THE THING THAT KEEPS CHANGING.** *(Ruled 2026-09-04. **The co-architect found it, and only
+because Scotty said the panes looked dead.**)*
+
+A dispatch was sent to `builder-61`, accepted, and reported as delivered. **It was
+delivered** — the recipient's transcript contains it exactly once. **And the builder never
+saw it**, because at 03:35 that session had run `--fork-session` on its own transcript. The
+fork took over the `pup-b` pane and did the work; **the NAME `builder-61` kept resolving to
+the parent**, which stayed alive, idle, and off-screen. Measured: pid 2688774 (`--resume
+a40ce96d`) holds the dispatch; pid 3333557 (`--fork-session` of the same transcript,
+`8e076eb4`) is what the pane shows, and its transcript has zero occurrences.
+
+**Nothing was stale and nothing errored. Every layer reported success truthfully.** The
+send succeeded, the delivery succeeded, the name resolved to a real live session. **What
+failed was the assumption that *the session named `builder-61`* and *the session working in
+`pup-b`* are the same thing** — `name → session` and `pane → session` diverged silently at
+the fork.
+
+**THIS IS THE FOURTH COSTUME OF ONE DEFECT IN TWO DAYS, and it is the nastiest**, because
+the first three at least produced silence:
+
+| | what happened | what was confirmed |
+|---|---|---|
+| the builder finished | CC-A was never told | the park |
+| CC-A returned a review | the record died in a compaction | the send |
+| CC-A dispatched | the builder never received it | the send |
+| **this one** | **it was received by the wrong live session** | **the send AND the delivery** |
+
+*Same root as a check that goes green without running: **"the call returned" is being read as
+"the thing happened."*** Here even "it was delivered" was true and still insufficient.
+
+> **RULED: ATTENTION TRAVELS BY MESSAGE. INSTRUCTION TRAVELS BY ARTIFACT.** A PR comment, a
+> work-order file, a feedback doc — **addressed to the WORK, so whoever is working on it
+> finds it regardless of which session, fork or restart they are.** `SendMessage` carries
+> *"go look at #67"* and nothing that cannot be reconstructed from the artifact.
+>
+> **And arrival is not confirmed by a send receipt.** Confirm it the way everything else in
+> this repo is confirmed: **by an effect** — a push, a comment, a PR that moved.
+
+**A LIVE HAZARD THIS EXPOSED, recorded because it is not hypothetical:** the parent session
+is still alive, still idle, and **still holding that dispatch.** Both it and the fork have
+cwd `/home/ikthys777/worktrees/PupPad/builder`. If it wakes, **two Claude sessions act on
+one branch in one working directory** — the exact collision the global operating contract
+forbids. *A fork does not just split a conversation; it doubles the number of agents that
+believe they own the same worktree.*
+
 **THE REVIEW IS AN ARTIFACT TOO, AND IT WAS THE LAST ONE TRAVELLING BY CHAT.** *(Ruled
 2026-09-04. **The co-architect's, and it is a defect in CC-A's own process.**)*
 
