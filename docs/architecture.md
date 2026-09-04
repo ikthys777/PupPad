@@ -427,6 +427,40 @@ Chasing them individually was not a weak plant; it was **the wrong SHAPE of plan
 several redundant signals is **evidence the redundancy is real**. Read it as a measurement
 of the design, then go and write the plant that actually contradicts the claim.*
 
+**"THESE TWO DIFFER" IS EVIDENCE ABOUT THE SUBJECT ONLY IF THE SUBJECT IS THE ONLY THING
+THAT COULD DIFFER.** *(Ruled 2026-09-04. **The builder's, and the diagnosis is better than
+the one CC-A gave it.**)*
+
+`PUP-WO-0703`'s central acceptance compared two screenshots and asserted they were not
+identical. CC-A read the CI failure as renderer noise. **The real cause is narrower and
+much more useful: the voice panel is TRANSLUCENT OVER A LIVE CONSOLE.** With motion on,
+everything behind the glass is moving too — **so *"these two photographs differ"* was true
+of the background whatever the wave did.** The section passed by measuring something that
+was not its subject.
+
+**Measured after the fix: 4.9% of the row's pixels change between two captures with motion
+on, and 0.000% with motion reduced.** On the builder's machine the wave dominated that
+budget; in the CI container it did not. **The difference between a green run and a red one
+was a scheduler.**
+
+> **Before believing a difference, ask what else in frame is allowed to move.** Isolate the
+> subject or hold the rest still — and **take the null result first**, because a null that
+> cannot come out SAME proves the instrument is measuring the room.
+
+**The repair is the shape to copy:** compare the *fraction of pixels that visibly changed*,
+thresholded per pixel so antialiasing on a glyph edge is not a state change, decoded in the
+browser that drew it. **Null control first** — two captures of one unchanged state must
+match, so a container too noisy for the floor **fails the null and the section abstains
+loudly instead of passing on noise.** **Positive control second** — a live slot and a merely
+filled one must differ, which is the acceptance in miniature rather than a fact about the
+instrument. Margins printed on the pass line: `0.000% unchanged · 0.050% floor · 0.107%
+mask · 1.192% closest real pair`.
+
+*And the plant count went 71 → 70 ON PURPOSE: the phase-advance plant moved to §27, because
+a section that now measures a STILLED panel by design cannot see a defect in the animation.
+**Keeping it would have been a plant whose section cannot see its own defect.** The missing
+one is accounted for rather than lost — which is the whole of the no-derived-counts rule.*
+
 **A PROBE THAT SELECTS ITS SUBJECT BY A VALUE FILTER CANNOT SEE THE VALUE IT IS HUNTING.**
 *(Ruled 2026-09-04. The builder's.)*
 
