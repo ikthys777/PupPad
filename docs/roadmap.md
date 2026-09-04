@@ -479,7 +479,7 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0704` — Block Pop's celebration** | authored. **§0 is a measurement first**: `flash()` and the spark volleys already exist in `celebrate()`, and `burstAt` returns 0 outright under reduced motion — which Samsung ships ON | nobody |
+| 1 | **`PUP-WO-0704` — Block Pop's celebration** | **PR #68 OPEN.** §0's measurement found the real defect: the flash is `z-index:3` under the celebration's own `z-index:12` scrim, so **on the device a perfect clear was "the screen goes dark and a word appears"** — in BOTH motion worlds. Reduced motion separately zeroes every spark | in review |
 | 2 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
 | 3 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
