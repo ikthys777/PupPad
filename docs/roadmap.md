@@ -479,8 +479,10 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0701` part 2 — the voice panel** | **PR #65 OPEN, CI GREEN, RETURNED UNMERGED 2026-09-03.** Five product findings; **P1 is the work order's own flag-and-stop** — `voicePending` is not generation-scoped, so a dead panel's grant unlocks a live panel's guard and a microphone survives the page. Three findings about the checks, incl. **the repo's own "requirement ≠ backstop" assertion being unreachable** | CC-B, second pass |
-| 2 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
+| 1 | **`PUP-WO-0702` — local only** | **DISPATCHED 2026-09-04.** Voice loses its channel entirely; map stops broadcasting real lat/lng. **A deletion, and it closes a live leak** | in flight |
+| 2 | **`PUP-WO-0703` — voice slots + the sine-wave feedback** | authored. Three slots, more sliders, and **an invariant-1 fix**: nothing tells a non-reader that recording is happening | `0702` merging first |
+| 3 | **`PUP-WO-0704` — Block Pop's celebration** | authored. **§0 is a measurement first**: the flash and spark volleys already exist in `celebrate()`, so find what suppresses them before adding | nobody |
+| 4 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
 | 4 | `PUP-WO-0112` — the CI job split | scoped, no file | nobody |
 | 5 | `PUP-WO-0113` — check 11 fires on English prose | scoped in §4a, no file | nobody |
@@ -496,14 +498,15 @@ Promotion is Scotty's alone.**
 - **`PUP-WO-0602` acceptance item 1** — that an Android long press no longer opens the
   context menu. The suppression is fully verified; **the trigger is not, because Chromium
   cannot raise one.** **Needs the S10+.**
-- **THE VOICE AUDIENCE — SCOTTY'S, AND IT NEEDS A NUMBER.** `puppad-voice` is a fixed
-  global channel, unscoped by any pairing id, `self:false`, no per-clip addressing and no
-  revocation: **anyone holding the URL and the anon key receives every clip from every
-  install.** That is already true of photos. What changes the price is that **this panel
-  carries the first identifying data this app has ever handled** — a coordinate is not
-  identifying and a three-year-old's voice is. *(The builder's sharpening, and it is
-  right: "I would not ship this to a device outside the family without scoping the
-  channel.")* **Not a defect and not the builder's to fix — a blast-radius decision.**
+- **~~THE VOICE AUDIENCE~~ — RULED BY SCOTTY 2026-09-04: VOICE IS LOCAL ONLY.** No channel,
+  no send, nothing crosses. Location is local-function only too. **`PUP-WO-0702` carries
+  both.** *Tracing the location half found what the question had not: `broadcastMapStamp`
+  sends real `{lat,lng}` with a stable device id, on a map centred on the child's GPS at
+  zoom 16 — live since the Map panel shipped.*
+- **THE CAMERA IS THE SAME QUESTION, UNASKED, AND IT IS SCOTTY'S.** Photographs of the
+  child go out on the same unscoped global channel to anyone holding the anon key. **His
+  stated reason for making voice local applies to a photograph at least as strongly.**
+  Raised in `PUP-WO-0702` §6 as decision-needed; **not folded in, not assumed.**
 - **Roadmap gate 3 and gate 8** remain open and are not simulable.
 - **A play session with Buddy.** The drag now shows him the piece, the picker fits, tiles
   are the size Scotty asked for, and there is a perfect-clear celebration to win.
