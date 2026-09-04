@@ -220,6 +220,32 @@ it does not answer what became active.**
 > registered.** One command, and it is now the only thing standing between a written
 > check and an ornamental one.
 
+**A STUB IS LEGITIMATE FOR BEHAVIOUR AND ILLEGITIMATE FOR EGRESS.** *(Ruled 2026-09-04.
+**The builder's, and it invalidated the defence their own check had written for itself.**)*
+
+`PUP-WO-0702`'s headline check asserted that the treasure map reaches no network. It
+stubbed Leaflet — defending the choice in its own comment as *"Leaflet is the DEPENDENCY,
+not the subject; nothing below asserts anything about Leaflet."* **That was wrong on its
+own terms: the outbound witness measured nothing but Leaflet.** `L.tileLayer` is the only
+thing in that panel that makes a request, so stubbing it removed the entire subject of the
+measurement and left a green run certifying silence it had arranged.
+
+> **Egress is a property of the REAL dependency, not of the code that calls it. A check
+> that asserts what does or does not leave the device may not stub the thing that does the
+> leaving.** Stub freely to make behaviour reachable; never to make the network quiet.
+
+*Its sibling: the same check's socket witness used `page.on('websocket')`, which fires only
+on a CONNECTED socket — and CI's connections fail before the handshake. It recorded zero
+while a constructor hook caught three attempts. **Zero was a silence, not an absence**, and
+that is the same error one layer down.*
+
+**AND A SUITE CAN STOP EXERCISING A TRANSPORT WITHOUT EVER FORBIDDING ONE.** The same
+section's outbound filter discarded same-origin requests while `supabaseFetch` resolves
+against an empty base — so a REST-shaped re-add was invisible — and its channel stub had an
+empty `send()`, so a broadcast piggybacking on the camera's already-open channel would ask
+for zero new channels and pass. **"No transport was used" and "no transport is possible"
+are different claims, and only the second is what a deletion buys.**
+
 **A PLANT THAT APPLIES IS NOT A PLANT THAT REPRODUCES.** *(Ruled 2026-09-03. **The
 builder's, from `PUP-WO-0701` round 3, and it cost two false controls in one file.**)*
 
@@ -1051,7 +1077,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | ntfy ACL — Scotty reports it is imminent for another build. | Scotty | Any inbound action button; §8 |
 | Cold-start budget on Buddy's actual tablet: what number counts as too slow? | Scotty, from measurement | P2's exit gate has a measured threshold or a subjective one |
 | Whether `classic` appears in Buddy's picker or only under an adult affordance. | Scotty | P4 scope |
-| **Northstar §5 forbids third-party network calls as a category, and `index.html:11-13` make three of them unconditionally** (Supabase via jsdelivr, Leaflet CSS and JS via cdnjs), plus OSM tiles at `index.html:1373`. Either the non-goal is narrowed to exclude the pre-existing console, or the loads are vendored. **This is a northstar re-ratification, not an architecture amendment** (§1), and CC-A has deliberately not written it. | **Scotty — re-ratify** | `PUP-WO-0600`'s scope, and how much of P6 exists |
+| **Northstar §5 forbids third-party network calls as a category, and the document `<head>` makes three of them unconditionally** (Supabase via jsdelivr, Leaflet CSS and JS via cdnjs), plus OSM tiles via `L.tileLayer` in `openTreasureMap`. **RE-FRAMED 2026-09-04, AND THE COST IS NOT WHAT THIS ROW ORIGINALLY SAID.** It was filed as a purity-and-offline question. **The OSM tile requests are LOCATION DATA:** a tile path is `/{z}/{x}/{y}.png`, so at the map's opening `zoom: 16` the request bounds the child to roughly a 500 m square and `maxZoom: 19` takes that to about 60 m — beside the client IP, at a CDN. **After `PUP-WO-0702` removed the lat/lng broadcasts, this is the LARGEST REMAINING LOCATION EGRESS in the app.** *(Citations moved from line numbers to symbols; `index.html:1373` had rotted.)* Either the non-goal is narrowed to exclude the pre-existing console, or the loads are vendored. **This is a northstar re-ratification, not an architecture amendment** (§1), and CC-A has deliberately not written it. | **Scotty — re-ratify** | `PUP-WO-0600`'s scope, and how much of P6 exists |
 | The Supabase **anon key** renders into a cleartext input at `index.html:1818`, persisted at `:173`, and Settings is reachable while the console is "locked" (`:1736-1737`, unconditional). What is the intended containment, given §3.1 says the lock contains nothing? | Scotty | `PUP-WO-0601` |
 | The service worker is **network-first** (`sw.js:31-43`), so an online cold start waits on the network before rendering. Does that survive P2's cold-start gate, or does the worker become cache-first for the install set? | Scotty, from measurement | P2 gate item 5; `PUP-WO-0600` |
 
@@ -1082,6 +1108,7 @@ The *build process* is governed by `dual-cc-session-design-v2.md` (2026-08-29):
 | 2026-09-01 | §6.1: *nothing ever asks whether a recommendation became a commit*. §6.5 added: the quota path, and that `PUP-WO-0600` cannot receive the tiles question. | Both the builder's. The disposition rows were accurate — they said *Recommendation* — so the gap is not recording but that nothing reads one and asks whether it became a diff. And the tiles are map data fetched per coordinate: unvendorable, the bulk of the opaque entries, and the whole of the quota path, pointed by a deferral at a work order that provably cannot receive it. |
 | 2026-09-01 | §10 gains three open questions: the northstar §5 CDN contradiction, the cleartext anon key reachable while locked, and network-first versus the cold-start budget. | All three are defects in **PupPad as it stands today**, not in the games work, surfaced by P0. The first is explicitly *not* amended here — a change to a northstar non-goal is re-ratified there (§1), and CC-A does not hold that authority. Roadmap P6 is where they get built once ruled. |
 | 2026-09-02 | **§6.1 gains member 5 — a record that stays trusted because it stayed unchanged.** §5 gains five rulings: a gate that cannot see its subject is not a gate; no derived count in a name unless something recomputes it; a measurement whose subject includes itself cannot be a constant; a work order states its fence ONCE; and the freeze protocol becomes `git archive` / `git clone`, never `cp -r` of a worktree. **§6.6 added — the ratified-but-unbuilt tally.** | P1 closing and P2 opening, across `PUP-WO-0103`, `0105`, `0200` and `0300`. **Member 5 is the builder's**, found by reading a feedback file as a deliverable — which nobody had been doing — and it names the cost of the freeze protocol this project adopted the same week: hashes prove the bytes did not move and say nothing about whether the claims survived. The §5 rulings are four builder findings and one of CC-A's; the fence ruling is the structural fix for four self-contradicting work orders, **three of them CC-A's**, and `PUP-WO-0300` §0 is the first written that way. |
+| 2026-09-04 | **§6.1 member 7 records its SECOND OCCURRENCE, and it is CC-A's again.** §5 gains: a work order's method must not defeat its own stated reason · a plant that applies is not a plant that reproduces · the arrange step is part of what must be attacked · a guard on a callback with two effects must cover each one · **a stub is legitimate for behaviour and illegitimate for egress.** §10's third-party-network row is re-framed as a **location** question and its rotted line citations moved to symbols. | **The member-7 instance is the sharpest yet because it was committed to a work order and dispatched.** Scoping `PUP-WO-0702`, CC-A traced `navigator.geolocation` to its consumers — `setView` and `mapLocationMarker` — and concluded *"the map still knows where it is and stops telling anyone."* **The reference resolved and the frame did not:** `setView` causes `L.tileLayer` to fetch `/{z}/{x}/{y}.png`, and a tile path IS a coordinate — ~500 m at the opening zoom, ~60 m at `maxZoom: 19`. The sentence shipped in the work order, in the dispatch, and into `index.html` as a comment. **Caught by the builder's adversarial pass, which then found that the check certifying the claim had stubbed the only thing in the panel that makes a request.** Two layers of the same defect, one on top of the other. |
 | 2026-09-02 | **§6.1 gains member 7 — a verification that resolves the reference and stops one layer short of the frame it is expressed in.** §6.1's preamble also loses its hand-maintained member count. | **CC-A's, and it is a correction to CC-A's own ruling.** `PUP-WO-0700` §1 stated the sticker's *position* was correct in both paths and only its *size* was wrong. Both paths do use a percentage — confirmed at source, by symbol rather than line number, which is this document's preferred form — but one is a percentage **of the element box** and the other **of the letterboxed photograph**, so they agree only at 50% or when the photo fills the box: false on **7 of 9 viewports**, by up to **214px**. Found by the builder's adversarial pass, which also caught that the check written for the fix divided the two paths by the two denominators that make the mismatch cancel — printing `0.0104 points` of disagreement while the defect was live in two of its own three viewports. **Member 6 nested inside member 7.** The count came out for the ordinary reason: it said six while a seventh was being added. |
 | 2026-09-02 | §5 gains the parked-and-unclaimed ruling. | `PUP-WO-0201` parked green and nothing woke the architect. Recorded because **the gap is in the shape of the monitoring, not in anyone's attention**: an actor-scoped liveness check is structurally unable to see work that is finished, correct, and waiting. Raised by the co-architect, who also supplied the mechanism. |
 
