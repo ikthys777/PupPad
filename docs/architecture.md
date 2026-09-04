@@ -270,6 +270,34 @@ empty `send()`, so a broadcast piggybacking on the camera's already-open channel
 for zero new channels and pass. **"No transport was used" and "no transport is possible"
 are different claims, and only the second is what a deletion buys.**
 
+**A REPAIR INHERITS THE DEFECT'S SHAPE. PLANT THE FIX.** *(Ruled 2026-09-04, after it
+happened THREE TIMES IN ONE WORK ORDER.)*
+
+`PUP-WO-0703` produced five high findings and **three of them were created by the repair
+for an earlier one:**
+
+- **The fix for "delete does not stop the microphone"** added a guard that makes the decode
+  callback return early — **and that callback held the only later `voiceSetStage`**, so
+  deleting the slot being recorded over now leaves every preset, both sliders and the play
+  button permanently dead. *A guard that suppresses a continuation also suppresses
+  everything that continuation was responsible for.*
+- **The fix for an assertion that could not fail** replaced it with `idleRaf`, sampled on a
+  freshly opened panel where the handle is zero **in every possible build.**
+- **The fix for "this compares a value to itself"** replaced the value with the literal `0`
+  — **and `0` is what the defect also produces**, being at once the first slot, the played
+  slot and the initial target.
+
+**This is structural, not carelessness.** Repairing an unfalsifiable assertion means
+asserting something *nearby*, and nearby is exactly where the same degeneracy lives: the
+same scenario, the same arrange step, the same handful of values the state can hold.
+
+> **A repair is a NEW assertion and inherits none of the old one's credibility. Plant it
+> before believing it.** The question is never "is this better than what was there" — it is
+> **"what edit makes this new line red, and does that edit reproduce the defect it names?"**
+
+*The same holds for a code fix: after adding a guard, ask what the guarded path was
+carrying besides the thing you were stopping.*
+
 **PLANT THE CLAIM, NOT ITS CONSEQUENCES — AND FOR A REDUNDANTLY-CARRIED STATE THAT MEANS
 THE STATE VARIABLE.** *(Ruled 2026-09-04. **The builder's, and it is the missing half of
 the plant rule above.**)*
