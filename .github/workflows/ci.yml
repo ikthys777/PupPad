@@ -585,7 +585,13 @@ jobs:
         # arriving.
         #
         # It measures egress and does not perform it — every non-local request is
-        # intercepted and ABORTED, so it needs no network and discloses nothing. Service
+        # intercepted and ABORTED, and WebSocket is replaced before any page script runs
+        # because context.route does not see a WS handshake at all. That was found by an
+        # adversarial pass AFTER this comment first claimed "every non-local request":
+        # a planted wss:// to a new origin was recorded nowhere, the check passed, and a
+        # listener on the far end RECEIVED THE UPGRADE. Origins are matched whole —
+        # scheme, host and port — because a hostname-only rule cleared an http:// downgrade
+        # and a non-standard port, both measured green. Service
         # workers are BLOCKED, and that is load-bearing rather than tidy: Playwright's
         # context.route does not intercept requests a service worker makes, and PupPad's
         # worker claims cross-origin requests deliberately. Measured both ways while this

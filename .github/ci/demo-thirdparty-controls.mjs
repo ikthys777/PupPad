@@ -139,14 +139,32 @@ plan(1, 'a look-alike hostname that CONTAINS the approved name', {
   expectText: 'NOT on the allowlist',
 });
 
-/* AND THE APPROVED ORIGIN ON ITS OWN MUST STAY GREEN, or the check is not an allowlist,
- * it is a ban — and a red on approved behaviour is how a suite gets ignored, which is the
- * northstar amendment's own argument. Removing the two CDNs leaves the shipped app
- * reaching only origins that are on the list. */
-plan(1, 'the shipped app, with the two CDN loads removed, is still GREEN', {
-  mutate: (s) => sub(s, '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>', ''),
+/* AND THE APPROVED ORIGIN ON ITS OWN MUST STAY GREEN — or this is not an allowlist, it
+ * is a ban, and a red on approved behaviour is how a suite gets ignored, which is the
+ * northstar amendment's own argument.
+ *
+ * THE FIRST VERSION OF THIS CONTROL DEMONSTRATED NOTHING OF THE KIND. It removed ONE of
+ * the three third-party tags (jsdelivr), left both cdnjs tags standing, and so produced a
+ * verdict identical to the unmutated baseline — a no-op with respect to what it claimed.
+ * And its label said "the approved origin alone", while the approved origin is never
+ * contacted in this environment at all: Leaflet is aborted, so `L` is undefined and the
+ * Map panel throws before requesting a tile. NO CONTROL ANYWHERE DEMONSTRATED
+ * GREEN-ON-THE-APPROVED-ORIGIN, which is half of what an allowlist means.
+ *
+ * So this removes all three tags AND issues one real tile request at the top of
+ * `openTreasureMap`, above the first `L.` reference so it is actually reached. The
+ * fixture then contacts the ratified origin and nothing else, which is the only
+ * arrangement in which the label is true. */
+plan(1, 'the approved origin ALONE, actually contacted, is GREEN', {
+  mutate: (s) => {
+    let out = sub(s, '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>', '');
+    out = sub(out, '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>', '');
+    out = sub(out, '<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>', '');
+    return sub(out, 'function openTreasureMap() {',
+      "function openTreasureMap() {\n  try { new Image().src = 'https://a.tile.openstreetmap.org/16/1/1.png'; } catch (e) {}");
+  },
   expectGreen: true,
-  expectText: 'every origin contacted is on the allowlist',
+  expectText: 'a.tile.openstreetmap.org',
 });
 
 /* ---------------------------------------------------------------- *
@@ -209,4 +227,4 @@ if (failed.length) {
   for (const f of failed) console.error(`  §${f.section} ${f.label} — observed ${f.observed}${f.detail ? ' — ' + f.detail : ''}`);
   process.exit(1);
 }
-console.log(`\nCHECK 28 PASSED at ${COMMIT.slice(0, 12)} — ${results.length} planted cases, every one behaving as predicted: a new third-party origin goes RED whether it is reached on the cold load, only when the Map opens, or only when another panel does; a hostname that merely CONTAINS the approved name is rejected; the approved origin alone stays GREEN; and both halves of the instrument — the pad walk and the Map panel opening — go red when they stop working, so a clean result cannot come from an app nobody exercised.`);
+console.log(`\nCHECK 28 PASSED at ${COMMIT.slice(0, 12)} — ${results.length} planted cases, every one behaving as predicted: a new third-party origin goes RED whether it is reached on the cold load, only when the Map opens, or only when another panel does; a hostname that merely CONTAINS the approved name is rejected; the approved origin, actually contacted and alone, stays GREEN; and both halves of the instrument — the pad walk and the Map panel opening — go red when they stop working, so a clean result cannot come from an app nobody exercised.`);

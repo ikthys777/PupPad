@@ -61,14 +61,23 @@ if (!/^[0-9a-f]{7,40}$/.test(COMMIT)) {
  * THE ALLOWLIST. ONE DECLARATION. NOTHING ELSE IN THE REPOSITORY RESTATES IT.
  * ================================================================= */
 
+/* EVERY PREDICATE TESTS A FULL ORIGIN — SCHEME, HOST AND PORT — AND THE FIRST VERSION
+ * TESTED A HOSTNAME. The word "origin" is what the work order, the northstar and this
+ * file's own header all say, and matching only the host quietly cleared two different
+ * facts: `http://cdnjs.cloudflare.com/beacon.gif` (a PLAINTEXT downgrade from a child's
+ * app, which is not the same security fact as the https one that was recorded) and
+ * `https://cdn.jsdelivr.net:8443/beacon.gif` (a different service on a different port).
+ * Both measured GREEN before this change. `new URL(u).origin` normalises case and drops
+ * the default port, so these anchors are exact. */
+
 /* RATIFIED — owner-approved, with the date the northstar records. */
 const RATIFIED = [
   {
-    label: 'tile.openstreetmap.org',
-    /* Leaflet expands `{s}` to a/b/c, so three hostnames are one origin in intent. The
+    label: 'https://{a,b,c}.tile.openstreetmap.org',
+    /* Leaflet expands `{s}` to a/b/c, so three origins are one exception in intent. The
      * test is anchored at both ends: `evil-openstreetmap.org.attacker.net` fails it, and
      * so does `tile.openstreetmap.org.attacker.net`. */
-    test: (h) => /^[a-c]\.tile\.openstreetmap\.org$/.test(h),
+    test: (o) => /^https:\/\/[a-c]\.tile\.openstreetmap\.org$/.test(o),
     date: '2026-09-04',
     why: 'the Map panel basemap — northstar invariant 3 and §5, ONE named exception, ruled by Scotty against three costed alternatives',
   },
@@ -94,16 +103,16 @@ const RATIFIED = [
  * WITHOUT AN ORIGIN NOBODY RATIFIED. Ratifying the basemap implicitly ratified
  * cdnjs.cloudflare.com, and that is a decision he may not know he made. */
 const UNRATIFIED = [
-  { label: 'cdnjs.cloudflare.com', test: (h) => /^cdnjs\.cloudflare\.com$/.test(h),
+  { label: 'https://cdnjs.cloudflare.com', test: (o) => /^https:\/\/cdnjs\.cloudflare\.com$/.test(o),
     why: 'Leaflet 1.9.4 CSS and JS, index.html:12-13 — loaded on every cold start, and the ratified basemap DEPENDS ON IT' },
-  { label: 'cdn.jsdelivr.net', test: (h) => /^cdn\.jsdelivr\.net$/.test(h),
+  { label: 'https://cdn.jsdelivr.net', test: (o) => /^https:\/\/cdn\.jsdelivr\.net$/.test(o),
     why: 'supabase-js v2 UMD, index.html:11 — loaded on every cold start whether or not a Supabase URL is configured' },
 ];
 
 const ALLOWED = [...RATIFIED, ...UNRATIFIED];
-const classify = (hostname) => {
-  for (const e of RATIFIED) if (e.test(hostname)) return { kind: 'ratified', e };
-  for (const e of UNRATIFIED) if (e.test(hostname)) return { kind: 'unratified', e };
+const classify = (origin) => {
+  for (const e of RATIFIED) if (e.test(origin)) return { kind: 'ratified', e };
+  for (const e of UNRATIFIED) if (e.test(origin)) return { kind: 'unratified', e };
   return { kind: 'UNKNOWN', e: null };
 };
 
@@ -148,10 +157,17 @@ const LOCAL = `http://127.0.0.1:${server.address().port}`;
 
 const PADS = [[0, 'Voice'], [1, 'Map'], [2, 'Draw'], [3, 'Alert'], [4, 'Tools'], [5, 'Weather'], [6, 'Camera'], [7, 'Games']];
 
-/* ONE DRIVE, ITS OWN WITNESS, INSTALLED AND REMOVED BY ITSELF. Acceptance §5: a witness
- * inherited from a neighbour is not a witness, and every section that needs the recorder
- * builds its own context and tears it down, so `--only` is the same measurement as a full
- * run rather than a subset of one. */
+/* ONE DRIVE, SHARED BY §1 AND §2, AND THE FIRST VERSION OF THIS COMMENT SAID THE
+ * OPPOSITE. It claimed "every section that needs the recorder builds its own context and
+ * tears it down, so `--only` is the same measurement as a full run" — there is one
+ * `drive()` call, one context, and `--only` was NOT the same measurement: §1's guards
+ * lived in §2 and were skipped. A sentence asserting the acceptance criterion it sits
+ * above, while the code did not meet it.
+ *
+ * It is one drive on purpose — walking eight pads twice doubles the slowest thing here —
+ * and the guards are now computed OUTSIDE both sections, so §1 refuses to report when the
+ * walk did not happen no matter which sections were selected. §3 needs no browser at all
+ * and runs outside this block. */
 async function drive(browser) {
   /* `serviceWorkers: 'block'` IS LOAD-BEARING AND THE WITNESS IS WHAT FOUND IT.
    *
@@ -176,13 +192,45 @@ async function drive(browser) {
   let phase = 'cold load';
   await ctx.route('**/*', async (route) => {
     const url = route.request().url();
-    if (url.startsWith(LOCAL) || url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
-    let hostname, origin;
-    try { const u = new URL(url); hostname = u.hostname; origin = u.origin; }
-    catch { hostname = url; origin = url; }
-    seen.push({ hostname, origin, url, phase });
+    /* BY ORIGIN, NOT BY PREFIX. `url.startsWith(LOCAL)` was the one substring test in a
+     * file whose header forbids substring tests, and
+     * `http://127.0.0.1:PORT@evil.example/x` starts with it. Chromium blocks embedded
+     * credentials in subresources so I could not get a request through it — latent, not
+     * live, and fixed anyway because the next reader should not have to re-derive that. */
+    let origin;
+    try { origin = new URL(url).origin; } catch { origin = null; }
+    if (origin === LOCAL || url.startsWith('data:') || url.startsWith('blob:')) return route.continue();
+    seen.push({ origin: origin === null ? url : origin, url, phase, kind: route.request().resourceType() });
     return route.abort();   /* measured, never performed */
   });
+  /* A WEBSOCKET IS NOT A REQUEST `route` CAN SEE, AND THIS FILE WAS PERFORMING THEM.
+   * `context.route` does not intercept a WebSocket handshake. Measured: a planted
+   * `new WebSocket('wss://realtime.example.net/socket')` was recorded NOWHERE, the check
+   * printed PASSED — and a listener on the far end RECEIVED THE UPGRADE. So the header's
+   * claim that every non-local request is intercepted and aborted was false, and the one
+   * exception is the kind supabase-js realtime uses for the canvas, voice, map and camera
+   * channels: `wss://<project>.supabase.co`.
+   *
+   * The witness proved the recorder sees a `fetch`. It could not prove the recorder sees
+   * the KINDS THIS APP MAKES, which is a different claim — so `WebSocket` is replaced
+   * before any page script runs, with a constructor that RECORDS AND REFUSES TO CONNECT.
+   * Aborting is the same treatment every other third-party request gets. */
+  await ctx.addInitScript(() => {
+    const Real = window.WebSocket;
+    window.__wsAttempts = [];
+    function Recorded(url, protocols) {
+      try { window.__wsAttempts.push(String(url)); } catch (e) {}
+      if (String(url).startsWith('ws://127.0.0.1') || String(url).startsWith('ws://localhost')) {
+        return protocols === undefined ? new Real(url) : new Real(url, protocols);
+      }
+      /* Not connected. The check measures egress and must not perform it. */
+      throw new DOMException('blocked by check 27', 'SecurityError');
+    }
+    Recorded.prototype = Real.prototype;
+    for (const k of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) Recorded[k] = Real[k];
+    window.WebSocket = Recorded;
+  });
+
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
   const tap = async (sel) => {
@@ -243,6 +291,15 @@ async function drive(browser) {
     });
     await page.waitForTimeout(200);
   }
+  /* Fold the WebSocket attempts into the same record, so one verdict covers both. */
+  const ws = await page.evaluate(() => (window.__wsAttempts || []).slice()).catch(() => []);
+  for (const u of ws) {
+    let origin; try { origin = new URL(u).origin; } catch { origin = u; }
+    /* `wss://host` and `https://host` are the same origin for an allowlist's purpose —
+     * the question is who is being contacted, not over which protocol family. */
+    const asHttp = origin.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+    seen.push({ origin: asHttp, url: u, phase: 'websocket', kind: 'websocket' });
+  }
   await ctx.close();
   return { seen, opened };
 }
@@ -250,10 +307,24 @@ async function drive(browser) {
 const browser = await chromium.launch({ channel: 'chromium' });
 try {
   /* ---------------------------------------------------------------- */
-  if (want(1) || want(2) || want(3)) {
+  if (want(1) || want(2)) {
     const { seen, opened } = await drive(browser);
-    const witnessHits = seen.filter((s) => s.hostname === 'puppad-ci-witness.invalid');
-    const real = seen.filter((s) => s.hostname !== 'puppad-ci-witness.invalid');
+    const witnessHits = seen.filter((s) => s.origin === 'https://puppad-ci-witness.invalid');
+    const real = seen.filter((s) => s.origin !== 'https://puppad-ci-witness.invalid');
+    /* THE GUARDS ARE COMPUTED HERE, OUTSIDE ANY SECTION, BECAUSE §1 NEEDS THEM AND
+     * `--only=1` DOES NOT RUN §2. In the first version they lived inside `if (want(2))`,
+     * so `--only=1` printed §1's green line for an app whose pad handlers never ran, and
+     * for one that fetched nothing at all — and the controls file runs every scenario
+     * with `--only=<section>`, so its GREEN control was graded in exactly the mode where
+     * "only allowed things were fetched" and "nothing was fetched" are the same result.
+     * A witness inherited from a neighbour is not a witness; one a flag skipped is worse. */
+    const unvisited = opened.filter((o) => !(o.tapped && o.delta > 0));
+    const guard = !witnessHits.length
+      ? { m: 'the recorder never saw its own witness', d: 'the route handler is not installed, so an empty result means NOTHING — not "no third party was contacted"' }
+      : unvisited.length
+        ? { m: `the walk did not happen: ${unvisited.length} of ${PADS.length} pads were never visited`,
+            d: `${unvisited.map((o) => `${o.id} ${o.label}`).join(', ')} — a pad that was never visited contacts no new origin, which is exactly what a clean result looks like` }
+        : null;
 
     if (want(2)) {
       console.log('--- 2. the instrument can see, and the drive actually happened ---');
@@ -281,14 +352,15 @@ try {
       console.log('--- 1. every origin the app contacts is on the declared allowlist ---');
       const byHost = new Map();
       for (const s of real) {
-        if (!byHost.has(s.hostname)) byHost.set(s.hostname, { n: 0, phases: new Set(), sample: s.url.slice(0, 100) });
-        const e = byHost.get(s.hostname); e.n++; e.phases.add(s.phase);
+        if (!byHost.has(s.origin)) byHost.set(s.origin, { n: 0, phases: new Set(), sample: s.url.slice(0, 100) });
+        const e = byHost.get(s.origin); e.n++; e.phases.add(s.phase);
       }
       const unknown = [...byHost.keys()].filter((h) => classify(h).kind === 'UNKNOWN');
       const ratifiedSeen = [...byHost.keys()].filter((h) => classify(h).kind === 'ratified');
       const unratifiedSeen = [...byHost.keys()].filter((h) => classify(h).kind === 'unratified');
 
-      if (unknown.length) BAD(`${unknown.length} third-party origin(s) NOT on the allowlist: ${unknown.join(', ')}`,
+      if (guard) BAD(`§1 cannot report — ${guard.m}`, guard.d);
+      else if (unknown.length) BAD(`${unknown.length} third-party origin(s) NOT on the allowlist: ${unknown.join(', ')}`,
         unknown.map((h) => {
           const e = byHost.get(h);
           return `${h} — ${e.n} request(s), first on "${[...e.phases][0]}", e.g. ${e.sample}`;
@@ -311,32 +383,47 @@ try {
       }
     }
 
-    if (want(3)) {
-      console.log('--- 3. the allowlist matches an ORIGIN, never a substring of one ---');
-      /* `evil-openstreetmap.org.attacker.net` contains the approved name. A rule written
-       * with `includes` clears it. Every predicate in the declaration is anchored, and
-       * this asserts that property against the predicates themselves rather than trusting
-       * that whoever writes the next one remembers. */
-      const HOSTILE = [
-        'evil-openstreetmap.org.attacker.net',
-        'tile.openstreetmap.org.attacker.net',
-        'atile.openstreetmap.org',
-        'cdnjs.cloudflare.com.attacker.net',
-        'notcdn.jsdelivr.net',
-        'a.tile.openstreetmap.org.evil.test',
-      ];
-      const cleared = HOSTILE.filter((h) => classify(h).kind !== 'UNKNOWN');
-      /* And the positive half: the real names must still classify, or this clause would
-       * pass on a predicate that matches nothing at all. */
-      const REAL = ['a.tile.openstreetmap.org', 'b.tile.openstreetmap.org', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net'];
-      const notCleared = REAL.filter((h) => classify(h).kind === 'UNKNOWN');
-      if (cleared.length) BAD(`${cleared.length} hostile look-alike hostname(s) are accepted by the allowlist`,
-        `${cleared.join(', ')} — an allowlist matched by substring is satisfied by any domain that CONTAINS the approved name`);
-      else if (notCleared.length) BAD(`the allowlist does not recognise ${notCleared.length} of its own origins: ${notCleared.join(', ')}`,
-        'the predicates match nothing, so the clause above passes by rejecting everything');
-      else OK(`${HOSTILE.length} look-alike hostnames rejected and all ${REAL.length} declared ones still recognised — the match is an anchored hostname, not a substring`);
-    }
   }
+  /* §3 IS PURE LOGIC AND NEEDS NO BROWSER, so it lives outside the drive block: it was
+   * paying fifteen seconds for a walk it does not use, and a Chromium that failed to
+   * start would have reddened a section about a regular expression. */
+  if (want(3)) {
+    console.log('--- 3. the allowlist matches an ORIGIN, never a substring of one ---');
+    /* `evil-openstreetmap.org.attacker.net` contains the approved name. A rule written
+     * with `includes` clears it. Every predicate in the declaration is anchored, and
+     * this asserts that property against the predicates themselves rather than trusting
+     * that whoever writes the next one remembers. */
+    const HOSTILE = [
+      /* the approved name is CONTAINED but the origin is somebody else's */
+      'https://evil-openstreetmap.org.attacker.net',
+      'https://tile.openstreetmap.org.attacker.net',
+      'https://atile.openstreetmap.org',
+      'https://cdnjs.cloudflare.com.attacker.net',
+      'https://notcdn.jsdelivr.net',
+      'https://a.tile.openstreetmap.org.evil.test',
+      /* AND THE THREE THE ADVERSARIAL PASS FOUND, every one of which a hostname-only rule
+       * cleared and which measured GREEN with a live request planted: a PLAINTEXT
+       * downgrade is not the same security fact as the https load that was recorded, a
+       * different port is a different service, and ws:// is neither. */
+      'http://cdnjs.cloudflare.com',
+      'https://cdn.jsdelivr.net:8443',
+      'http://a.tile.openstreetmap.org',
+      'ws://cdn.jsdelivr.net',
+    ];
+    const cleared = HOSTILE.filter((h) => classify(h).kind !== 'UNKNOWN');
+    /* And the positive half: the real names must still classify, or this clause would
+     * pass on a predicate that matches nothing at all. */
+    const REAL = ['https://a.tile.openstreetmap.org', 'https://b.tile.openstreetmap.org',
+                  'https://c.tile.openstreetmap.org', 'https://cdnjs.cloudflare.com',
+                  'https://cdn.jsdelivr.net'];
+    const notCleared = REAL.filter((h) => classify(h).kind === 'UNKNOWN');
+    if (cleared.length) BAD(`${cleared.length} hostile look-alike hostname(s) are accepted by the allowlist`,
+      `${cleared.join(', ')} — an allowlist matched by substring is satisfied by any domain that CONTAINS the approved name`);
+    else if (notCleared.length) BAD(`the allowlist does not recognise ${notCleared.length} of its own origins: ${notCleared.join(', ')}`,
+      'the predicates match nothing, so the clause above passes by rejecting everything');
+    else OK(`${HOSTILE.length} look-alike hostnames rejected and all ${REAL.length} declared ones still recognised — the match is an anchored hostname, not a substring`);
+  }
+
 } catch (e) {
   bad('check 27 could not complete', String(e && e.message ? e.message : e).split('\n')[0]);
 } finally {
