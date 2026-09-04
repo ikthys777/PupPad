@@ -175,3 +175,25 @@ recorded in advance as an expected failure — and the OpenStreetMap tile egress
 **71 of 71 plants red for their own stated reason; check 26 green at 51 assertions; the
 full 27-check regression sweep green; the fence diffs to empty against `b33ad20` and
 against `835c04d`.**
+
+## Round 3 — CI caught what this machine could not
+
+**Check 26 PASSED in CI and its CONTROLS failed**, which is the plant discipline doing its
+job off this machine for the first time. §25 still compared screenshots for exact equality,
+and **byte-identity is a property of the renderer rather than of the panel**: the plant
+built to make two photographs identical did not make them identical there.
+
+The cause is specific and worth keeping. **The control that had to see movement ran with
+motion ON, and this panel is translucent over a live console** — so "these two photographs
+differ" was true of the background whatever the wave did, and every assertion that control
+was guarding went unguarded. Measured: 4.9% of the row's pixels change between two captures
+with motion on, 0.000% with it reduced.
+
+§25 now compares **the fraction of pixels that visibly changed**, decoded in the browser
+that drew them, and **both controls run in the same regime as the assertions they
+calibrate** — a null result (one unchanged state must measure below the floor) and a
+positive one (a live slot must photograph differently from a merely filled one). Margins:
+0.000% for an unchanged state, a 0.050% floor, 0.107% for the word mask, 1.192% for the
+closest real pair.
+
+**70 of 70 plants red for their own stated reason; check 26 green at 51 assertions.**

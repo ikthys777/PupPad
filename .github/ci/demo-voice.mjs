@@ -1341,56 +1341,98 @@ try {
 
     /* === THE INSTRUMENT, BEFORE THE SUBJECT ==============================
      *
-     * A BYTE COMPARISON OF SCREENSHOTS COULD NOT REPORT `recording == playing`, WHICH IS
-     * THE PAIR THIS SECTION EXISTS FOR. Both states have `voiceWaveRaf` advancing
-     * `voiceWavePhase` between the two captures, so two photographs of a running
-     * animation at different phases are NEVER byte-identical no matter how the panel is
-     * painted. Of the six pairs only `empty == holding` was a genuine test; the headline
-     * one was unreportable, and an assertion that cannot report the thing it names is a
-     * described guarantee, not a kept one.
+     * FIRST: A BYTE COMPARISON OF SCREENSHOTS COULD NOT REPORT `recording == playing`,
+     * which is the pair this section exists for. Both states have `voiceWaveRaf` advancing
+     * `voiceWavePhase` between the two captures, so two photographs of a running animation
+     * at different phases are NEVER byte-identical no matter how the panel is painted. Of
+     * the six pairs only `empty == holding` was a genuine test. So the animation is stilled
+     * through the shipping path -- prefers-reduced-motion, which `paintVoiceSlots` and
+     * `voiceWaveTick` already honour -- rather than by a test-only hook. That also makes
+     * this the HARDER case: under reduced motion the live slot has one fewer signal.
      *
-     * SO THE ANIMATION IS STILLED THROUGH THE SHIPPING PATH -- prefers-reduced-motion,
-     * which `paintVoiceSlots` and `voiceWaveTick` already honour -- rather than by a
-     * test-only hook. That also makes this the HARDER case: under reduced motion the live
-     * slot has one fewer signal than it does in normal use, so a panel that passes here
-     * passes with motion too.
+     * AND SECOND, WHICH CI FOUND AND THIS MACHINE COULD NOT: BYTE-IDENTITY IS A PROPERTY
+     * OF THE RENDERER, NOT OF THE PANEL. In a container that was not this one, the plant
+     * that stops the phase advancing -- which must make two photographs the same -- did not
+     * make them the same, and the plant that collapses the live paint failed for a reason
+     * that was not its own. Nothing about the panel differed between those captures.
      *
-     * TWO CONTROLS FIRST, and they are opposites. With motion ON, two captures of the
-     * same live slot must DIFFER -- proving the camera can see change at all. With motion
-     * REDUCED, two captures must be IDENTICAL -- proving the phase really is frozen, so
-     * that an equality below means the states are the same rather than that the shutter
-     * was quick. An instrument that has never reported "same" has not shown it can tell
-     * the difference, and one that has never reported "different" has not shown it is
-     * looking. */
-    await page.evaluate(() => {
-      closeVoice(); openVoice();
-      const ctx = getAudioCtx();
-      window.voiceSlots[0] = ctx.createBuffer(1, 2400, 24000);
-      paintVoiceSlots();
-      setVoiceLiveSlot(0);
-    });
-    await page.waitForTimeout(250);
-    const moving1 = await rowShot();
-    await page.waitForTimeout(260);
-    const moving2 = await rowShot();
-    const seesChange = moving1 !== moving2;
+     * THE CAUSE IS WORTH WRITING DOWN, because it is not noise. The control that had to see
+     * movement ran with motion ON, and this panel is TRANSLUCENT OVER A LIVE CONSOLE. With
+     * motion on, everything behind the glass is moving too, so "these two photographs
+     * differ" was true of the background whatever the wave did -- the control passed by
+     * measuring something that was not its subject, and the assertions it was guarding went
+     * unguarded. Measured here: 4.9% of the row's pixels change between two captures with
+     * motion on, and 0.000% with it reduced.
+     *
+     * SO BOTH CONTROLS NOW RUN IN THE SAME REGIME AS THE ASSERTIONS THEY CALIBRATE -- wave
+     * stilled, page stilled -- and neither of them is about the wave:
+     *   NULL FIRST: two captures of ONE unchanged state must come out the same. A camera
+     *     that invents differences cannot report that two states are alike.
+     *   THEN POSITIVE: a LIVE slot and a merely FILLED one must come out different. A
+     *     camera that returns a constant cannot report that two states differ.
+     *
+     * AND THE COMPARISON IS A PROPERTY OF THE PAINTING RATHER THAN OF THE ENCODER: what
+     * fraction of pixels VISIBLY changed, decoded in the browser that drew them and
+     * thresholded per pixel so antialiasing on a glyph edge is not a state change. */
+    const FLOOR = 0.0005;         /* 0.05% of pixels. Margins are printed on the pass line. */
+    const PIXEL_DELTA = 24;       /* summed |dR|+|dG|+|dB|, about 8 per channel */
+    const pct = (f) => (f * 100).toFixed(3) + '%';
+    const measure = (shots, pairs) => page.evaluate(async ([sh, prs, thresh]) => {
+      const load = (b64) => new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im); im.onerror = () => rej(new Error('decode'));
+        im.src = 'data:image/png;base64,' + b64;
+      });
+      const px = {};
+      for (const k of Object.keys(sh)) {
+        const im = await load(sh[k]);
+        const c = document.createElement('canvas');
+        c.width = im.width; c.height = im.height;
+        const cx = c.getContext('2d', { willReadFrequently: true });
+        cx.drawImage(im, 0, 0);
+        px[k] = { w: im.width, h: im.height, d: cx.getImageData(0, 0, c.width, c.height).data };
+      }
+      const out = {};
+      for (const pr of prs) {
+        const A = px[pr[0]], B = px[pr[1]];
+        const key = pr[0] + '|' + pr[1];
+        if (!A || !B) { out[key] = -1; continue; }
+        if (A.w !== B.w || A.h !== B.h) { out[key] = 1; continue; }   /* a different size is a total difference */
+        let changed = 0;
+        for (let i = 0; i < A.d.length; i += 4) {
+          const dd = Math.abs(A.d[i] - B.d[i]) + Math.abs(A.d[i + 1] - B.d[i + 1]) + Math.abs(A.d[i + 2] - B.d[i + 2]);
+          if (dd > thresh) changed++;
+        }
+        out[key] = changed / (A.d.length / 4);
+      }
+      return out;
+    }, [shots, pairs, PIXEL_DELTA]);
 
     await page.emulateMedia({ reducedMotion: 'reduce' });
     try {
-      await page.evaluate(() => paintVoiceSlots());
-      await page.waitForTimeout(320);
-      const still1 = await rowShot();
-      await page.waitForTimeout(260);
-      const still2 = await rowShot();
-      const frozen = still1 === still2;
+      await page.evaluate(() => {
+        closeVoice(); openVoice();
+        const ctx = getAudioCtx();
+        window.voiceSlots[0] = ctx.createBuffer(1, 24000 * 4, 24000);
+        paintVoiceSlots();
+        setVoiceLiveSlot(0);
+      });
+      /* LET THE PANEL SETTLE BEFORE ANYTHING IS MEASURED. The first version waited 250ms,
+       * which is enough on this machine and was not enough somewhere else. */
+      await page.waitForTimeout(800);
+      const calA = await rowShot();
+      await page.waitForTimeout(300);
+      const calB = await rowShot();
+      await page.evaluate(() => setVoiceLiveSlot(-1));
+      await page.waitForTimeout(300);
+      const calIdle = await rowShot();
 
       await page.evaluate(() => { closeVoice(); openVoice(); });
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(300);
       const preMask = await shot();
       const hidden = await maskWords();
       const empty = await shot();
       const emptyRow = await rowShot();
-      const maskChanged = preMask !== empty;
 
       await finger('#voiceSlot1');
       await page.waitForTimeout(700);
@@ -1412,35 +1454,39 @@ try {
       const livePlay = await page.evaluate(() => window.__voice.state().liveSlot);
       await page.evaluate(() => closeVoice());
 
-      const named = { empty, recording, holding, playing };
-      const pairs = [];
-      const keys = Object.keys(named);
-      for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) {
-        if (named[keys[i]] === named[keys[j]]) pairs.push(`${keys[i]} == ${keys[j]}`);
-      }
-      if (!seesChange) bad('two photographs of a MOVING wave came out byte-identical',
-        'the camera cannot see change, so every "these two states differ" below is meaningless — this section proved nothing');
-      else if (!frozen) bad('two photographs of a stilled wave came out DIFFERENT',
-        'prefers-reduced-motion did not freeze the phase, so no pair of states can ever be reported identical and recording == playing is unfalsifiable — this section proved nothing');
+      const pairsOf = (keys) => {
+        const out = [];
+        for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) out.push([keys[i], keys[j]]);
+        return out;
+      };
+      const panelPairs = pairsOf(['empty', 'recording', 'holding', 'playing']);
+      const rowPairs = pairsOf(['emptyRow', 'recordingRow', 'holdingRow']);
+      const d = await measure(
+        { calA, calB, calIdle, preMask, empty, recording, holding, playing, emptyRow, recordingRow, holdingRow },
+        [['calA', 'calB'], ['calA', 'calIdle'], ['preMask', 'empty']].concat(panelPairs, rowPairs));
+      const at = (a, b) => d[a + '|' + b];
+      const same = (list) => list.filter((pr) => at(pr[0], pr[1]) < FLOOR)
+        .map((pr) => `${pr[0]} == ${pr[1]} (${pct(at(pr[0], pr[1]))})`);
+      const pairs = same(panelPairs);
+      const rowsSame = same(rowPairs);
+      const worst = panelPairs.concat(rowPairs).reduce((m, pr) => Math.min(m, at(pr[0], pr[1])), 1);
+
+      if (!(at('calA', 'calB') < FLOOR)) bad(`two photographs of ONE UNCHANGED state differ by ${pct(at('calA', 'calB'))} (floor ${pct(FLOOR)})`,
+        'this renderer invents differences bigger than the floor, so no pair of states below can ever be reported alike and `recording == playing` is unfalsifiable — this section proved nothing');
+      else if (!(at('calA', 'calIdle') >= FLOOR)) bad(`a LIVE slot and a merely filled one photograph the same (${pct(at('calA', 'calIdle'))}, floor ${pct(FLOOR)})`,
+        'either the camera returns a constant, or the panel genuinely does not paint live differently from filled — and with the wave stilled that is the whole of what a non-reader has');
       else if (!hidden.length) bad('no painted words were found to hide', 'the mask did nothing, so this proved nothing');
       else if (liveDuring !== 1) bad(`recording did not mark slot 1 live (liveSlot ${liveDuring})`, 'this section proved nothing');
       else if (livePlay !== 1) bad(`playback did not mark slot 1 live (liveSlot ${livePlay})`);
       /* AND THE MASK MUST BE PROVEN TO CHANGE THE PICTURE. A no-op mask makes every
        * comparison below a comparison of unmasked images. */
-      else if (maskChanged === false) bad('hiding the words did not change the photograph',
+      else if (!(at('preMask', 'empty') >= FLOOR)) bad(`hiding the words changed ${pct(at('preMask', 'empty'))} of the photograph`,
         'the masked element is outside the frame being compared, so this section is comparing unmasked pictures');
       else if (pairs.length) bad(`${pairs.length} state pair(s) are PHOTOGRAPHICALLY IDENTICAL with words covered`,
         `${pairs.join(', ')} — a child cannot read the label, so if the picture is the same the state is invisible`);
-      else {
-        const rows = { empty: emptyRow, live: recordingRow, holding: holdingRow };
-        const rk = Object.keys(rows);
-        const same = [];
-        for (let i = 0; i < rk.length; i++) for (let j = i + 1; j < rk.length; j++)
-          if (rows[rk[i]] === rows[rk[j]]) same.push(`${rk[i]} == ${rk[j]}`);
-        if (same.length) bad(`the SLOT ROW cannot tell ${same.length} of its own state pair(s) apart`,
-          `${same.join(', ')} — the row is the thing the child looks at, and the panel differing elsewhere does not help them find WHICH slot`);
-        else ok(`with the wave STILLED and ${hidden.length} painted word(s) hidden, empty / recording / holding / playing all photograph DIFFERENTLY, the SLOT ROW distinguishes its own three states, and the live slot is identified (slot ${liveDuring})`);
-      }
+      else if (rowsSame.length) bad(`the SLOT ROW cannot tell ${rowsSame.length} of its own state pair(s) apart`,
+        `${rowsSame.join(', ')} — the row is the thing the child looks at, and the panel differing elsewhere does not help them find WHICH slot`);
+      else ok(`with the wave STILLED and ${hidden.length} painted word(s) hidden, empty / recording / holding / playing all photograph DIFFERENTLY and the SLOT ROW distinguishes its own three states — closest pair ${pct(worst)} and the mask ${pct(at('preMask', 'empty'))} against a ${pct(FLOOR)} floor, with one unchanged state measuring ${pct(at('calA', 'calB'))}`);
     } finally { await page.emulateMedia({ reducedMotion: 'no-preference' }); }
   }
 

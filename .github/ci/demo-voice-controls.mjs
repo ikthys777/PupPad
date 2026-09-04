@@ -422,19 +422,19 @@ plan(23, 'the voice panel broadcasts on the camera channel instead of its own', 
  *
  * Collapsing the STATE collapses everything derived from it in one substitution, which is
  * what "the live slot paints exactly like a filled one" actually means. */
-/* AND WHAT IT DEMONSTRATES CHANGED WHEN §25 STARTED STILLING THE WAVE, which is worth
- * recording rather than quietly re-pointing. A build where no slot ever paints as LIVE
- * cannot produce a moving wave at all -- so the first thing this plant reaches is §25's own
- * camera control, which fails because two photographs of what should be a moving wave come
- * out identical. That is the RIGHT report: the section says its instrument has nothing to
- * see rather than pretending to compare states with it. The ROW comparison keeps its own
- * plant, one line below, which collapses `filled` and leaves the live paint intact.
+/* AND WHAT IT DEMONSTRATES CHANGED TWICE, which is worth recording rather than quietly
+ * re-pointing. When §25 started stilling the wave, this plant stopped reaching the row
+ * comparison and started tripping the camera control instead. That control is now the
+ * right one for it: with the wave taken away from both pictures, "a live slot photographs
+ * differently from a merely filled one" IS what collapsing `live` breaks, and it is the
+ * acceptance in miniature rather than a fact about the instrument.
  *
- * The state-collapse itself is still caught head-on by §26, whose first branch is that the
- * three states were never reached. */
+ * The ROW comparison keeps its own plant, one line below, which collapses `filled` and
+ * leaves the live paint intact. The state-collapse is also caught head-on by §26, whose
+ * first branch is that the three states were never reached. */
 plan(25, 'the live slot paints exactly like a filled one', {
   mutate: (s) => sub(s, "    var live = (voiceLiveSlot === i);", "    var live = false;"),
-  expectText: 'came out byte-identical',
+  expectText: 'a LIVE slot and a merely filled one photograph the same',
 });
 
 plan(25, 'a filled slot paints exactly like an empty one', {
@@ -611,20 +611,21 @@ plan(23, 'a preset tap opens a raw WebSocket', {
   expectText: 'WebSocket(s) opened during a voice session',
 });
 
-/* §25 — THE CAMERA'S OWN TWO CONTROLS. A byte comparison of screenshots could not report
- * `recording == playing` at all while the wave was animating between captures, so the
- * pair this section exists for was unreportable. Both controls are plantable because the
- * app owns the animation and the preference. */
-plan(25, 'the wave never advances, so two photographs of a live slot are identical', {
-  mutate: (s) => sub(s, "    voiceWavePhase += WAVE_SPEED;\n    paintVoiceSlots();",
-                        "    paintVoiceSlots();"),
-  expectText: 'came out byte-identical',
-});
-
-plan(25, 'prefers-reduced-motion is ignored, so the phase never freezes', {
+/* §25 — THE CAMERA'S OWN CONTROLS, AND THERE ARE NO LONGER TWO ABOUT THE WAVE.
+ *
+ * A plant that stops the phase advancing used to belong here, on the "the camera can see
+ * change" control. CI showed why that was wrong: §25 measures a panel with the wave
+ * STILLED by design, so a plant about the animation is not §25's business at all -- it is
+ * §27's, where it is planted and red. The control that replaced it asks something §25 does
+ * own: a LIVE slot must photograph differently from a merely filled one, with the wave
+ * taken away from both of them.
+ *
+ * The reduced-motion plant stays, because the preference is what stills the panel and a
+ * build that ignores it makes every comparison below a comparison of moving pictures. */
+plan(25, 'prefers-reduced-motion is ignored, so nothing is ever stilled', {
   mutate: (s) => sub(s, "  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }",
                         "  try { return false; }"),
-  expectText: 'came out DIFFERENT',
+  expectText: 'photographs of ONE UNCHANGED state differ',
 });
 
 /* AND THE PANEL-LEVEL COMPARISON, WHICH IS A DIFFERENT BRANCH FROM THE ROW'S. Flattening

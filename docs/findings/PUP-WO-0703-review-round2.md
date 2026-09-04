@@ -311,3 +311,74 @@ quietly would have left the list saying something the run no longer showed.
   against `b33ad20` and against `835c04d`, checked as a command in both directions.
 - **The pass banner can no longer overstate a run**: zero assertions is a failure, and the
   full prose is reserved for a full run.
+
+---
+
+# Round 3 — what CI found that this machine could not
+
+CI went red on `43e173a` at **check 26's CONTROLS**, not at check 26. Two plants, both §25:
+
+```
+FAIL  RED-WRONG-REASON  §25  the live slot paints exactly like a filled one
+FAIL  GREEN             §25  the wave never advances, so two photographs are identical
+```
+
+**The plant designed to make two photographs identical did not make them identical there.**
+
+## Byte-identity is a property of the renderer, not of the panel
+
+H2's ruling was that a byte comparison cannot fail while anything animates. I stilled the
+animation and **kept the comparison method**, which is architecture §5's third instance in
+this work order: *a repair inherits the defect's shape.* This time the mechanism caught it
+rather than a reviewer.
+
+**And the cause is not noise, which is the part worth keeping.** The control that had to
+see movement ran with motion **ON**, and this panel is **translucent over a live console**.
+With motion on, everything behind the glass is moving too — so *"these two photographs
+differ"* was true of the background whatever the wave did. The control passed by measuring
+something that was not its subject, and the assertions it was guarding went unguarded.
+
+Measured here after the fix: **4.9% of the row's pixels change between two captures with
+motion on, and 0.000% with it reduced.** On this machine the wave happened to dominate; in
+another container it did not, and the difference between those two facts is a scheduler.
+
+## What replaced it
+
+**The comparison is now a property of the painting:** the fraction of pixels that *visibly*
+changed, decoded in the browser that drew them (an `Image` onto a canvas — arithmetic, no
+new dependency) and thresholded per pixel so antialiasing on a glyph edge is not a state
+change.
+
+**Both controls now run in the same regime as the assertions they calibrate** — wave
+stilled, page stilled — and **neither is about the wave any more**:
+
+- **Null first:** two captures of one *unchanged* state must come out the same. A camera
+  that invents differences cannot report that two states are alike.
+- **Then positive:** a **live** slot and a merely **filled** one must come out different. A
+  camera that returns a constant cannot report that two states differ — and with the wave
+  taken away from both pictures, that is the acceptance in miniature.
+
+Measured margins on this build: unchanged state **0.000%**, floor **0.050%**, the word mask
+**0.107%**, closest real state pair **1.192%**. If a container is ever noisy enough to
+break that, **the null control fails and the section abstains loudly** instead of passing
+on noise.
+
+## And one plant moved sections rather than being re-pointed
+
+The plant that stops the phase advancing no longer belongs to §25 at all: §25 now measures
+a **stilled** panel by design, so a defect in the animation is §27's business, where it is
+already planted and red. Keeping it here would have meant a plant whose section cannot see
+its defect — the same shape as the duplicate removed in round 2.
+
+The `live = false` plant has now changed what it demonstrates **twice**, and both moves are
+recorded rather than quietly re-labelled. It lands on the positive control, which is where
+collapsing the live paint actually shows up once the wave is gone.
+
+## Round 3 final state
+
+- **70 of 70 plants red, each for its own stated reason** — one fewer than round 2 because
+  the phase-advance plant moved to §27, where its defect is visible.
+- **Check 26 green at 51 assertions**, unchanged in count: §25 kept its claim and changed
+  its method.
+- **The 27-check regression sweep is unchanged and still green** — `index.html` is
+  byte-identical to `43e173a`; only `demo-voice.mjs` §25 and its two plants moved.
