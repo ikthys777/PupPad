@@ -195,9 +195,14 @@ const HARNESS = (pin) => {
 
 const browser = await chromium.launch({ channel: 'chromium' });
 
-/* Builds a fresh touch context at one fleet shape. */
-async function shape(vp, pin = 0) {
-  const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, hasTouch: true });
+/* Builds a fresh touch context at one fleet shape. `ctxOpts` exists so a section can
+ * ask for the OTHER motion world and still get the whole helper suite — coverWords,
+ * freezeAnimations, a real finger. §19.7 predates it and hand-rolls its own reduced
+ * context with three of these helpers reimplemented inline; that is the shape §20 and
+ * §21 must not repeat, because a second copy of `fingerTap` is a second thing that can
+ * drift from what a finger does. */
+async function shape(vp, pin = 0, ctxOpts = {}) {
+  const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, hasTouch: true, ...ctxOpts });
   await ctx.addInitScript(HARNESS, pin);
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
@@ -328,6 +333,27 @@ async function shape(vp, pin = 0) {
     for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = ms; } catch (e) {} }
   }, t);
 
+  /* HOLD THE CELEBRATION OPEN WHILE A SECTION PHOTOGRAPHS IT — AND THIS IS A CLOCK
+   * PROBLEM, NOT A CONVENIENCE. `freezeAnimations` pauses the compositor; it does not
+   * pause `setTimeout`, and the celebration removes itself after CELEB_MS_REDUCED, which
+   * is 1600ms. §20 takes six full-viewport screenshots and hands the bytes back to the
+   * page to decode — comfortably under that here, and NOT comfortably under it on a
+   * loaded 2-core runner. The failure would not be a red check: the later frames would
+   * simply be photographs of a game with no celebration in it, and the "the celebration
+   * changes 99% of the screen" verdict would be measuring its own disappearance.
+   *
+   * So drop the game's pending timers once the frames are frozen. They are attributed by
+   * arming stack, so this reaches the module's and not the shell's. What it removes is
+   * the self-return and any spark volley not yet fired — the self-return is §19.3's
+   * subject and is asserted there, and an unfired volley is not in any frame either way.
+   * CI's CPU is a knob; a section that only works when it wins a race is a section that
+   * will be red at random, and a gate that is red at random is one people ignore. */
+  const holdCelebration = () => page.evaluate(() => {
+    const ids = [...window.__bp.timers];
+    for (const id of ids) clearTimeout(id);
+    return ids.length;
+  });
+
   /* REAL PIXELS, NOT A COMPUTED STYLE. The flash's peak is authored as a custom property
    * and resolved into a gradient, and reading either of those back grades the feature
    * against its own source. A rect comes from style, not from ink — AND SO DOES AN
@@ -406,7 +432,7 @@ async function shape(vp, pin = 0) {
   });
 
   return { ctx, page, cdp, touch, wait, rect, tapTarget, fingerTap, fingerDragTo, firstFullSlot, placeAt, openBlocks, boardState, seam, recordCues, cues, errs,
-    seedBoard, grid6, recordTones, tones, freezeAnimations, coverWords, sampleLuma };
+    seedBoard, grid6, recordTones, tones, freezeAnimations, coverWords, sampleLuma, holdCelebration };
 }
 
 try {
@@ -2557,7 +2583,13 @@ try {
       await s.wait(200);
       const before = (await s.cues()).all.length;
       const left = await s.page.evaluate(() => ({
-        nodes: document.querySelectorAll('.bp-celeb,.bp-fx,.bp-spark,.bp-flash,.bp-cheer').length,
+        /* EVERY CLASS THE CELEBRATION CAN PUT ON THE GLASS, NAMED. The burst layer and
+         * its blooms are children of `.bp-celeb` today, so removing that element takes
+         * them — but "they are children" is a fact about the current build, not a
+         * guarantee, and a refactor that reparented the light onto `root` would leave
+         * this clause counting a container that is genuinely gone while the light it
+         * used to hold burned on. Name them. */
+        nodes: document.querySelectorAll('.bp-celeb,.bp-fx,.bp-spark,.bp-flash,.bp-cheer,.bp-burst,.bp-wash,.bp-bloom').length,
         timers: window.__bp.timers.size,
         intervals: window.__bp.intervals.size,
       }));
@@ -2633,6 +2665,413 @@ try {
   }
   });
 
+  /* ------------------------------------------------------------------ */
+  await section(20, async () => {
+  console.log('--- 20. with every painted word covered, the WIN is a win — in both motion worlds ---');
+  /* PUP-WO-0704 acceptance §3. THIS CHECK DID NOT EXIST, and a comment in blockpop.js
+   * said it did: "with it covered, the win is still a screenful of fireworks ...
+   * Acceptance §1 measures that with every painted word masked." §0 resolved that
+   * citation — `coverWords` was called in exactly ONE place in this file, §17, which
+   * compares a CLEARING PLACEMENT against a non-clearing one on the board and never
+   * runs during a celebration. So the sentence was standing in for the assertion, and
+   * what it asserted was false on the child's device by construction.
+   *
+   * AND THE OBVIOUS WAY TO WRITE IT IS THE WRONG WAY. "Photograph the win with the
+   * words covered and check it differs from the idle board" passes on the LINE CLEAR'S
+   * OWN SPARKS: the placement that wins is also a clear, `celebrate()` deliberately
+   * adopts that burst and keeps it flying, and SPARK_MS is 620ms. A frame taken inside
+   * the celebration is full of particles that the celebration did not make. The work
+   * order names that trap by name.
+   *
+   * SO THE COMPARISON HOLDS THE BOARD FIXED AND MOVES ONLY THE CELEBRATION. Three
+   * photographs of ONE FROZEN INSTANT, taken by toggling `visibility` — which hides
+   * paint without removing a box and, unlike `display:none`, does not cancel and
+   * restart the CSS animations this section has just paused:
+   *
+   *   A  everything visible, every word transparent
+   *   C  the same, with the "Good Job!" LOZENGE ITSELF hidden
+   *   B  the same, with the whole celebration hidden
+   *
+   * B still contains every spark the line clear threw, at the same phase, because
+   * nothing was restarted between the three captures. So `C vs B` is the celebration's
+   * OWN paint with its only word removed, and not one changed pixel in it can have come
+   * from the burst that triggered the win. THAT is the number this section is about.
+   *
+   * `A vs B` is the positive control rather than the subject: the lozenge is a large
+   * opaque element that indisputably paints, so if that comparison comes out empty the
+   * camera returns a constant or `visibility` did nothing, and every verdict below is
+   * void. The null control comes first — two captures of one unchanged frozen state.
+   *
+   * AND IT COMPARES A FRACTION OF VISIBLY CHANGED PIXELS, NOT BYTES. Byte-identity of a
+   * screenshot is a property of the renderer, not of the panel: §17's `.equals()` works
+   * only because it freezes first and this project has already shipped one section whose
+   * plants failed in a container that was not this one. */
+  const FLOOR = 0.0008;      /* the camera's noise floor, as a fraction of the frame */
+  /* WHAT "UNMISTAKABLE ACROSS THE ROOM" IS WORTH IN PIXELS — AND THE FIRST VERSION OF
+   * THIS NUMBER WAS BELOW THE VERY THING §0 CONDEMNED. It was 0.30, and it was measured
+   * against a frame with NO CELEBRATION IN IT, so the celebration's own navy scrim
+   * counted toward it: the scrim alone repaints 53.95% of the root, which cleared that
+   * floor by 1.8x. A build with no light and no blooms — the exact state §0 described as
+   * "the screen goes dark and a word appears" — would have PASSED the clause that exists
+   * to reject it. The adversarial pass computed the scrim's share and found it.
+   *
+   * So the headline is now measured against the celebration WITH ITS SCRIM ALREADY UP,
+   * and it is the paint this branch ADDED. That is both the honest subject and a much
+   * harder claim: the scrim is in both frames and can contribute nothing. */
+  const WIN_FLOOR = 0.60;
+  /* AND A FLOOR PER CARRIER, WHICH IS THE CLAUSE THE HEADLINE NUMBER CANNOT REPLACE.
+   * The win is carried by TWO things now — a full-bleed light and sixteen blooms — and
+   * `WIN_FLOOR` is met by the light ON ITS OWN by a factor of three. So a change that
+   * silently killed every bloom would leave the headline at 99% and this section green:
+   * redundant signals make a one-at-a-time plant pass, which is a defect family this
+   * project has shipped before. Each carrier is therefore measured ALONE, against a
+   * frame that is identical except for it — the celebration with its scrim up and
+   * everything else hidden — so neither can die behind the other.
+   *
+   * These floors are smaller than WIN_FLOOR and they are a different claim. WIN_FLOOR
+   * is "a three-year-old across the room cannot miss this". These are "this carrier is
+   * really putting ink on the glass", which is what has to be true for the headline to
+   * keep meaning what it says a month from now. */
+  const WASH_FLOOR = 0.20;
+  const BLOOM_FLOOR = 0.015;
+  const PIXEL_DELTA = 24;    /* summed |dR|+|dG|+|dB|; below this it is antialiasing */
+  const FREEZE_AT = 700;     /* ms into every animation: the wash is up and the last
+                              * staggered bloom has just reached full. */
+  /* AND A SECOND SAMPLE LATE IN THE WIN, BECAUSE ONE INSTANT IS NOT A CELEBRATION.
+   * Every bloom is finished by 1240ms and the lozenge by 1500ms, against a 3400ms
+   * unreduced window — so a section that only ever photographs 700ms is grading the
+   * first third and calling it the win. This project's own rule is to sample the steady
+   * state rather than the transient; a check that samples only the peak is that rule
+   * inverted. LATE_FRAC is a fraction of the celebration's own length rather than a
+   * millisecond, so it moves with a window neither this file nor this branch owns. */
+  const LATE_FRAC = 0.9;
+  const LATE_FLOOR = 0.10;
+  const pct = (f) => (f * 100).toFixed(2) + '%';
+
+  const WORLDS = [
+    { name: 'no-preference', opts: { reducedMotion: 'no-preference' } },
+    { name: 'reduce', opts: { reducedMotion: 'reduce' } },
+  ];
+
+  for (const world of WORLDS) {
+    const s = await shape(FLEET[0], PIN_DOT, world.opts);
+    try {
+      const WIN = s.grid6(['#####.', '......', '......', '......', '......', '......']);
+      await s.openBlocks({ clearStorage: true, seed: WIN });
+      await s.coverWords();
+
+      if (!await s.placeAt(0, 5)) { bad(`§20/${world.name}: could not complete the last row`); continue; }
+      await s.wait(140);
+      /* WHICH WORLD THE MODULE SAW — READ FROM THE MODULE, NOT FROM THE BROWSER. The
+       * first version of this clause called `matchMedia` and its own comment said why
+       * that was not enough: a context option is a request to the browser, and `reduced`
+       * is a snapshot the module took at mount from `api.prefersReducedMotion`. Asking
+       * the browser cannot detect a disagreement between the two, WHICH IS THE ONLY
+       * THING IT WAS THERE TO DETECT. Measured by the adversarial pass: with
+       * `var reduced = false` planted, both worlds printed byte-identical unreduced
+       * numbers — 38 travelling sparks in the "reduce" run — and §20 declared itself
+       * green in the reduced-motion world. The whole half of this section acceptance §3
+       * was rewritten for was grading the unreduced build.
+       *
+       * `.bp-celeb-calm` is the module's own expression of that snapshot: `celebrate()`
+       * puts it on the element if and only if `reduced` is true. So ask for it. */
+      const state = await s.page.evaluate(() => ({
+        celeb: !!document.querySelector('.bp-celeb'),
+        calm: !!document.querySelector('.bp-celeb-calm'),
+      }));
+      if (!state.celeb) {
+        bad(`§20/${world.name}: clearing the whole board did not open a celebration`, 'there is nothing to photograph');
+        continue;
+      }
+      if (state.calm !== (world.name === 'reduce')) {
+        bad(`§20/${world.name}: the MODULE thinks it is in the ${state.calm ? 'reduced' : 'unreduced'} world`,
+          'the context asked for the other one, so every number below would be measured in a world this section is not naming — and the reduced-motion half of this check would be a second copy of the unreduced half');
+        continue;
+      }
+      await s.freezeAnimations(FREEZE_AT);
+      await s.holdCelebration();
+
+      /* THE CELEBRATION'S OWN LENGTH, READ FROM PAINT RATHER THAN PASTED. `--bp-fade` is
+       * the value `celebrate()` built the light with, which is CELEB_MS or
+       * CELEB_MS_REDUCED. Writing 3400 and 1600 here would be a second expression of two
+       * constants this branch is forbidden to retune, and it would go stale in silence
+       * the day Scotty changes one. 0 means there is no light at all, which the clause
+       * below reports; the late pair is skipped rather than sampled at 0ms. */
+      const fadeMs = await s.page.evaluate(() => {
+        const w = document.querySelector('.bp-wash');
+        const v = w ? parseInt(w.style.getPropertyValue('--bp-fade'), 10) : 0;
+        return Number.isFinite(v) ? v : 0;
+      });
+
+      const root = await s.rect('.bp-root');
+      const clip = { x: Math.round(root.x), y: Math.round(root.y), width: Math.round(root.w), height: Math.round(root.h) };
+      const shot = async () => (await s.page.screenshot({ clip })).toString('base64');
+      /* EVERY MATCH, NOT THE FIRST. There are sixteen blooms; a `querySelector` here
+       * would hide one of them and the "blooms alone" frame would silently be a
+       * "fifteen blooms" frame. Returns the count so a selector that matched nothing is
+       * a reported failure rather than a quiet no-op. */
+      const setVis = (sel, v) => s.page.evaluate(([q, vis]) => {
+        const es = [...document.querySelectorAll(q)];
+        for (const e of es) e.style.visibility = vis;
+        return es.length;
+      }, [sel, v]);
+
+      const A = await shot();
+      const A2 = await shot();
+      const hidCheer = await setVis('.bp-cheer', 'hidden');
+      const C = await shot();
+      /* THE TWO CARRIERS, ONE AT A TIME, AGAINST A FRAME THAT STILL HAS THE SCRIM. The
+       * scrim alone repaints 54% of the board (§0 measured it), so a bloom measured
+       * against a frame with no celebration in it would be reporting the scrim's number
+       * and not its own. `S` keeps the celebration up and hides everything it paints. */
+      const hidWash = await setVis('.bp-wash', 'hidden');
+      const Bl = await shot();                       /* scrim + blooms */
+      await setVis('.bp-bloom', 'hidden');
+      const S = await shot();                        /* scrim only */
+      await setVis('.bp-wash', '');
+      const W = await shot();                        /* scrim + wash */
+      await setVis('.bp-bloom', '');
+      await setVis('.bp-cheer', '');
+      const hidCeleb = await setVis('.bp-celeb', 'hidden');
+      const B = await shot();
+      await setVis('.bp-celeb', '');
+
+      /* AND THE SAME PAIR AGAIN, 90% OF THE WAY THROUGH THE WIN. Everything above is one
+       * instant and it is the best one. `holdCelebration` has already stopped the clock,
+       * so this is a re-freeze rather than a wait. */
+      const lateAt = Math.round(fadeMs * LATE_FRAC);
+      let Cl = S, Sl = S;                            /* with no light there is nothing to sample late */
+      if (lateAt > 0) {
+        await s.freezeAnimations(lateAt);
+        await setVis('.bp-cheer', 'hidden');
+        Cl = await shot();                           /* scrim + whatever is left of the win */
+        await setVis('.bp-wash', 'hidden');
+        await setVis('.bp-bloom', 'hidden');
+        Sl = await shot();                           /* scrim only, same instant */
+        await setVis('.bp-wash', '');
+        await setVis('.bp-bloom', '');
+        await setVis('.bp-cheer', '');
+      }
+
+      /* THE SAME ELEMENT WAS IN FRAME FOR ALL NINE CAPTURES — asserted, because the
+       * alternative failure is silent. If the celebration had timed out partway through
+       * the sequence, the later frames would be a game with no celebration in them and
+       * every number below would be measuring the timeout. */
+      const stillUp = await s.page.evaluate(() => !!document.querySelector('.bp-celeb'));
+
+      /* What the celebration built, read from the DOM — so a zero above can be told
+       * apart from "it built nothing" and from "it built it in the wrong layer". */
+      const built = await s.page.evaluate(() => {
+        const c = document.querySelector('.bp-celeb');
+        const bl = [...document.querySelectorAll('.bp-bloom')];
+        const w = document.querySelector('.bp-wash');
+        return {
+          blooms: bl.length,
+          bloomsInCeleb: c ? bl.filter((e) => c.contains(e)).length : 0,
+          bloomsSized: bl.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).length,
+          wash: !!w,
+          washInCeleb: !!(c && w && c.contains(w)),
+          washPeak: w ? w.style.getPropertyValue('--bp-peak') : null,
+          /* THE DELETED MECHANISM'S ABSENCE, ASSERTED — AND THE FIRST VERSION OF THIS
+           * COULD NOT FIRE FOR ANY BUILD WHATSOEVER. It read `c.querySelectorAll(
+           * '.bp-flash')`, and `flash()` appends into `.bp-fx` inside `boardWrap`, which
+           * is a SIBLING of `.bp-celeb` and never a descendant of it. The count was
+           * structurally zero. Three comments — one here, one in the module, one in the
+           * feedback doc — claimed it guarded §0's defect; the adversarial pass planted
+           * the removed `flash()` call back into `celebrate()` and §20 stayed green.
+           * That is a described guarantee reading exactly like a kept one, written into
+           * the fix for a described guarantee reading exactly like a kept one.
+           *
+           * So count them where they actually live. The line clear that WON the game
+           * leaves exactly ONE — `comboReact`'s, whose removal timer `celebrate()`
+           * cancels when it adopts the layer — and a second one is a celebration light
+           * painted back under the celebration's own scrim. */
+          flashes: document.querySelectorAll('.bp-flash').length,
+          sparks: document.querySelectorAll('.bp-spark').length,
+        };
+      });
+
+      const d = await s.page.evaluate(async ([sh, prs, thresh]) => {
+        const load = (b64) => new Promise((res, rej) => {
+          const im = new Image();
+          im.onload = () => res(im); im.onerror = () => rej(new Error('decode'));
+          im.src = 'data:image/png;base64,' + b64;
+        });
+        const px = {};
+        for (const k of Object.keys(sh)) {
+          const im = await load(sh[k]);
+          const cv = document.createElement('canvas');
+          cv.width = im.width; cv.height = im.height;
+          const cx = cv.getContext('2d', { willReadFrequently: true });
+          cx.drawImage(im, 0, 0);
+          px[k] = { w: im.width, h: im.height, d: cx.getImageData(0, 0, cv.width, cv.height).data };
+        }
+        const out = {};
+        for (const pr of prs) {
+          const X = px[pr[0]], Y = px[pr[1]];
+          if (!X || !Y || X.w !== Y.w || X.h !== Y.h) { out[pr.join('|')] = 1; continue; }
+          let changed = 0;
+          for (let i = 0; i < X.d.length; i += 4) {
+            if (Math.abs(X.d[i] - Y.d[i]) + Math.abs(X.d[i + 1] - Y.d[i + 1]) + Math.abs(X.d[i + 2] - Y.d[i + 2]) > thresh) changed++;
+          }
+          out[pr.join('|')] = changed / (X.d.length / 4);
+        }
+        return out;
+      }, [{ A, A2, C, B, Bl, S, W, Cl, Sl },
+          [['A', 'A2'], ['A', 'C'], ['C', 'S'], ['C', 'B'], ['S', 'B'], ['W', 'S'], ['Bl', 'S'], ['Cl', 'Sl']], PIXEL_DELTA]);
+
+      const noise = d['A|A2'];
+      /* THE POSITIVE CONTROL IS THE LOZENGE, AND IT NOW HIDES THE LOZENGE. The first
+       * version measured `A|B` — the whole celebration — while its message talked about
+       * the lozenge being "a large opaque element". Those are different subjects by a
+       * factor of six (99.65% against 16.93%), and a lozenge that silently stopped
+       * painting would have left `A|B` at 99.6% and the control green. */
+      const lozengeAlone = d['A|C'];
+      const wordless = d['C|S'];
+      const wholeVsNone = d['C|B'];
+      const scrimAlone = d['S|B'];
+      const washAlone = d['W|S'];
+      const bloomAlone = d['Bl|S'];
+      const late = d['Cl|Sl'];
+
+      if (!stillUp) bad(`§20/${world.name}: the celebration ended while its nine frames were being taken`,
+        'the later captures are of a game with no celebration in them, so every comparison below would be measuring the timeout rather than the win');
+      else if (!hidCheer) bad(`§20/${world.name}: there is no .bp-cheer to hide`, 'the words-covered comparison would be identical to the plain one');
+      else if (!hidCeleb) bad(`§20/${world.name}: there is no .bp-celeb to hide`);
+      /* THIS CLAUSE CARRIES THE SEMANTIC MESSAGE, NOT JUST THE INSTRUMENT'S. "Nothing
+       * named .bp-wash is on the glass" and "the win painted no light layer" are the
+       * same fact, and the plant that builds the whole layer and never attaches it
+       * arrives here rather than at the DOM readout below — measured, after that control
+       * first reported RED-WRONG-REASON against a later clause's wording. A precondition
+       * that is also a finding should say the finding. */
+      else if (!hidWash) bad(`§20/${world.name}: the win painted no light layer at all`,
+        `nothing named .bp-wash is on the glass, so it was either never built or never attached — and note that the ${built.sparks} spark(s) from the line clear that WON the game are in this frame, which is exactly what a words-covered check built the naive way would have passed on`);
+      else if (!(noise < FLOOR)) bad(`§20/${world.name}: two captures of ONE frozen state differ by ${pct(noise)} (floor ${pct(FLOOR)})`,
+        'this camera invents differences larger than the floor, so nothing it reports below is evidence');
+      else if (!(lozengeAlone >= FLOOR)) bad(`§20/${world.name}: hiding the "Good Job!" lozenge changed ${pct(lozengeAlone)} of the frame`,
+        'the lozenge is a large opaque element that indisputably paints — if hiding it changes nothing, the camera returns a constant or `visibility` did nothing, and every verdict below is void');
+      else if (built.flashes > 1) bad(`§20/${world.name}: ${built.flashes} .bp-flash elements are on the glass, and the winning line clear leaves exactly one`,
+        'a second one is the celebration painting its light back into .bp-fx, which sits under this element\'s own 30% navy scrim — §0 measured a 0.44 peak arriving there as 13 of 765, so a light put back there is a light the child does not get, and it would return silently because these pixels would simply stop moving');
+      else if (!built.washInCeleb) bad(`§20/${world.name}: the win's light is not inside the celebration`,
+        'anything outside it is painted under its scrim, which is the whole of what PUP-WO-0704 §0 measured');
+      else if (!built.blooms) bad(`§20/${world.name}: the win painted no blooms`,
+        world.name === 'reduce' ? 'reduced motion may still the celebration; it may not delete it' : 'the unreduced win lost its blooms');
+      else if (built.bloomsSized !== built.blooms) bad(`§20/${world.name}: ${built.blooms - built.bloomsSized} bloom(s) are in the DOM with no size`,
+        'a rect comes from style, not from ink');
+      else if (built.bloomsInCeleb !== built.blooms) bad(`§20/${world.name}: ${built.blooms - built.bloomsInCeleb} bloom(s) are painted outside the celebration`);
+      /* THE TWO CARRIERS FIRST, THEN THE HEADLINE, AND THE ORDER IS LOAD-BEARING. The
+       * light alone clears WIN_FLOOR by a factor of nearly five, so if the headline were
+       * asked first it would answer for both and a defect in either carrier would arrive
+       * wearing the headline's message — a planted defect going red for somebody else's
+       * reason proves nothing about the clause it was aimed at.
+       *
+       * AND THE HONEST CONSEQUENCE OF THAT ORDERING, SAID PLAINLY RATHER THAN LEFT FOR A
+       * READER TO WORK OUT: the headline clause is now largely SUBSUMED. `wordless` is
+       * measured over a frame that contains the light, so a build where the light clears
+       * WASH_FLOOR will essentially always clear WIN_FLOOR too, and no plant in the
+       * control file lands on this clause. It is kept anyway, and not as decoration: it
+       * is the only clause stated in the acceptance criterion's own terms — the WHOLE
+       * wordless win against a floor — and it is the one that still says something if
+       * the per-carrier decomposition is ever refactored away. Two diagnostics and the
+       * claim they are diagnosing, in that order. */
+      else if (!(washAlone >= WASH_FLOOR)) bad(`§20/${world.name}: the win's light on its own repaints ${pct(washAlone)} of the screen`,
+        `floor ${pct(WASH_FLOOR)}, measured against the same frame with the scrim still up — a light that has stopped reaching the glass is exactly the defect §0 found, and it does not show in the headline while the blooms are still painting`);
+      else if (!(bloomAlone >= BLOOM_FLOOR)) bad(`§20/${world.name}: the ${built.blooms} blooms on their own repaint ${pct(bloomAlone)} of the screen`,
+        `floor ${pct(BLOOM_FLOOR)}, measured against the same frame with the scrim still up — they are in the DOM, sized and inside the celebration, and they are putting no ink on the glass`);
+      else if (!(wordless >= WIN_FLOOR)) bad(`§20/${world.name}: with every word covered and the lozenge removed, the win adds only ${pct(wordless)} of the screen to its own scrim`,
+        `floor ${pct(WIN_FLOOR)}. The scrim is in BOTH frames and contributes nothing — it repaints ${pct(scrimAlone)} on its own, and "the screen goes dark and a word appears" is exactly the state §0 measured on the device and this clause exists to reject. So are the line clear's own sparks, in both frames. A three-year-old who cannot read has what is left and nothing else.`);
+      else if (!(late >= LATE_FLOOR)) bad(`§20/${world.name}: ${Math.round(LATE_FRAC * 100)}% of the way through the win it adds only ${pct(late)} to its scrim`,
+        `floor ${pct(LATE_FLOOR)} at ${lateAt}ms — every bloom is finished by then and so is the lozenge, so this is the light alone, and a celebration that is over long before it ends is a dark screen a child is still looking at`);
+      else ok(`§20/${world.name}: with every painted word covered and the lozenge itself removed, the win adds ${pct(wordless)} of the screen to its own ${pct(scrimAlone)} scrim, against a ${pct(WIN_FLOOR)} floor — each carrier alone clears its own (light ${pct(washAlone)} vs ${pct(WASH_FLOOR)}, ${built.blooms} blooms ${pct(bloomAlone)} vs ${pct(BLOOM_FLOOR)}), it is still carrying ${pct(late)} at ${lateAt}ms, and the whole celebration against none is ${pct(wholeVsNone)} — at peak ${built.washPeak}, with ${built.flashes} .bp-flash and ${built.sparks} line-clear spark(s) held identical in every frame, the lozenge control at ${pct(lozengeAlone)} and one unchanged state at ${pct(noise)}`);
+    } finally { await s.ctx.close(); }
+  }
+  });
+
+  /* ------------------------------------------------------------------ */
+  await section(21, async () => {
+  console.log('--- 21. reduced motion stills the win; it does not delete it ---');
+  /* PUP-WO-0704 acceptance §4, ASSERTED RATHER THAN ASSUMED, and the assertion has to
+   * cut both ways at once. "Reduced motion still gets a celebration" is satisfied by an
+   * effect that travels, which is the thing the preference forbids; "reduced motion is
+   * still" is satisfied by painting nothing at all, which is what shipped. So this
+   * measures BOTH halves from the same photograph of the same feature:
+   *
+   *   it is there   — blooms exist, sized, in both worlds
+   *   it is still   — every bloom occupies the SAME RECT at two different points in its
+   *                   own timeline, with motion reduced
+   *
+   * AND THE STILLNESS CLAUSE CARRIES ITS OWN POSITIVE CONTROL. "Nothing moved" is what a
+   * broken probe reports too — a selector that matches nothing, a freeze that silently
+   * failed, a rect read twice from the same paused frame. So the identical measurement
+   * runs in the UNREDUCED world, where the blooms do travel, and it must come back
+   * saying they moved. A stillness check that cannot see motion has not seen stillness. */
+  const MOVE_EPS = 0.5;   /* px: below this is subpixel layout, not travel */
+  const T_EARLY = 120;
+  const T_LATE = 700;
+
+  const rectsAt = async (s, t) => {
+    await s.freezeAnimations(t);
+    await s.holdCelebration();
+    return s.page.evaluate(() => [...document.querySelectorAll('.bp-bloom')].map((e) => {
+      const r = e.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    }));
+  };
+
+  const worlds = {};
+  for (const world of [{ name: 'no-preference', opts: { reducedMotion: 'no-preference' } },
+                       { name: 'reduce', opts: { reducedMotion: 'reduce' } }]) {
+    const s = await shape(FLEET[0], PIN_DOT, world.opts);
+    try {
+      const WIN = s.grid6(['#####.', '......', '......', '......', '......', '......']);
+      await s.openBlocks({ clearStorage: true, seed: WIN });
+      if (!await s.placeAt(0, 5)) { bad(`§21/${world.name}: could not complete the last row`); continue; }
+      await s.wait(140);
+      const early = await rectsAt(s, T_EARLY);
+      const late = await rectsAt(s, T_LATE);
+      /* Read AFTER both freeze points, so `celeb` below is also the assertion that the
+       * celebration was still on the glass when the second set of rects was taken. */
+      const extra = await s.page.evaluate(() => ({
+        celeb: !!document.querySelector('.bp-celeb'),
+        calm: !!document.querySelector('.bp-celeb-calm'),
+        sparks: document.querySelectorAll('.bp-spark').length,
+      }));
+      const moved = early.length === late.length
+        ? early.filter((r, i) => Math.abs(r.x - late[i].x) > MOVE_EPS || Math.abs(r.y - late[i].y) > MOVE_EPS
+            || Math.abs(r.w - late[i].w) > MOVE_EPS || Math.abs(r.h - late[i].h) > MOVE_EPS).length
+        : -1;
+      worlds[world.name] = { n: early.length, moved, ...extra };
+    } finally { await s.ctx.close(); }
+  }
+
+  const loud = worlds['no-preference'];
+  const calm = worlds['reduce'];
+  if (!loud || !calm) bad('section 21 could not sample both motion worlds');
+  else if (!loud.celeb || !calm.celeb) bad(`a perfect clear opened no celebration in the ${loud.celeb ? 'reduce' : 'no-preference'} world`);
+  else if (!calm.n) bad('with motion reduced the win paints no blooms at all',
+    'stillness is allowed and nothing is not — before PUP-WO-0704 this world got a navy scrim and one word the child cannot read');
+  else if (!loud.n) bad('the unreduced win paints no blooms', 'the stillness comparison below would have nothing to be still against');
+  else if (loud.moved < 0 || calm.moved < 0) bad('the bloom count changed between the two freeze points, so no rect can be compared to its own');
+  /* THE THREE CALM CLAUSES ARE ORDERED BY CAUSE, NOT BY IMPORTANCE, AND THAT IS A
+   * CORRECTION. `moved` used to be asked first, and it DOMINATED the two below it: every
+   * build that loses `.bp-celeb-calm` also gets handed the travelling animation, so a
+   * module that simply never believes it is in the reduced world arrived here as "the
+   * calm keyframes must set no transform" — a true measurement with a false diagnosis.
+   * The adversarial pass produced exactly that build (`var reduced = false`) and read
+   * back the wrong cause. Ask the cause first: did the module think it was in the calm
+   * world at all, did it still throw travelling particles, and only then, given both,
+   * did its still discs hold their rects. */
+  else if (!calm.calm) bad('the reduced celebration is not wearing .bp-celeb-calm',
+    'the module does not believe it is in the reduced world at all, so nothing below is a measurement of the calm path — every still keyframe in the file is unreachable from here');
+  else if (calm.sparks) bad(`reduced motion still flung ${calm.sparks} travelling particle(s)`,
+    'a bloom is a spark with the travel taken out; putting the travel back is not the way to give the calm world a celebration');
+  else if (!(loud.moved > 0)) bad(`this probe cannot see travel: ${loud.n} unreduced blooms all held the same rect between ${T_EARLY}ms and ${T_LATE}ms`,
+    'the unreduced bloom is authored with a scale ramp, so either the freeze did nothing or the rects are being read from one paused frame twice — and a stillness verdict from a probe that cannot see motion is worthless');
+  else if (calm.moved > 0) bad(`with motion reduced ${calm.moved} of ${calm.n} blooms changed rect between ${T_EARLY}ms and ${T_LATE}ms`,
+    'the calm keyframes must set no transform: the whole point is that the win keeps its colour and its light and gives up only the travel');
+  else ok(`reduced motion stills the win without deleting it: ${calm.n} blooms painted, every one holding its rect from ${T_EARLY}ms to ${T_LATE}ms and 0 travelling sparks — while the same probe watches ${loud.moved} of ${loud.n} unreduced blooms travel, so the stillness is measured rather than assumed`);
+  });
+
 } finally {
   await browser.close();
   server.close();
@@ -2644,4 +3083,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 21 PASSED at ${COMMIT.slice(0, 12)} — Block Pop lays out inside three real phones, places by drag and by tap, clears a line and scores it, re-pops nothing while a finger crosses the board, strands nothing inside the clear window, retains no state across a remount, leaves nothing live when the child walks away mid-drag, speaks the combo to a non-reader as particles, brightness and pitch that a covered screenful of words cannot account for, keeps the numeral out of the touch path and out of the exit's column, and wins on a perfect clear with a celebration that neither traps the child nor is destroyed by the gesture that earned it.`);
+console.log(`\nCHECK 21 PASSED at ${COMMIT.slice(0, 12)} — Block Pop lays out inside three real phones, places by drag and by tap, clears a line and scores it, re-pops nothing while a finger crosses the board, strands nothing inside the clear window, retains no state across a remount, leaves nothing live when the child walks away mid-drag, speaks the combo to a non-reader as particles, brightness and pitch that a covered screenful of words cannot account for, keeps the numeral out of the touch path and out of the exit's column, and wins on a perfect clear with a celebration that neither traps the child nor is destroyed by the gesture that earned it — a celebration whose own light and blooms each repaint the screen on their own account, measured with every painted word covered AND the lozenge itself taken out of the frame, in the reduced-motion world as well as the other one, and shown still in the first without being deleted from it.`);
