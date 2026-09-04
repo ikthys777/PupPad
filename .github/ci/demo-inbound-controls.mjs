@@ -59,7 +59,7 @@ async function scenario(section, label, { mutate, expectText }) {
 /* §1 — THE BEACON. Removing the gate at the sink is the code as PUP-WO-0700 left it:
  * assigned rather than concatenated, which closes injection and nothing else. */
 plan(1, 'the photo sink stops validating — assignment still fetches', {
-  mutate: (s) => sub(s, "    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'image');\n    if (!url) return;\n    showRemotePhoto(url);",
+  mutate: (s) => sub(s, "    var url = safeImageUrl(payload && payload.payload && payload.payload.dataUrl);\n    if (!url) return;\n    showRemotePhoto(url);",
                         "    showRemotePhoto(payload && payload.payload && payload.payload.dataUrl);"),
   expectText: 'fetched an attacker-named origin',
 });
@@ -67,19 +67,20 @@ plan(1, 'the photo sink stops validating — assignment still fetches', {
 /* §2 — A GATE THAT REFUSES EVERYTHING PASSES EVERY "hostile payload was refused"
  * ASSERTION EVER WRITTEN. Disabling the feature is not securing it. */
 plan(2, 'the gate refuses all media, legitimate included', {
-  mutate: (s) => sub(s, "  return re.test(raw) ? raw : '';", "  return '';"),
-  expectText: 'rejects legitimate media',
+  mutate: (s) => sub(s, "  return /^data:image\\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(raw) ? raw : '';", "  return '';"),
+  expectText: 'rejects a legitimate image',
 });
 
 /* AND THE KIND MUST BE ENFORCED, not merely the scheme. */
-/* THE PLANT MUST STILL PASS LEGITIMATE MEDIA, or it trips §2's FIRST branch instead of
- * its kind branch. Widening BOTH arms to accept either type is the real defect shape: the
- * scheme is still enforced, the KIND is not. */
-plan(2, 'the gate stops distinguishing audio from image', {
-  mutate: (s) => sub(
-    sub(s, "/^data:audio\\/[a-z0-9.+-]+", "/^data:(audio|image)\\/[a-z0-9.+-]+"),
-    "/^data:image\\/[a-z0-9.+-]+", "/^data:(audio|image)\\/[a-z0-9.+-]+"),
-  expectText: 'accepts an image where audio is expected',
+/* THE KIND-CONFUSION PLANT HAD NO SUBJECT LEFT. There is only one kind now, so "accepts
+ * an image where audio is expected" cannot be planted -- and a plant kept for a property
+ * that no longer exists is the mirror of a check kept for one. Replaced with the defect
+ * that IS possible after the narrowing: the audio branch growing back, which §2 asserts
+ * against directly. */
+plan(2, 'the audio branch grows back with no caller', {
+  mutate: (s) => sub(s, "  return /^data:image\\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(raw) ? raw : '';",
+                        "  return /^data:(image|audio)\\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(raw) ? raw : '';"),
+  expectText: 'still accepts audio after the voice transport was removed',
 });
 
 /* §3 — THE RECEIVING HALF OF THE BOUND. The recorder-side cap bounds what this device
@@ -113,9 +114,17 @@ plan(5, 'closeCanvas stops releasing', {
   expectText: 'closeCanvas NEVER RELEASES',
 });
 
-plan(5, 'closeTreasureMap releases but leaves the handle set', {
-  mutate: (s) => sub(s, "  releaseChannel(mapChannel);\n  mapChannel = null;", "  releaseChannel(mapChannel);"),
-  expectText: 'leaves the handle set',
+/* THE MAP PLANT IS NOW THE OPPOSITE ASSERTION. Its channel is gone, so the defect worth
+ * demonstrating is the transport COMING BACK -- which is what a future edit would do by
+ * accident, and what the check must catch. Re-declaring the handle is enough: the row
+ * asserts there is no handle, no join and no senders. */
+/* THE ROW IS FOUNDED ON EFFECT NOW, so the plant must be a WORKING transport rather than
+ * a declared variable -- a dead `var mapChannel` takes no channel and the row is right to
+ * ignore it. This one joins for real, under a name nothing greps for. */
+plan(5, 'the map transport is re-introduced', {
+  mutate: (s) => sub(s, "  doSound('chime');\n\n  var overlay = document.createElement('div');\n  overlay.id = 'mapOverlay';",
+    "  doSound('chime');\n  try { var mc = getSupabaseClient(); if (mc) mc.channel('puppad-map-v2').subscribe(function(){}); } catch (e) {}\n\n  var overlay = document.createElement('div');\n  overlay.id = 'mapOverlay';"),
+  expectText: 'opening the map still takes a transport',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);

@@ -329,21 +329,32 @@ function isSupabaseConfigured() {
  * VALIDATED AT THE SINK, NOT AT THE SENDER, because the sender is the untrusted party.
  * A check on the broadcasting side protects nobody: the attacker is the one broadcasting.
  *
- * AND THE BOUND HAS A RECEIVING HALF. §1.0a's designed bound is recorder-side, which
- * bounds what this device SENDS and not one byte of what it ACCEPTS. `MAX_INBOUND_BYTES`
- * is that half. The base64 payload is measured as characters, which over-counts the
- * decoded size by ~4/3 — deliberately, because the cap exists to bound MEMORY and the
- * string is the thing held in memory. */
+ * THE BOUND IS NOW ONE-SIDED ON PURPOSE. It used to be the receiving half of a pair
+ * whose sending half lived in the voice recorder; PUP-WO-0702 removed that transport, so
+ * this bounds inbound PHOTOGRAPHS and nothing else. The base64 payload is measured as
+ * characters, which over-counts the decoded size by ~4/3 — deliberately, because the cap
+ * exists to bound MEMORY and the string is the thing held in memory. */
 var MAX_INBOUND_BYTES = 3 * 1024 * 1024;
 
-function safeMediaUrl(raw, kind) {
+/* RENAMED AND NARROWED BY PUP-WO-0702, AND THE RENAME IS THE POINT.
+ *
+ * This was `safeMediaUrl(raw, kind)` with an `audio` branch built for the voice
+ * transport. That transport is gone, so the branch had no caller — and A DEAD LIMB A
+ * FUTURE READER TREATS AS LIVE IS WORSE THAN AN ABSENT ONE. This repo's own history is a
+ * catalogue of things believed live that were not.
+ *
+ * THE `kind` PARAMETER WENT WITH IT, and so did the name. A function still called
+ * `safeMediaUrl(raw)` that silently accepts only images is its own small trap: the next
+ * caller passes audio, gets `''`, and has no clue why. `safeImageUrl` cannot be misread.
+ *
+ * If voice is ever networked again, THAT work order re-adds the audio branch AND its
+ * check together, which is the correct coupling. */
+function safeImageUrl(raw) {
   if (typeof raw !== 'string') return '';
   if (raw.length > MAX_INBOUND_BYTES) return '';
-  /* Anchored, case-insensitive, and it must be a `data:` URL of the EXPECTED media type.
+  /* Anchored, case-insensitive, and it must be a `data:` URL of an image.
    * Not a blocklist of schemes — a blocklist is a list of the ones someone thought of. */
-  var re = kind === 'audio' ? /^data:audio\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i
-                            : /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i;
-  return re.test(raw) ? raw : '';
+  return /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(raw) ? raw : '';
 }
 
 function supabaseFetch(path, method, body) {
@@ -983,7 +994,7 @@ function joinCameraChannel() {
     /* THE FIRST THING DONE WITH AN INBOUND BYTE, BEFORE IT REACHES ANY SINK. The old
      * line handed payload.payload.dataUrl straight through with no type, scheme or size
      * check at all. */
-    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'image');
+    var url = safeImageUrl(payload && payload.payload && payload.payload.dataUrl);
     if (!url) return;
     showRemotePhoto(url);
   });
@@ -1668,44 +1679,41 @@ function closeCamera() {
 }
 
 /* ============================ THE VOICE PANEL — PUP-WO-0701 §S2 =============
- * Record a short clip, change the voice, hear it back, send it. The pieces were all
- * present: getUserMedia is live in the camera path, ONE AudioContext is live for the
- * console cues, and the broadcast transport shipped in part 1. This is composition.
+ * Record a short clip, change the voice, hear it back. IT USED TO SEND, AND SINCE
+ * PUP-WO-0702 IT DOES NOT: Scotty ruled the audience and the answer was not "scope the
+ * channel" but "there is no channel." The pieces were all present: getUserMedia is live in
+ * the camera path and ONE AudioContext is live for the console cues. This is composition.
  *
  * §S.1 RULED THAT NOTHING IS STORED. There is no table, no Cache API entry and no
  * localStorage key here, and that is the whole retention mechanism: NOTHING DELETES IT
- * BECAUSE NOTHING STORES IT. A broadcast is transport. The clip lives as an AudioBuffer
- * in this closure and dies with the page — §1.0a's "process death cannot fail to
- * happen", one layer out.
+ * BECAUSE NOTHING STORES IT -- AND, SINCE PUP-WO-0702, ALSO BECAUSE NOTHING SENDS IT.
+ * The clip lives as an AudioBuffer in this closure and dies with the page — §1.0a's
+ * "process death cannot fail to happen", one layer out.
  *
- * THE PANEL HOLDS THE ONLY IDENTIFYING DATA THIS APP HAS EVER HANDLED. A coordinate is
- * not identifying; a three-year-old's voice is. Every bound below is designed rather
- * than lucky, and each one says which failure it is for. */
-var voiceChannel = null;
+ * THE PANEL HOLDS THE ONLY IDENTIFYING DATA THIS APP HAS EVER HANDLED, and Scotty's
+ * ruling on the audience was not "scope the channel" but "there is no channel." A
+ * coordinate is not identifying; a three-year-old's voice is. So the voice never reaches
+ * a network at all, and invariant 3 is STRUCTURALLY true here rather than argued. */
 var voiceStream = null;
 var voiceRecorder = null;
 var voiceBuffer = null;      /* the raw clip, decoded. Never a base64 string. */
 var voiceNodes = [];         /* every live PLAYBACK node, disconnected on teardown. */
-var voiceSendNodes = [];     /* the render graph, kept SEPARATE -- see stopVoicePlayback. */
-var voiceSendRec = null;     /* the render's recorder, which teardown must also stop. */
-var voiceInbound = [];       /* remote clips currently sounding, so the exit can stop them. */
-var voicePopups = [];        /* the INCOMING popups, so none outlives the panel. */
 var voicePending = false;    /* a getUserMedia request in flight. */
 var voiceGen = 0;            /* bumped by teardown; a grant from an older generation is dropped. */
 var voiceTimers = [];
 var voiceRaf = 0;
 var voicePreset = 'up';
-var voiceSending = false;
 
 /* THE REQUIREMENT. A three-year-old WILL hold the button down, so the recorder is
  * stopped by a timer rather than by the child lifting a finger.
  *
- * A REQUIREMENT AND ITS BACKSTOP MUST NOT BE THE SAME NUMBER, and these are not even the
- * same UNIT: this is a duration and `MAX_INBOUND_BYTES` is a size. They fail differently
- * on purpose. A clip that somehow exceeds 3 MiB is refused at the sink whatever its
- * length, and a clip that runs long is cut here whatever its size. Deriving one from the
- * other — bytes = ms * bitrate — would collapse two independent guards into one, which
- * is this project's most expensive recurring defect wearing a different hat. */
+ * IT USED TO HAVE A BACKSTOP AND NOW IT DOES NOT, WHICH IS WORTH SAYING RATHER THAN
+ * LEAVING TO BE NOTICED. This paired with `MAX_INBOUND_BYTES` -- a duration against a
+ * size, failing differently on purpose -- because a clip could arrive from a stranger.
+ * PUP-WO-0702 removed the transport, so no clip arrives from anywhere: this bound now
+ * governs a recording the child makes on this device and plays back on this device, and
+ * there is no second party for a second guard to protect against. The pairing is gone
+ * because the hazard is gone, not because anyone stopped believing in backstops. */
 var MAX_RECORD_MS = 15000;
 
 /* Bounds are a child's ears, exactly as TONE_WAVES / TONE_MAX_VOICES already record for
@@ -1717,36 +1725,6 @@ var RING_HZ_MIN = 20, RING_HZ_MAX = 220;
 var CAVE_DELAY_MIN = 0.06, CAVE_DELAY_MAX = 0.40;
 var CAVE_FEEDBACK = 0.45;    /* CONSTANT, and never exposed to a slider. See above. */
 var CAVE_DRY = 0.50, CAVE_WET = 0.45;   /* headroom -- see the cave branch of buildVoiceGraph. */
-var VOICE_MAX_INBOUND = 3;   /* concurrent inbound clips -- COUNTED WHILE DECODING, see below. */
-var voiceDecoding = 0;       /* decodes in flight; they have allocated but are not yet audible. */
-var voiceInboundBus = null;
-
-/* THE ONE SINK WHOSE AMPLITUDE A STRANGER CHOOSES IS THE ONE SINK THAT HAD NO ATTENUATOR.
- * Headroom for the local cave path was derived from its echo series and lands at 0.84.
- * Inbound clips went to the destination at UNITY, up to VOICE_MAX_INBOUND of them summing,
- * with every sample chosen by whoever sent them. Attenuated and then LIMITED, so a clip
- * mastered to full scale -- or three of them -- cannot be loud in a child's ear. */
-var VOICE_INBOUND_GAIN = 0.7;
-
-/* THE BYTE CAP BOUNDS THE STRING. THE STRING IS NOT WHAT COSTS.
- *
- * `decodeAudioData` allocates the full Float32 PCM, and Opus at a low bitrate expands
- * enormously: 3 MiB of 6 kbps Opus decodes to roughly a GIGABYTE of PCM and about
- * FORTY-NINE MINUTES of audio -- from one in-spec broadcast, times VOICE_MAX_INBOUND.
- * `MAX_INBOUND_BYTES` is a real bound on a real thing; it is simply a bound on the
- * cheap half.
- *
- * TWO LAYERS, BECAUSE NEITHER ALONE IS ENOUGH. A tighter cap on the ENCODED audio bounds
- * what can be handed to the decoder at all, and a DURATION cap after decoding catches
- * whatever expansion ratio the next codec has that this one does not. The first is
- * checked before any allocation; the second is the only thing that can be true
- * regardless of bitrate.
- *
- * The generous end of legitimate: a 15 s clip slowed to 0.55x is 27 s of audio, which at
- * Chrome's default Opus bitrate encodes to roughly 300 KB of base64. 1 MiB is comfortable
- * headroom over that; 40 s is comfortable headroom over 27. */
-var MAX_INBOUND_AUDIO_BYTES = 1024 * 1024;
-var MAX_INBOUND_SECONDS = 40;
 
 function clampNum(v, lo, hi) {
   v = Number(v);
@@ -1853,18 +1831,18 @@ function buildVoiceGraph(ctx, buffer, presetId, value) {
   return { source: src, out: out, nodes: nodes };
 }
 
-/* How long the rendered result runs, given that `up`/`down` change the clip's duration
- * and `cave` adds a decaying tail. Used by the send render and by check 26. */
-function voiceRenderSeconds(buffer, presetId, value) {
-  var d = buffer.duration;
-  if (presetId === 'up' || presetId === 'down') {
-    return d / clampNum(value, VOICE_RATE_MIN, VOICE_RATE_MAX) + 0.05;
-  }
-  if (presetId === 'cave') {
-    return d + clampNum(value, CAVE_DELAY_MIN, CAVE_DELAY_MAX) * 8 + 0.05;
-  }
-  return d + 0.05;
-}
+/* `voiceRenderSeconds` LIVED HERE AND HAS BEEN MOVED INTO CHECK 26.
+ *
+ * It computed how long a preset's RENDERED output runs, and its only app caller was the
+ * send render. PUP-WO-0702 removed that, leaving a function exported to a check and called
+ * by nothing in the app -- which is the same dead limb this file just deleted an audio
+ * branch to avoid, and a comment saying "the check drives the shipping graph rather than a
+ * copy of it" would have been false of it.
+ *
+ * `buildVoiceGraph` is still shared, because live playback still calls it and the check
+ * measuring a COPY of it would be agreeing with itself. Duration is different: nothing
+ * ships that computes it, so there is no shipping formula for a check to agree with, and
+ * the check owning its own is honest rather than duplicative. */
 
 function voiceTrack(node) { voiceNodes.push(node); return node; }
 
@@ -1882,14 +1860,12 @@ function stopNodes(list) {
   return [];
 }
 
-/* PLAYBACK ONLY, AND THE SEPARATION IS THE WHOLE POINT.
+/* Every playback node, so teardown can disconnect each one.
  *
- * The render for SEND used to be tracked in this same list, and every control that calls
- * this -- play, each preset tile, the slider's release, starting a new recording -- would
- * therefore stop the in-flight send's source mid-render. Measured: tapping PLAY half a
- * second into a send truncated the clip that went on the wire from 2.4 s to 0.48 s, and
- * the child had no way to know. The send graph now lives in its own list that only
- * teardown touches. */
+ * (There used to be a SECOND list here, for the send render, because sharing one list
+ * meant any playback control stopped an in-flight send mid-render -- measured at 2.4 s of
+ * clip truncated to 0.48 s. PUP-WO-0702 removed the send, so the second list went with
+ * it. Recorded because the separation looked like over-engineering and was not.) */
 function stopVoicePlayback() {
   if (voiceRaf) { cancelAnimationFrame(voiceRaf); voiceRaf = 0; }
   voiceNodes = stopNodes(voiceNodes);
@@ -1900,143 +1876,6 @@ function clearVoiceTimers() {
   voiceTimers = [];
 }
 
-/* === TRANSPORT — the part-1 mechanism, reused rather than rebuilt ========== */
-function joinVoiceChannel() {
-  var client = getSupabaseClient();
-  if (!client) return;
-  if (voiceChannel) return;
-  voiceChannel = client.channel('puppad-voice', { config: { broadcast: { self: false } } });
-  voiceChannel.on('broadcast', { event: 'clip' }, function(payload) {
-    /* THE GATE FIRST, BEFORE ANY SINK -- part 1's safeMediaUrl, the audio half of which
-     * was built ahead of this panel. There is not a second gate here on purpose: two
-     * expressions that must agree is exactly how a validation drifts out of true. */
-    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'audio');
-    if (!url) return;
-    playRemoteVoice(url);
-  });
-  voiceChannel.subscribe(function(status) {
-    if (status === 'SUBSCRIBED') console.log('Voice channel joined');
-  });
-}
-
-/* Base64 -> bytes -> decodeAudioData. NO NETWORK PRIMITIVE IS TOUCHED AT ALL.
- *
- * The directive says gate the string before it reaches `audio.src`, because assignment
- * still fetches -- that is part 1's finding and it stands. This goes one step further and
- * never creates the sink: no <audio>, no img, no fetch, no XHR. The gate still runs first
- * and is still load-bearing, because it is also what bounds the SIZE and pins the TYPE.
- * Strictly fewer ways for an inbound byte to reach the network than the ruling required. */
-/* One bus for every inbound clip, rebuilt if the shared context was ever replaced. */
-function getInboundBus(ctx) {
-  if (voiceInboundBus && voiceInboundBus.context === ctx) return voiceInboundBus;
-  var g = ctx.createGain();
-  g.gain.value = VOICE_INBOUND_GAIN;
-  var comp = ctx.createDynamicsCompressor();
-  comp.threshold.value = -6; comp.knee.value = 6; comp.ratio.value = 20;
-  comp.attack.value = 0.003; comp.release.value = 0.25;
-  g.connect(comp); comp.connect(ctx.destination);
-  voiceInboundBus = g;
-  return g;
-}
-
-function playRemoteVoice(dataUrl) {
-  /* COUNT THE DECODES, NOT JUST THE VOICES.
-   *
-   * This guard read `voiceInbound.length`, and nothing joins that array until the decode
-   * SUCCEEDS -- so a burst of messages all read 0, all passed, and all called
-   * decodeAudioData at once. The cap bounded clips that were SOUNDING while the thing that
-   * costs is the ALLOCATION, and the real multiplier was the message rate, which nobody
-   * bounds. That is the same defect as the byte cap bounding the string, surviving its own
-   * fix in the one dimension the fix did not consider. */
-  if (voiceInbound.length + voiceDecoding >= VOICE_MAX_INBOUND) return;
-  /* Before any allocation. See MAX_INBOUND_AUDIO_BYTES. */
-  if (dataUrl.length > MAX_INBOUND_AUDIO_BYTES) return;
-  var comma = dataUrl.indexOf(',');
-  if (comma < 0) return;
-  var bytes;
-  try {
-    var bin = atob(dataUrl.slice(comma + 1));
-    bytes = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  } catch (e) { return; }
-
-  var ctx = getAudioCtx();
-  var gen = voiceGen;
-  voiceDecoding++;
-  var settled = false;
-  /* THE DECREMENT IS GENERATION-SCOPED TOO, AND LEAVING IT OUT MADE THE COUNTER GO
-   * PERMANENTLY NEGATIVE.
-   *
-   * `closeVoice` sets voiceDecoding = 0 for the whole generation. A decode still in flight
-   * then settled and decremented a counter that no longer owed it anything -- so one
-   * ordinary gesture (a clip arrives, the child taps back while it is decoding) left the
-   * counter at -1 FOR THE LIFE OF THE PAGE, and every repeat drove it further down. The
-   * cap whose entire stated purpose is to bound the ALLOCATION became arbitrarily
-   * permissive: measured 4 concurrent decodes against a cap of 3 after one cycle, and 24
-   * after seven.
-   *
-   * The comment in closeVoice asserted the opposite -- "their callbacks check gen and will
-   * not sound, so the counter is simply reset with them." They checked `gen` for SOUNDING.
-   * They did not check it for DECREMENTING. A guard applied to one of two effects. */
-  function decodeDone() {
-    if (settled) return;
-    settled = true;
-    if (gen === voiceGen) voiceDecoding--;
-  }
-  ctx.decodeAudioData(bytes.buffer, function(buf) {
-    decodeDone();
-    /* The second layer: whatever the encoder's expansion ratio turns out to be, a clip
-     * longer than this is refused AFTER decoding and before it is ever heard. */
-    if (buf.duration > MAX_INBOUND_SECONDS) return;
-    if (gen !== voiceGen || voiceInbound.length >= VOICE_MAX_INBOUND) return;
-    var s = ctx.createBufferSource();
-    s.buffer = buf;
-    s.connect(getInboundBus(ctx));
-    /* TRACKED, SO THE EXIT CAN REACH IT. An inbound clip used to be connected straight to
-     * the destination and held by nothing: stopVoicePlayback could not see it, so the one
-     * control this app promises -- one tap out from every state -- left a stranger's audio
-     * playing over the console with nothing anywhere able to stop it. */
-    voiceInbound.push(s);
-    s.onended = function() {
-      try { s.disconnect(); } catch (e) {}
-      var i = voiceInbound.indexOf(s);
-      if (i !== -1) voiceInbound.splice(i, 1);
-    };
-    s.start();
-    showIncomingWoof(buf.duration);
-  }, function() { decodeDone(); });
-}
-
-/* A picture, not a word. Same shape as the camera's INCOMING SNAP popup. */
-function showIncomingWoof(seconds) {
-  var popup = document.createElement('div');
-  popup.style.cssText = 'position:fixed;top:12%;left:50%;transform:translateX(-50%);z-index:200;'
-    + 'border-radius:16px;padding:10px 16px;background:#1a1a2e;display:flex;align-items:center;gap:8px;'
-    + 'box-shadow:0 0 30px rgba(167,139,250,0.4),0 0 0 2px rgba(167,139,250,0.3);animation:fadeUp 0.3s ease-out';
-  popup.innerHTML = pawSVG(16, '#A78BFA') + '<span style="font-size:22px">\uD83C\uDF99</span>';
-  document.body.appendChild(popup);
-  /* Tracked, so a popup cannot outlive the panel by up to six seconds. */
-  voicePopups.push(popup);
-  voiceTimers.push(setTimeout(function() { removeVoicePopup(popup); },
-             Math.min(6000, (seconds || 1) * 1000 + 900)));
-}
-
-function removeVoicePopup(el) {
-  if (el && el.parentNode) el.parentNode.removeChild(el);
-  var i = voicePopups.indexOf(el);
-  if (i !== -1) voicePopups.splice(i, 1);
-}
-
-function broadcastVoice(dataUrl) {
-  /* Degrades exactly as broadcastPhoto does: no channel, no send, no throw. */
-  if (!voiceChannel) return;
-  /* NO `did`. Every other broadcast in this file carries a stable device id and NOTHING
-   * ANYWHERE READS ONE -- eight send sites, zero readers, verified by grep. On a channel
-   * anyone with the anon key can join, that is a stable identifier travelling beside a
-   * child's voice for no purpose at all. The other seven are pre-existing and named in
-   * FEEDBACK.md rather than changed from inside a voice work order. */
-  voiceChannel.send({ type: 'broadcast', event: 'clip', payload: { dataUrl: dataUrl } });
-}
 
 /* === THE RECORDER ========================================================= */
 /* ONE EXPRESSION FOR "THIS PANEL IS CAPTURING", used by the painting AND by the handlers.
@@ -2054,7 +1893,6 @@ function voiceSetStage(stage) {
   overlay.dataset.stage = stage;
   var recBtn = document.getElementById('voiceRecBtn');
   var playBtn = document.getElementById('voicePlayBtn');
-  var sendBtn = document.getElementById('voiceSendBtn');
   var ready = (stage === 'ready');
   if (recBtn) {
     recBtn.style.background = stage === 'recording' ? 'radial-gradient(circle,#FCA5A5,#EF4444)'
@@ -2081,7 +1919,7 @@ function voiceSetStage(stage) {
     var sl = document.getElementById('voiceSlider');
     if (sl) { sl.style.opacity = live ? '1' : '0.35'; sl.style.pointerEvents = live ? 'auto' : 'none'; }
   }
-  [[playBtn, ready && live], [sendBtn, ready && live]].forEach(function(pair) {
+  [[playBtn, ready && live]].forEach(function(pair) {
     if (!pair[0]) return;
     pair[0].style.opacity = pair[1] ? '1' : '0.25';
     pair[0].style.pointerEvents = pair[1] ? 'auto' : 'none';
@@ -2243,102 +2081,6 @@ function playVoice() {
   g.source.start();
 }
 
-/* === SEND: RENDER AUDIO, NEVER PARAMETERS ================================= */
-function sendVoice() {
-  if (!voiceBuffer || voiceSending) return;
-  /* Broadcasting {preset, value} and letting the far device apply it would put a
-   * STRANGER'S NUMBERS into a live AudioContext on Buddy's device -- the precise hazard
-   * api.tone's clamp comment already names -- and it would open a SECOND inbound surface
-   * beside safeMediaUrl, when the whole ruling is that the transport is one mechanism.
-   * So the effect is applied here and only BYTES go on the wire. */
-  var ctx = getAudioCtx();
-  if (!ctx.createMediaStreamDestination || !window.MediaRecorder) { doSound('error'); return; }
-  /* Every continuation below belongs to THIS panel. `finish()` and `fr.onload` had no
-   * guard of any kind, and onstop's was an overlay check -- which a close-then-reopen
-   * satisfies with a different panel. */
-  var gen = voiceGen;
-  voiceSending = true;
-  var sendBtn = document.getElementById('voiceSendBtn');
-  if (sendBtn) sendBtn.style.opacity = '0.4';
-
-  var dest = ctx.createMediaStreamDestination();
-  var g = buildVoiceGraph(ctx, voiceBuffer, voicePreset, voiceSlider[voicePreset]);
-  g.out.connect(dest);
-  /* ITS OWN LIST, not the playback one -- see stopVoicePlayback. */
-  g.nodes.forEach(function(n) { voiceSendNodes.push(n); });
-  voiceSendNodes.push(g.out, dest);
-
-  var chunks = [];
-  var rec;
-  try { rec = new MediaRecorder(dest.stream); }
-  catch (e) {
-    voiceSendNodes = stopNodes(voiceSendNodes);
-    voiceSending = false; voiceSetStage('ready'); doSound('error'); return;
-  }
-  /* HELD, BECAUSE TEARDOWN HAS TO BE ABLE TO STOP IT.
-   *
-   * The only thing that stopped this recorder was a setTimeout in `voiceTimers` -- and
-   * closeVoice CLEARS voiceTimers, cancelling the one trigger. Measured: exit during a
-   * send left the recorder in state "recording" indefinitely, encoding silence on the
-   * shared AudioContext with a chunks array growing behind it, once per send-then-exit. */
-  voiceSendRec = rec;
-
-  function finish() {
-    voiceSendRec = null;
-    voiceSendNodes = stopNodes(voiceSendNodes);
-    if (gen !== voiceGen) return;
-    voiceSending = false;
-    voiceSetStage('ready');
-  }
-  rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
-  rec.onstop = function() {
-    voiceSendRec = null;
-    voiceSendNodes = stopNodes(voiceSendNodes);
-    /* Closed underneath us: the bytes belong to a panel that no longer exists. */
-    if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;
-    if (!chunks.length) { finish(); doSound('error'); return; }
-    /* THE SENDER MUST SPEAK THE GRAMMAR ITS OWN GATE ACCEPTS, and it did not.
-     *
-     * MediaRecorder labels its output `audio/webm;codecs=opus`, so FileReader produced
-     * `data:audio/webm;codecs=opus;base64,...` -- and safeMediaUrl's pattern has NO ROOM
-     * FOR A MEDIA-TYPE PARAMETER between the type and `;base64`. Every clip this panel
-     * rendered was refused by its own gate, on the sending device, before it ever reached
-     * the wire. The child got an error beep and nothing crossed. TWO EXPRESSIONS THAT MUST
-     * AGREE: the recorder's MIME label and the gate's grammar, and nothing made them.
-     *
-     * FIXED AT THE SENDER, NOT AT THE GATE, and that direction is deliberate. Widening
-     * safeMediaUrl would widen what this device accepts FROM A STRANGER in order to fix
-     * what it sends -- paying on the untrusted side for a problem on the trusted one. The
-     * parameter is dropped instead: the BYTES are untouched, only the label is normalised,
-     * and the far side sniffs the container rather than trusting the label anyway.
-     *
-     * Check 26 §11 now runs the outgoing payload through safeMediaUrl ITSELF rather than
-     * a regex of its own -- the check that would have caught this is the one that asks
-     * the shipping gate. */
-    var rawType = (chunks[0].type || 'audio/webm').split(';')[0];
-    var blob = new Blob(chunks, { type: /^audio\//i.test(rawType) ? rawType : 'audio/webm' });
-    var fr = new FileReader();
-    fr.onload = function() {
-      /* Still ours? A clip must not be broadcast by the panel that replaced the one that
-       * recorded it. */
-      if (gen !== voiceGen) return;
-      /* THE WIRE IS A data: URL, because that is the ONLY shape safeMediaUrl accepts --
-       * two representations on purpose. Local playback never becomes a string at all. */
-      var url = typeof fr.result === 'string' ? fr.result : '';
-      if (safeMediaUrl(url, 'audio')) { broadcastVoice(url); doSound('powerUp'); }
-      else doSound('error');
-      finish();
-    };
-    fr.onerror = function() { finish(); doSound('error'); };
-    fr.readAsDataURL(blob);
-  };
-  /* Real-time re-record, which the directive rules acceptable at a 15-second cap. */
-  rec.start();
-  g.source.start();
-  var ms = voiceRenderSeconds(voiceBuffer, voicePreset, voiceSlider[voicePreset]) * 1000 + 150;
-  voiceTimers.push(setTimeout(function() { try { rec.stop(); } catch (e) { finish(); } }, ms));
-}
-
 /* === THE PANEL ============================================================ */
 var VOICE_Z = 80;
 
@@ -2441,8 +2183,6 @@ function openVoice() {
   if (document.getElementById('voiceOverlay')) return;
   voicePreset = 'up';
   voiceBuffer = null;
-  voiceSending = false;
-  joinVoiceChannel();
   doSound('ping');
 
   var overlay = document.createElement('div');
@@ -2545,16 +2285,11 @@ function openVoice() {
   }, { repeat: true });
   recWrap.appendChild(recBtn);
 
-  var sendBtn = document.createElement('button');
-  sendBtn.id = 'voiceSendBtn';
-  sendBtn.setAttribute('aria-label', 'Send it');
-  sendBtn.style.cssText = 'width:64px;height:64px;border-radius:50%;border:0;cursor:pointer;'
-    + 'background:rgba(96,165,250,0.14);box-shadow:inset 0 0 0 3px #60A5FA;padding:0;'
-    + 'display:flex;align-items:center;justify-content:center;font-size:28px;line-height:1';
-  sendBtn.textContent = '\uD83D\uDCE1';
-  wireTap(sendBtn, function() { sendVoice(); }, { repeat: true });
-
-  row.appendChild(playBtn); row.appendChild(recWrap); row.appendChild(sendBtn);
+  /* NO SEND BUTTON. PUP-WO-0702: there is no channel, so there is nothing to send to.
+   * The control is REMOVED rather than disabled -- a dimmed button a child cannot make
+   * work is worse than an absent one, and invariant 1 asks that what remains read as
+   * complete rather than as broken. Play and record are the whole panel now. */
+  row.appendChild(playBtn); row.appendChild(recWrap);
   overlay.appendChild(row);
 
   /* The shell's own exit: a 64px hit box, already wireTap'd, and appended INSIDE the
@@ -2579,9 +2314,6 @@ function closeVoice() {
   voiceGen++;
   voicePending = false;
   if (voiceRecorder) { try { voiceRecorder.stop(); } catch (e) {} voiceRecorder = null; }
-  /* The render's recorder is stopped EXPLICITLY, because clearVoiceTimers below cancels
-   * the timeout that would otherwise have been the only thing that ever stopped it. */
-  if (voiceSendRec) { try { voiceSendRec.stop(); } catch (e) {} voiceSendRec = null; }
   if (voiceStream) {
     /* Individually, exactly as startCameraStream does. Dropping the reference does NOT
      * turn a microphone off; only stopping each track does, and the recording indicator
@@ -2591,28 +2323,23 @@ function closeVoice() {
   }
   clearVoiceTimers();
   stopVoicePlayback();          /* disconnects nodes. NEVER audioCtx.close(). */
-  voiceSendNodes = stopNodes(voiceSendNodes);
-  /* A remote clip is audio the child did not start and could not stop. The exit is the
-   * one control this app promises from every state, so it has to reach these too. */
-  voiceInbound = stopNodes(voiceInbound);
-  if (voiceInboundBus) { try { voiceInboundBus.disconnect(); } catch (e) {} voiceInboundBus = null; }
-  /* Decodes in flight belong to a generation that no longer exists; their callbacks check
-   * `gen` and will not sound, so the counter is simply reset with them. */
-  voiceDecoding = 0;
-  voicePopups.slice().forEach(removeVoicePopup);
-  voiceBuffer = null;           /* the clip dies with the panel -- §S.1. */
-  voiceSending = false;
-  releaseChannel(voiceChannel);
-  voiceChannel = null;
+  voiceBuffer = null;           /* the clip dies with the panel -- and now nowhere else. */
+  /* NO CHANNEL TO RELEASE. PUP-WO-0702 removed the transport entirely, so the teardown
+   * that used to release a subscription now has none to release. THE TEARDOWN GUARANTEES
+   * THAT REMAIN ARE THE ONES THAT MATTERED MOST and they are untouched: the generation
+   * bump, the recorder, every microphone track stopped individually, the timers, the
+   * playback nodes. A deletion is exactly when a guarantee gets weakened by accident
+   * because the code that shared it went away; checks 26 §12, §15 and §21 are kept
+   * unchanged for that reason. */
   var overlay = document.getElementById('voiceOverlay');
   if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
   doSound('blip');
 }
 
-/* The check drives the shipping graph rather than a copy of it — see buildVoiceGraph. */
+/* The check drives the SHIPPING graph rather than a copy of it — see buildVoiceGraph,
+ * which live playback calls. Nothing else here is exported for a check's convenience. */
 window.__voice = {
   buildGraph: buildVoiceGraph,
-  renderSeconds: voiceRenderSeconds,
   presets: VOICE_PRESETS,
   clamp: clampNum,
   MAX_RECORD_MS: MAX_RECORD_MS,
@@ -2622,7 +2349,6 @@ window.__voice = {
       stage: (document.getElementById('voiceOverlay') || {}).dataset
              ? document.getElementById('voiceOverlay').dataset.stage : null,
       recorder: !!voiceRecorder,
-      sendRecorder: voiceSendRec ? voiceSendRec.state : 'none',
       pending: voicePending,
       gen: voiceGen,
       /* THIS READS THE SURVIVING REFERENCE AND NOTHING ELSE. It reported 0 while four
@@ -2634,13 +2360,8 @@ window.__voice = {
         return t.readyState === 'live';
       }).length : 0,
       nodes: voiceNodes.length,
-      sendNodes: voiceSendNodes.length,
-      inbound: voiceInbound.length,
-      decoding: voiceDecoding,
       capturing: voiceCapturing(),
-      popups: voicePopups.length,
       timers: voiceTimers.length,
-      channel: !!voiceChannel,
       preset: voicePreset,
       value: voiceSlider[voicePreset],
       ctxState: audioCtx ? audioCtx.state : 'none'
@@ -2649,7 +2370,6 @@ window.__voice = {
 };
 
 /* === Treasure Map System === */
-var mapChannel = null;
 var treasureMap = null;
 var mapOverlayCanvas = null;
 var mapIsDrawMode = false;
@@ -2668,52 +2388,40 @@ var mapCurrentStroke = null;
 
 var MAP_COLORS = ['#FF4444','#FBBF24','#34D399','#60A5FA','#A78BFA','#F472B6','#FFFFFF','#FB923C'];
 
-function joinMapChannel() {
-  var client = getSupabaseClient();
-  if (!client) return;
-  if (mapChannel) return;
-  mapChannel = client.channel('puppad-treasuremap', {
-    config: { broadcast: { self: false } }
-  });
-  mapChannel.on('broadcast', { event: 'map-stroke' }, function(payload) {
-    var d = payload.payload;
-    mapStrokes.push({type:'stroke', points:d.points, color:d.color, width:d.width, eraser:d.eraser});
-    redrawMapCanvas();
-  });
-  mapChannel.on('broadcast', { event: 'map-stamp' }, function(payload) {
-    var d = payload.payload;
-    mapStamps.push({lat:d.lat, lng:d.lng, emoji:d.emoji, size:d.size});
-    redrawMapCanvas();
-  });
-  mapChannel.on('broadcast', { event: 'map-clear' }, function() {
-    mapStrokes = []; mapStamps = [];
-    redrawMapCanvas();
-  });
-  mapChannel.subscribe(function(status) {
-    if (status === 'SUBSCRIBED') console.log('Map channel joined');
-  });
-}
-
-function broadcastMapStroke(stroke) {
-  if (!mapChannel) return;
-  mapChannel.send({
-    type:'broadcast', event:'map-stroke',
-    payload: { points:stroke.points, color:stroke.color, width:stroke.width, eraser:stroke.eraser, did:deviceId }
-  });
-}
-
-function broadcastMapStamp(stamp) {
-  if (!mapChannel) return;
-  mapChannel.send({
-    type:'broadcast', event:'map-stamp',
-    payload: { lat:stamp.lat, lng:stamp.lng, emoji:stamp.emoji, size:stamp.size, did:deviceId }
-  });
-}
-
-function broadcastMapClear() {
-  if (!mapChannel) return;
-  mapChannel.send({ type:'broadcast', event:'map-clear', payload:{did:deviceId} });
-}
+/* === NO MAP TRANSPORT — PUP-WO-0702 §1.2 ==================================
+ * `joinMapChannel`, `broadcastMapStroke`, `broadcastMapStamp`, `broadcastMapClear` and
+ * their three inbound handlers were removed, and the reason is worse than "a coordinate
+ * went out".
+ *
+ * THE PAYLOAD WAS REAL WGS84. `pixelToLatLng` returns Leaflet's own lat/lng, so a stamp
+ * carried `{lat, lng, emoji, size, did: deviceId}` and a stroke carried `{lat, lng}`
+ * pairs -- and the map re-centres on `getCurrentPosition` at ZOOM 16, so every mark was
+ * within metres of wherever the child was standing when they drew it, on an unscoped
+ * global channel, beside a stable device id.
+ *
+ * IT HAD BEEN LIVE SINCE THE MAP PANEL SHIPPED. Nobody was hiding it and nobody had
+ * looked; it took a ruling about a DIFFERENT surface to make anyone trace this one.
+ *
+ * `navigator.geolocation` STAYS, and that distinction is the whole work order. Verified
+ * at source: getCurrentPosition and watchPosition set `treasureMap.setView` and
+ * `mapLocationMarker` and nothing else.
+ *
+ * WHAT THIS DELETION DOES AND DOES NOT BUY -- STATED EXACTLY, BECAUSE THE FIRST DRAFT OF
+ * THIS COMMENT OVERCLAIMED AND AN ADVERSARIAL PASS CAUGHT IT.
+ *
+ * BOUGHT: the map no longer tells ANOTHER PUPPAD DEVICE where the child is. No channel,
+ * no broadcast, no coordinates on the wire, no device id beside them.
+ *
+ * NOT BOUGHT: `L.tileLayer` below still fetches OpenStreetMap tiles, and A TILE URL IS A
+ * COORDINATE. Re-centred on the fix at zoom 16, the requested tile bounds the child to
+ * roughly a 500 m square -- and `maxZoom: 19` takes that to about 60 m if they pinch in.
+ * OSM's CDN sees those paths beside the client IP. That egress is PRE-EXISTING and is
+ * already logged as an open northstar re-ratification for Scotty in docs/architecture.md;
+ * this work order neither created it nor closes it.
+ *
+ * So: "local function, not local ignorance" is true, and "stops telling anyone" WAS NOT.
+ * It stops telling other PupPad devices. Check 26 §24 asserts the first clause and names
+ * the second rather than certifying past it. */
 
 /* convert lat/lng to canvas pixel via Leaflet */
 function latLngToPixel(lat, lng) {
@@ -2825,7 +2533,6 @@ function openTreasureMap() {
   mapDrawWidth = 4;
   mapRainbowHue = 0;
   mapIsDrawMode = false;
-  joinMapChannel();
   doSound('chime');
 
   var overlay = document.createElement('div');
@@ -2942,7 +2649,6 @@ function openTreasureMap() {
     if (mapDrawTool === 'stamp') {
       var stamp = {lat:ll.lat, lng:ll.lng, emoji:mapSelectedEmoji, size:mapDrawWidth * 6};
       mapStamps.push(stamp);
-      broadcastMapStamp(stamp);
       redrawMapCanvas();
       doSound('keyTap');
       return;
@@ -2976,7 +2682,6 @@ function openTreasureMap() {
       /* for rainbow, push each segment as separate stroke for color variation */
       var seg = {type:'stroke', points:[{lat:mapLastPt.lat,lng:mapLastPt.lng},{lat:ll.lat,lng:ll.lng}], color:mapCurrentStroke.color, width:mapDrawWidth, eraser:false};
       mapStrokes.push(seg);
-      broadcastMapStroke(seg);
     } else {
       mapCurrentStroke.points.push({lat:ll.lat, lng:ll.lng});
     }
@@ -2987,7 +2692,6 @@ function openTreasureMap() {
   mapOverlayCanvas.addEventListener('pointerup', function() {
     if (mapCurrentStroke && mapDrawTool !== 'rainbow') {
       mapStrokes.push(mapCurrentStroke);
-      broadcastMapStroke(mapCurrentStroke);
     }
     mapIsDrawing = false;
     mapCurrentStroke = null;
@@ -2997,7 +2701,6 @@ function openTreasureMap() {
   mapOverlayCanvas.addEventListener('pointerleave', function() {
     if (mapCurrentStroke && mapDrawTool !== 'rainbow') {
       mapStrokes.push(mapCurrentStroke);
-      broadcastMapStroke(mapCurrentStroke);
     }
     mapIsDrawing = false;
     mapCurrentStroke = null;
@@ -3070,7 +2773,6 @@ function openTreasureMap() {
   document.getElementById('mapClearBtn').addEventListener('click', function() {
     mapStrokes = []; mapStamps = [];
     redrawMapCanvas();
-    broadcastMapClear();
     doSound('scan');
   });
 
@@ -3081,9 +2783,9 @@ function openTreasureMap() {
 }
 
 function closeTreasureMap() {
-  /* The second sibling — PUP-WO-0701 §S2.2. Same fact as closeCanvas above. */
-  releaseChannel(mapChannel);
-  mapChannel = null;
+  /* NO CHANNEL TO RELEASE SINCE PUP-WO-0702 -- the map has no transport at all now, so
+   * the release this teardown gained in 0701 has nothing left to release. The geolocation
+   * watch below is the thing that must still be cleared, and it still is. */
   if (mapWatchId !== null) {
     navigator.geolocation.clearWatch(mapWatchId);
     mapWatchId = null;
