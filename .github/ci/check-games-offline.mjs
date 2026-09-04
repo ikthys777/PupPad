@@ -186,44 +186,126 @@ const SOFT = [   // notes, never failures
  * second substitution entirely, tier-2 tokens included. This is an explicit state
  * machine over a stack instead.
  *
- * KNOWN LIMIT, stated rather than implied: this is a scanner, not a parser, and a
- * REGEX LITERAL is not tracked. `const RE = /'/g;` opens a string as far as this is
- * concerned and can blank real code after it. That case is reported as a NOTE on every
- * module containing a regex literal, so a hidden token is never fully silent — the
- * previous version claimed it was "not silently hiding" tokens while its notes loop
- * covered tier 1 only.
+ * REGEX LITERALS ARE TRACKED, AND THEY DID NOT USED TO BE. The header here used to say
+ * so as a "KNOWN LIMIT, stated rather than implied" — `const RE = /'/g;` opened a string
+ * as far as this was concerned and blanked real code after it — and that was an honest
+ * limit for as long as the IMPORT scan ran on the raw source, because a stripper blind
+ * spot could then only ever cost a false NOTE. PUP-WO-0113 moved the import scan onto
+ * the stripped source to stop it reading English, and THE MOMENT IT DID, every blind
+ * spot in here became a way for a real remote import to go GREEN. Measured, four of
+ * them, each a genuine `import z from 'https://…'` that this gate stopped catching:
+ *
+ *     const RE = /`/;      the backtick opened a template and blanked to END OF FILE
+ *     const RE = /[/*]/;   the `/` `*` pair opened a block comment, likewise
+ *     const RE = /'/g;     the quote opened a string and blanked the rest of the line
+ *     // …<U+2028>import   U+2028 ENDS a line comment in JavaScript; this stopped at \n
+ *
+ * A fail-closed gate that passes is worse than one that fires on prose, so the limit had
+ * to close rather than be documented harder. A regex literal is CODE whose contents are
+ * not, which is exactly a string's shape: keep the delimiters, blank the body.
+ *
+ * WHETHER `/` OPENS A REGEX OR DIVIDES IS THE ONE THING A LEXER CANNOT DECIDE LOCALLY,
+ * and the heuristic is the same one this file already used for its regex NOTE: a regex
+ * can only start where an operator, an opening bracket, or one of a handful of keywords
+ * can be followed by one. It is a heuristic and it can be wrong in both directions, so
+ * it is not the only thing standing here — see `broke` below.
+ *
+ * AND THE STRIPPER NOW REPORTS WHEN IT LOSES ITS PLACE. Callers get `.broke`, set when a
+ * string, template, block comment or regex literal ran to end of file without closing.
+ * `scanModule` has ALREADY proved the module parses as an ES module before it strips, so
+ * in a file that parses, an unterminated anything is impossible — it means this scanner
+ * mis-lexed, and the honest response is to refuse a verdict on that module rather than
+ * to report the green that a blanked file always produces.
  * ---------------------------------------------------------------- */
+/* A LINE COMMENT ENDS AT ANY LINE TERMINATOR, AND JAVASCRIPT HAS FOUR. U+2028 and
+ * U+2029 are line terminators in the grammar; stopping only at \n let a `//` comment
+ * swallow the real statement that followed one. `\r` matters for a CRLF checkout. */
+const LINE_END = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029';
+
+/* Where a `/` can begin a REGEX rather than divide. Same rule the regex NOTE below
+ * already used: after an operator, an opening bracket, or one of these keywords. After
+ * an identifier, a literal, `)` or `]` it is division. Wrong in the `if (x) /re/.test(y)`
+ * direction, which leaves a regex unblanked — a false RED, which is loud — rather than
+ * blanking real code, which would be a silent green. */
+const REGEX_KEYWORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete',
+  'void', 'do', 'else', 'yield', 'await', 'instanceof']);
+const REGEX_PREV = '(,=:[!&|?{};+-*%~^<>';
+
 function strip(src, { keepStrings = false } = {}) {
   const out = src.split('');
   const n = src.length;
+  let broke = null;
   const blank = (from, to) => { for (let k = from; k < to && k < n; k++) if (out[k] !== '\n') out[k] = ' '; };
   /* stack entries: 'tmpl' = inside template text, 'subst' = inside ${ } */
   const stack = [];
   let i = 0;
+  /* The last significant character and the last complete word seen in CODE context —
+   * enough to answer the regex-or-division question without a parser. */
+  let prevSig = '';
+  let word = '';
+  const advance = (c) => {
+    if (/\s/.test(c)) { if (word) { prevSig = 'w'; } word = ''; return; }
+    if (/[A-Za-z0-9_$]/.test(c)) { word += c; prevSig = 'w'; return; }
+    word = ''; prevSig = c;
+  };
+  const regexAllowed = () => {
+    if (prevSig === '') return true;
+    if (prevSig === 'w') return REGEX_KEYWORDS.has(word);
+    return REGEX_PREV.includes(prevSig);
+  };
   while (i < n) {
     const mode = stack[stack.length - 1];
     const c = src[i], d = src[i + 1];
     if (mode === 'tmpl') {
       if (c === '\\') { blank(i, i + 2); i += 2; continue; }
-      if (c === '`') { stack.pop(); i++; continue; }
-      if (c === '$' && d === '{') { stack.push('subst'); i += 2; continue; }
+      if (c === '`') { stack.pop(); prevSig = '`'; word = ''; i++; continue; }
+      if (c === '$' && d === '{') { stack.push('subst'); prevSig = ''; word = ''; i += 2; continue; }
       if (!keepStrings) blank(i, i + 1);
       i++; continue;
     }
     // code context (top level, or inside a ${ } substitution)
-    if (c === '/' && d === '/') { let j = i; while (j < n && src[j] !== '\n') j++; blank(i, j); i = j; continue; }
-    if (c === '/' && d === '*') { let j = i + 2; while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++; blank(i, Math.min(j + 2, n)); i = Math.min(j + 2, n); continue; }
+    if (c === '/' && d === '/') { let j = i; while (j < n && !LINE_END(src[j])) j++; blank(i, j); i = j; continue; }
+    if (c === '/' && d === '*') {
+      let j = i + 2;
+      while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++;
+      if (j >= n) broke = broke || 'a block comment';
+      blank(i, Math.min(j + 2, n)); i = Math.min(j + 2, n); continue;
+    }
+    /* A REGEX LITERAL. `/` in expression position, consumed to its closing `/` with a
+     * character class treated as opaque — inside `[...]` a `/` is an ordinary character
+     * and does NOT end the literal, which is the whole of why `/[/*]/` used to open a
+     * block comment here. The body is blanked like a string's; the delimiters stay. */
+    if (c === '/' && regexAllowed()) {
+      let j = i + 1, cls = false, closed = false;
+      for (; j < n; j++) {
+        const e = src[j];
+        if (e === '\\') { j++; continue; }
+        if (LINE_END(e)) break;                 /* a regex cannot span a line */
+        if (cls) { if (e === ']') cls = false; continue; }
+        if (e === '[') { cls = true; continue; }
+        if (e === '/') { closed = true; break; }
+      }
+      if (!closed) { broke = broke || 'a regex literal'; blank(i + 1, j); i = j; prevSig = '/'; word = ''; continue; }
+      if (!keepStrings) blank(i + 1, j);
+      let k = j + 1;
+      while (k < n && /[a-z]/.test(src[k])) k++;  /* flags */
+      i = k; prevSig = 'w'; word = ''; continue;  /* a regex is a value: `/` after it divides */
+    }
     if (c === '"' || c === "'") {
       let j = i + 1;
-      while (j < n && src[j] !== c && src[j] !== '\n') { if (src[j] === '\\') j++; j++; }
+      let closed = false;
+      while (j < n && !LINE_END(src[j])) { if (src[j] === '\\') { j += 2; continue; } if (src[j] === c) { closed = true; break; } j++; }
+      if (!closed) broke = broke || 'a string literal';
       if (!keepStrings) blank(i + 1, j);
-      i = j + 1; continue;
+      i = j + 1; prevSig = 'w'; word = ''; continue;
     }
     if (c === '`') { stack.push('tmpl'); i++; continue; }
-    if (c === '}' && mode === 'subst') { stack.pop(); i++; continue; }
+    if (c === '}' && mode === 'subst') { stack.pop(); prevSig = 'w'; word = ''; i++; continue; }
+    advance(c);
     i++;
   }
-  return out.join('');
+  if (stack.length) broke = broke || 'a template literal';
+  return { text: out.join(''), broke };
 }
 
 /* Every import specifier in the source, static or dynamic, with whether it was a
@@ -313,14 +395,27 @@ function scanModule(full) {
   try { new vm.SourceTextModule(src, { identifier: rel }); }
   catch (e) { bad(`${rel} — does not parse as an ES module`, `${e.constructor.name}: ${e.message}`); return; }
 
-  const stripped = strip(src);
+  /* THE STRIPPER'S OWN VERDICT ON ITSELF, AND IT IS FAIL-CLOSED. `new vm.SourceTextModule`
+   * above has already proved this file parses as an ES module, so an unterminated string,
+   * template, block comment or regex literal is IMPOSSIBLE in it — if the stripper reports
+   * one, the stripper lost its place, and everything downstream is reading a file that has
+   * been blanked to end of file. A blanked file scans clean. Refusing a verdict is the only
+   * honest answer, and it is the answer this check is built to give: the import scan runs on
+   * the stripped source now, so a stripper that has lost its place is a gate that has. */
+  const _stripped = strip(src);
+  if (_stripped.broke) {
+    bad(`${rel} — this scanner lost its place: ${_stripped.broke} was never closed`,
+      'the module PARSES, so it cannot really contain one — this file mis-lexed it and everything after that point was blanked. No verdict is possible; nothing is established about this module in either direction.');
+    return;
+  }
+  const stripped = _stripped.text;
   /* TIER 3 NEEDS THE STRING BODIES AND TIERS 1-2 MUST NOT HAVE THEM. A remote URL IS a
    * string literal, so matching `.src = 'https://…'` against the stripped source can
    * never fire — the first version of tier 3 was dead on arrival for exactly that
    * reason, and passed `new Image().src = 'https://evil/'` green. Comments are removed
    * for both; strings are removed only for tiers 1 and 2, where a token inside a
    * string is not reachable on its own. */
-  const noComments = strip(src, { keepStrings: true });
+  const noComments = strip(src, { keepStrings: true }).text;
   const rawLines = src.split('\n');
   const strippedLines = stripped.split('\n');
   const noCommentLines = noComments.split('\n');
@@ -349,6 +444,19 @@ function scanModule(full) {
       hits.push({ name: `import '${im.spec}'`, why: 'not a relative path — remote or bare specifiers reach outside games/', line: im.line, text: (rawLines[im.line - 1] || '').trim().slice(0, 88) });
       continue;
     }
+    /* A SPECIFIER WITH A BACKSLASH IN IT IS NOT JUDGEABLE FROM TEXT, and it used to be
+     * cleared. `im.spec` is the RAW SOURCE TEXT between the quotes, escapes undecoded —
+     * so `import z from "./a\u002f..\u002f..\u002fevil.js"` reaches here as a string
+     * beginning "./", passes `isRelative`, and `resolve()` treats every character of the
+     * escape as an ordinary filename character, so the target stays inside games/ and the
+     * module is cleared. It decodes to `./a/../../evil.js`. Verified GREEN before this
+     * clause. Decoding escapes here would mean writing a second JavaScript string parser
+     * and trusting it; refusing is the same answer this check already gives a non-literal
+     * dynamic specifier, and for the same reason — it cannot be checked from text. */
+    if (im.spec.includes('\\')) {
+      hits.push({ name: `import '${im.spec}'`, why: 'contains an escape, so what it resolves to cannot be judged from the source text; write the path plainly', line: im.line, text: (rawLines[im.line - 1] || '').trim().slice(0, 88) });
+      continue;
+    }
     const target = resolve(dirname(full), im.spec);
     if (!target.startsWith(GAMES_DIR + sep)) {
       hits.push({ name: `import '${im.spec}'`, why: 'resolves OUTSIDE games/, where nothing scans it', line: im.line, text: (rawLines[im.line - 1] || '').trim().slice(0, 88) });
@@ -374,25 +482,48 @@ function scanModule(full) {
    * point, or a real one the stripper ate, which nobody would otherwise learn. The note
    * says which pair to look at and leaves the judgement with a person. */
   {
-    const rawSeen = imports(src, src).filter((i) => i.literal).map((i) => `${i.line}:${i.spec}`);
-    const strSeen = new Set(imports(src, stripped).filter((i) => i.literal).map((i) => `${i.line}:${i.spec}`));
-    const hidden = rawSeen.filter((k) => !strSeen.has(k));
+    /* THE BASELINE IS `noComments`, NOT `src`, AND THE FIRST VERSION USED `src`. Against
+     * raw, this note fires on any module whose PROSE mentions an import — which is the
+     * normal, expected, uninteresting case, and it is the case that started this whole
+     * work order. `games/blockpop.js` would have carried this note on every green run
+     * forever, and this file's own standard, written when the regex note was rewritten
+     * for exactly this, is that a note lit on every green run carries no information.
+     *
+     * `noComments` has comments removed and STRINGS KEPT, so a mention inside a comment
+     * is already gone from it and stays silent, while a construct that survives comment
+     * removal and then vanishes from the fully stripped text did not vanish because it
+     * was prose. That is the whole population worth a reader's time.
+     *
+     * IT IS A NOTE AND NOT A FINDING, and that is a deliberate line rather than a
+     * softness. The specifier cannot be trusted here — it is read out of a region this
+     * scanner has already shown it may have mis-lexed — so calling it a forbidden import
+     * would be naming a construct nobody has established exists. `broke` is the
+     * fail-closed half; this is the "look at these two lines" half.
+     *
+     * NOT TRUNCATED. The first version printed four and appended an ellipsis, and the
+     * adversarial pass built the case that defeats it: five comments mentioning imports
+     * push the ONE real hidden import off the end of the list, every visible entry looks
+     * obviously like prose, and a reader confirms "expected" and stops. With the
+     * baseline fixed the list is short by construction, so there is nothing to cap. */
+    const seen = (text) => new Set(imports(src, text).filter((i) => i.literal).map((i) => `${i.line}:${i.spec}`));
+    const strSeen = seen(stripped);
+    const hidden = [...seen(noComments)].filter((k) => !strSeen.has(k));
     if (hidden.length) {
-      notes.push(`${rel}: ${hidden.length} import-shaped construct(s) match on the raw text but not on the stripped source — ${hidden.slice(0, 4).join(', ')}${hidden.length > 4 ? ', …' : ''}. Expected when a comment or string merely mentions one; read them if any is real code the stripper blanked.`);
+      notes.push(`${rel}: ${hidden.length} import-shaped construct(s) survive comment-removal but vanish from the stripped source — ${hidden.join(', ')}. Inside a string literal this is expected; anywhere else it is code this scanner blanked, so read those lines.`);
     }
   }
-  /* A REGEX-LITERAL HEURISTIC THAT DOES NOT FIRE ON DIVISION. The previous one was
-   * "any line containing two slashes", which is also every line containing two
-   * divisions: it fired four times on games/gyre.js, a file with no regex literal in it
-   * at all, the first being `count * (1 + size / 100 + tail / 100)`. A note that is lit
-   * on every green run carries no information, and it was the ONLY signal that would
-   * have surfaced a token hidden from the stripper — so the noise was not cosmetic, it
-   * was covering the one thing the note exists for. A regex literal can only START
-   * where an operator or a keyword can be followed by one. */
-  const REGEX_START = /(?:^|[(,=:[!&|?{};]|\breturn|\btypeof|\bcase)\s*\/(?![/*\s=])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+\/[gimsuyd]*/;
-  if (REGEX_START.test(stripped)) {
-    notes.push(`${rel}: contains what looks like a REGEX LITERAL. This scanner does not track regex literals, so a token after one on the same line can be hidden. Read this module by eye.`);
-  }
+  /* THE REGEX-LITERAL NOTE IS GONE, AND ITS ABSENCE IS THE POINT. It said "This scanner
+   * does not track regex literals, so a token after one on the same line can be hidden.
+   * Read this module by eye." That sentence was true when it was written and this change
+   * made it FALSE — `strip()` tracks them now and blanks their bodies like a string's.
+   * Leaving it would be a comment describing a behaviour its code no longer has, which
+   * is the exact defect PUP-WO-0113 exists to remove; a note telling a reader to check
+   * by eye for a hazard that has been closed trains them to ignore notes.
+   *
+   * What replaced it is not another note. It is `strip().broke` — the stripper says so
+   * when it loses its place, and `scanModule` REFUSES A VERDICT rather than reporting the
+   * green a blanked file always gives. A fail-closed signal instead of a request that
+   * somebody read 900 lines carefully. Check 12 pins both directions. */
   for (const t of SOFT) {
     if (t.re.test(noComments)) notes.push(`${rel}: ${t.name} — ${t.why}`);
   }
