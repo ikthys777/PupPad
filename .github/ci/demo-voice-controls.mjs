@@ -210,8 +210,8 @@ plan(18, "the record path checks the overlay instead of the generation", {
   mutate: (s) => sub(sub(s,
       "      if (gen !== voiceGen) return;\n      if (voiceRecorder === rec) voiceRecorder = null;",
       "      voiceRecorder = null;"),
-      "        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;",
-      "        if (!document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;"),
+      "        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;",
+      "        if (!document.getElementById('voiceOverlay')) return;"),
   expectText: "PREVIOUS session's clip was installed",
 });
 
@@ -398,19 +398,23 @@ plan(23, 'the voice panel broadcasts on the camera channel instead of its own', 
  * the live state look exactly like the merely-filled one. NOTHING ELSE CHANGES: the
  * recording still works, the state string is still right, and only the PICTURE collapses.
  * That is the defect Scotty described. */
+/* THE STATE ITSELF, NOT ITS SIGNALS ONE AT A TIME.
+ *
+ * Three successive versions of these plants each removed one painted difference -- the
+ * amplitude, then the border width, then the colour -- and each time the row still told
+ * the states apart by a signal I had not thought of, and reported green CORRECTLY. That
+ * is the design working: the row deliberately carries four signals so no single one is
+ * load-bearing. Chasing them individually was the wrong shape of plant.
+ *
+ * Collapsing the STATE collapses everything derived from it in one substitution, which is
+ * what "the live slot paints exactly like a filled one" actually means. */
 plan(25, 'the live slot paints exactly like a filled one', {
-  mutate: (s) => sub(s, "    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);",
-                        "    var amp = filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY;\n    if (live) { /* PLANT: live looks like filled */ }"),
+  mutate: (s) => sub(s, "    var live = (voiceLiveSlot === i);", "    var live = false;"),
   expectText: 'SLOT ROW cannot tell',
 });
 
-/* AND THE OTHER HALF: a filled slot that looks empty. Nothing shows a slot holds anything
- * was one of Scotty's three complaints by name. */
 plan(25, 'a filled slot paints exactly like an empty one', {
-  mutate: (s) => sub(sub(s,
-      "    el.style.borderStyle = filled ? 'solid' : 'dashed';", "    el.style.borderStyle = 'dashed';"),
-      "    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);",
-      "    var amp = live ? WAVE_AMP_LIVE : WAVE_AMP_EMPTY;"),
+  mutate: (s) => sub(s, "    var filled = !!voiceSlots[i];", "    var filled = false;"),
   expectText: 'SLOT ROW cannot tell',
 });
 

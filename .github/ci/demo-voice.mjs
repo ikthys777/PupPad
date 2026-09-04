@@ -784,16 +784,24 @@ try {
   /* ---- §17. AN OPEN MICROPHONE LOCKS OUT PLAYBACK ----------------------- */
   if (run(17)) {
     const lock = await page.evaluate(async () => {
+      /* ALL THREE FILLED FIRST, THEN A RECORD-OVER -- because the branch below was
+       * UNREACHABLE in the old arrangement. Recording into the first EMPTY slot makes that
+       * slot the target, and playVoice() plays the target, which is empty while it is being
+       * recorded into: no playback could ever start, so "a preset STARTED PLAYBACK" could
+       * not fire however unguarded the tiles were. Recording OVER a full slot leaves the
+       * old clip in place for the duration, which is the state that makes the hazard real
+       * -- and it is also the ordinary gesture once the panel has been used. */
       closeVoice(); openVoice();
       const b = document.getElementById('voiceRecBtn');
       const tap = (el) => { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
                             el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); };
-      tap(b);
-      await new Promise((r) => setTimeout(r, 900));
-      tap(b);                                    /* stop — clip 1 exists */
-      await new Promise((r) => setTimeout(r, 900));
-      if (window.__voice.state().stage !== 'ready') return { noClip: true };
-      tap(b);                                    /* record again */
+      for (let i = 0; i < 3; i++) {
+        const el = document.getElementById('voiceSlot' + i);
+        tap(el); await new Promise((r) => setTimeout(r, 650));
+        tap(el); await new Promise((r) => setTimeout(r, 900));
+      }
+      if (!window.__voice.state().slots.every(Boolean)) return { noClip: true };
+      tap(b);                                    /* record OVER a slot that still holds a clip */
       await new Promise((r) => setTimeout(r, 500));
       const capturing = window.__voice.state().capturing;
       const before = window.__voice.state().nodes;
