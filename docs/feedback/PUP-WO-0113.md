@@ -275,3 +275,26 @@ syntax.** For every import written on one line the anchor is unchanged. For a sp
 `import z from\n  '…';` it now points at the **specifier's** line rather than the keyword's,
 and a specifier written with escapes does not appear verbatim and is reported without a
 line rather than with a guessed one. Both are pinned in check 12.
+
+---
+
+# A CORRECTION TO HOW I CHECKED THE FENCE
+
+**Every fence check in this work order and the last used `git diff --name-only origin/main`
+— two dots. That compares against a MOVING target, not against what I changed.**
+
+`origin/main` advanced to `03ab899` while this branch was open. The two-dot diff then
+reported `docs/architecture.md` as changed by me; it was not — CC-A had added a section to
+`main`, and a two-dot diff renders *their* addition as *my* deletion.
+
+**It happened to be harmless both times, because `main` had not moved when the earlier
+checks ran.** The method was wrong regardless, and it fails in the direction that matters:
+if `main` gained a change under `games/`, a two-dot check would report a fence violation
+that is not mine — and, worse, **a change on `main` can mask one of mine in either
+direction.**
+
+**A fence is a property of what THIS BRANCH changed, so it must be measured against the
+merge base:** `git diff --name-only origin/main...HEAD` (three dots), or explicitly against
+the commit branched from. Re-verified that way: **the two CI files and this document,
+nothing else. `games/`, `index.html`, `sw.js`, `manifest.json` and both icons diff to
+empty.**
