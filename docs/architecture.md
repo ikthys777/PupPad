@@ -460,6 +460,28 @@ Chasing them individually was not a weak plant; it was **the wrong SHAPE of plan
 several redundant signals is **evidence the redundancy is real**. Read it as a measurement
 of the design, then go and write the plant that actually contradicts the claim.*
 
+**A FIXTURE THAT CARRIES STATE FROM A PREVIOUS STEP IS NOT THE FIXTURE ITS LABEL NAMES.**
+*(Ruled 2026-09-04. **The builder's, disclosed unprompted as a correction to their own
+published conclusion.**)*
+
+`PUP-WO-0113` was reported to CC-A as reproducing a false positive **on `main`**. It did not.
+The fixture directory had `PUP-WO-0704`'s `games/blockpop.js` copied into it by an earlier
+step, and the next run was labelled *"main as-is"*. **Re-run self-contained: `922bd86` clean
+is GREEN; the same tree with only that one file swapped is RED.** The conclusion was true of
+a tree, and the tree was not the one named.
+
+> **A fixture is an assertion about what is present. Build it fresh, or prove it clean —
+> `git archive` into a new directory, never a reused one.** *The label is not the evidence.*
+
+*Same family as the arrange step that manufactures the state which hides the defect, one
+level out: there the setup corrupted the measurement, here it corrupted the SUBJECT.*
+
+**AND THE DISCLOSURE IS THE PART TO IMITATE.** The builder found it while re-verifying
+something else, and published the correction **after CC-A had already accepted the original
+claim and acted on it.** *Retracting a finding that is being agreed with is harder than
+making one.* Three unprompted retractions this cycle — this, the fence-diff method, and a
+commit message that claimed more than its change did.
+
 **"THESE TWO DIFFER" IS EVIDENCE ABOUT THE SUBJECT ONLY IF THE SUBJECT IS THE ONLY THING
 THAT COULD DIFFER.** *(Ruled 2026-09-04. **The builder's, and the diagnosis is better than
 the one CC-A gave it.**)*
