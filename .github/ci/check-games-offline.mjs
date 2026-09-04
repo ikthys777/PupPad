@@ -227,16 +227,66 @@ function strip(src, { keepStrings = false } = {}) {
 }
 
 /* Every import specifier in the source, static or dynamic, with whether it was a
- * literal. Runs on the STRIPPED source for position fidelity but reads the specifier
- * from the raw text, and is line-agnostic so `import{x}from'…'` and a specifier on the
- * next line are both seen — both evaded the previous line-based detector. */
-function imports(raw) {
+ * literal. Line-agnostic, so `import{x}from'…'` and a specifier on the NEXT line are
+ * both seen — both evaded the previous line-based detector, and that is why the
+ * `[\s\S]*?` gap below is unbounded. It stays unbounded.
+ *
+ * IT NOW ACTUALLY RUNS ON THE STRIPPED SOURCE, AND THE COMMENT THAT USED TO STAND HERE
+ * SAID IT ALREADY DID. It said "Runs on the STRIPPED source for position fidelity but
+ * reads the specifier from the raw text" — a two-source design that was never wired.
+ * `imports(raw)` took ONE parameter and matched against it; there was no stripped source
+ * inside the function to run on. Everyone read the comment as a description of the code,
+ * for months, and the code was a scanner that could not tell prose from JavaScript.
+ *
+ * WHAT THAT COST, MEASURED RATHER THAN IMAGINED: it BLOCKED a legitimate PR. On
+ * PUP-WO-0704's head it reported `games/blockpop.js:12 — import '.bp-flash'` in a file
+ * whose only module-level construct is `export default function mount`. The finding was
+ * stitched out of three pieces of ENGLISH, hundreds of lines apart, by the unbounded gap:
+ *
+ *     `import`  from the word "imports" in a comment at line 12
+ *     `from`    from the word "from" in a different comment ~250 lines later
+ *     '…'       from a markdown-style backtick pair around a CSS class name, `.bp-flash`
+ *
+ * The fail-closed gate northstar invariant 3 rests on was firing on the word "from".
+ *
+ * AND THE COST WAS NOT THE FALSE RED. The obvious way to make it go away is to reword
+ * the comment in the game module until the scanner stops matching, and that WORKS —
+ * which is exactly why it is forbidden. A gate that fires on prose teaches the next
+ * builder to loosen the pattern, and that is how a real evasion gets in through the door
+ * built to stop one. The defect is the SOURCE this scans, never the gap.
+ *
+ * TWO SOURCES, AND EACH IS USED FOR THE ONE THING IT CAN ANSWER. `strip()` is
+ * char-for-char — it overwrites with spaces and leaves every newline — so an index into
+ * the stripped text IS the same index into the raw text, and position fidelity is a
+ * property of the construction rather than of arithmetic somebody has to keep correct:
+ *
+ *   MATCH on `stripped`, where a comment and a string body are blanks, so no amount of
+ *     prose can spell an import;
+ *   READ the specifier out of `raw` at the matched group's own offsets, because the
+ *     stripped text has the quotes but not the characters between them.
+ *
+ * That also fixes an escaping bug nobody had noticed: `import "a\"b"` mis-parsed on raw,
+ * where the regex stopped at the escaped quote. The stripper consumes the escape, so the
+ * match is now correct and the raw slice returns the real specifier.
+ *
+ * THE LINE IS THE `import` KEYWORD'S, NOT THE MATCH'S. `(?:^|[;}\s])` can consume the
+ * NEWLINE that ends the previous line, so `m.index` points one line early for every
+ * import that starts a line — which is nearly all of them. Capturing the keyword and
+ * reporting from that is what makes the reported number the line a reader can open to. */
+function imports(raw, stripped) {
   const found = [];
-  const push = (spec, literal, idx) => found.push({ spec, literal, line: raw.slice(0, idx).split('\n').length });
-  const staticRe = /(?:^|[;}\s])import\s*(?:[\s\S]*?\bfrom\s*)?(['"`])([^'"`]*)\1/g;
-  for (let m; (m = staticRe.exec(raw)); ) push(m[2], true, m.index);
-  const dynRe = /(?<![A-Za-z0-9_$.])import\s*\(\s*(?:(['"`])([^'"`]*)\1)?/g;
-  for (let m; (m = dynRe.exec(raw)); ) push(m[2] ?? null, m[2] !== undefined, m.index);
+  const lineAt = (idx) => raw.slice(0, idx).split('\n').length;
+  /* The `d` flag gives per-group offsets; group 1 is the keyword, 3 is the specifier. */
+  const staticRe = /(?:^|[;}\s])(import)\s*(?:[\s\S]*?\bfrom\s*)?(['"`])([^'"`]*)\2/dg;
+  for (let m; (m = staticRe.exec(stripped)); ) {
+    const g = m.indices[3];
+    found.push({ spec: raw.slice(g[0], g[1]), literal: true, line: lineAt(m.indices[1][0]) });
+  }
+  const dynRe = /(?<![A-Za-z0-9_$.])(import)\s*\(\s*(?:(['"`])([^'"`]*)\2)?/dg;
+  for (let m; (m = dynRe.exec(stripped)); ) {
+    const g = m.indices[3];
+    found.push({ spec: g ? raw.slice(g[0], g[1]) : null, literal: !!g, line: lineAt(m.indices[1][0]) });
+  }
   return found;
 }
 
@@ -290,7 +340,7 @@ function scanModule(full) {
    * too, because collectModules walked the whole tree. Anything else is refused:
    * a non-relative specifier is remote or bare, an escaping one leaves the scanned
    * set, and a non-literal dynamic specifier cannot be judged from text at all. */
-  for (const im of imports(src)) {
+  for (const im of imports(src, stripped)) {
     if (!im.literal) {
       hits.push({ name: 'import(<non-literal>)', why: 'a computed specifier cannot be checked; use a literal relative path', line: im.line, text: (rawLines[im.line - 1] || '').trim().slice(0, 88) });
       continue;
@@ -313,6 +363,22 @@ function scanModule(full) {
   for (const t of [...TIER1, ...TIER2]) {
     if (t.re.test(src) && !t.re.test(stripped)) {
       notes.push(`${rel}: "${t.name}" appears in the source but only inside a comment or string — not a finding, but shown so the stripper is not silently hiding it`);
+    }
+  }
+  /* AND THE SAME COURTESY FOR IMPORTS, WHICH IS NEW AND IS THE PRICE OF SCANNING THE
+   * STRIPPED SOURCE. Matching stripped is what stops prose being read as code; the
+   * mirror-image risk is that the stripper blanks something that WAS code and an import
+   * disappears. The stripper's one stated blind spot is the regex literal — see its
+   * header — so this is not hypothetical. Nothing here is a finding: an import visible
+   * on raw and not on stripped is either a genuine mention in prose, which is the whole
+   * point, or a real one the stripper ate, which nobody would otherwise learn. The note
+   * says which pair to look at and leaves the judgement with a person. */
+  {
+    const rawSeen = imports(src, src).filter((i) => i.literal).map((i) => `${i.line}:${i.spec}`);
+    const strSeen = new Set(imports(src, stripped).filter((i) => i.literal).map((i) => `${i.line}:${i.spec}`));
+    const hidden = rawSeen.filter((k) => !strSeen.has(k));
+    if (hidden.length) {
+      notes.push(`${rel}: ${hidden.length} import-shaped construct(s) match on the raw text but not on the stripped source — ${hidden.slice(0, 4).join(', ')}${hidden.length > 4 ? ', …' : ''}. Expected when a comment or string merely mentions one; read them if any is real code the stripper blanked.`);
     }
   }
   /* A REGEX-LITERAL HEURISTIC THAT DOES NOT FIRE ON DIVISION. The previous one was
