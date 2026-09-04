@@ -220,6 +220,30 @@ it does not answer what became active.**
 > registered.** One command, and it is now the only thing standing between a written
 > check and an ornamental one.
 
+**A SECTION MUST CARRY ITS OWN WITNESSES, BECAUSE THE ISOLATION MODE THAT PROVES IT CAN
+SEE IS THE MODE IN WHICH IT CANNOT.** *(Ruled 2026-09-04, from `PUP-WO-0702`'s second
+round.)*
+
+`PUP-WO-0702`'s headline section asserted that the map reaches no network. It had **no
+WebSocket hook of its own** — the previous section installed one and restored it in its own
+last line — and **it never set `supabaseUrl`**, so `supabaseFetch` resolved against an empty
+base, went same-origin, and was discarded by the outbound filter. In a full run it caught a
+re-added coordinate POST **only because the earlier section leaked a global it had forgotten
+to restore.**
+
+**And `--only=N` is exactly how the controls harness runs a section.** So the mode used to
+demonstrate that the section can go red is the mode in which its borrowed witnesses do not
+exist. Three separate re-additions of a child's coordinates — a raw socket, a REST POST, and
+a channel — passed green under it.
+
+> **Every section installs and restores the witnesses it asserts on. A witness inherited
+> from a neighbour is not a witness; it is an ordering assumption that the isolated run
+> silently removes.**
+
+*Its companion, from the same round: **a failed ARRANGE must be a reportable condition.** A
+plant that made the setup throw produced a stack trace where a `FAIL` line belonged — the
+third time that file had learned it.*
+
 **A STUB IS LEGITIMATE FOR BEHAVIOUR AND ILLEGITIMATE FOR EGRESS.** *(Ruled 2026-09-04.
 **The builder's, and it invalidated the defence their own check had written for itself.**)*
 
