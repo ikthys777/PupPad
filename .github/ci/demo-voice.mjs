@@ -1594,6 +1594,23 @@ try {
        * control would then be sampling a playback that had already finished and this
        * section would fail for a reason that is not the one it is about. Same shipping
        * function either way; it is the marker the loop watches. */
+      /* STOP THE PLAYBACK BEFORE RE-ARMING THE MARKER, OR THIS PROBE RACES A CALLBACK IT
+       * STARTED ITSELF. The comment above names the hazard exactly — "a 0.7s clip at the
+       * default preset's 1.70x is over in about 0.4s" — and then leaves that playback
+       * RUNNING while it re-arms the marker by hand. PUP-WO-0703 gave a finished playback
+       * an `onended` that releases its graph and clears the live marker, which is correct
+       * app behaviour; it fires around 400ms, and the window below opens at roughly 250ms
+       * and used to close at 400ms. Whether `onended` landed inside it was a coin flip
+       * decided by how fast the machine was, and CI is slower than this one: the assertion
+       * went red on a PR that touches neither the voice panel nor this check.
+       *
+       * REPRODUCED RATHER THAN RE-RUN. Widening the window to 700ms — so `onended` is
+       * certain to land inside it — failed 3 for 3 with CI's exact message, and it stays
+       * green at 700ms now, which is what makes this a fix rather than a smaller window.
+       *
+       * `stopVoicePlayback` bumps `voicePlayToken`, and `onended` returns on a token
+       * mismatch, so after this call no pending callback can touch the marker. */
+      stopVoicePlayback();
       setVoiceLiveSlot(0);
       await new Promise((r) => setTimeout(r, 150));
       const rafWhileLive = !!window.__voice.state().waveRaf;

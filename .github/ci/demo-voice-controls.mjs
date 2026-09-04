@@ -29,7 +29,14 @@ function sub(src, from, to) {
   return src.replace(from, to);
 }
 const QUEUE = [];
-const plan = (section, label, spec) => QUEUE.push({ section, label, spec });
+/* --only=N,M plants only those sections' defects, exactly as the check file and check
+ * 21's controls already allow. Proving one repaired section used to cost a full run of
+ * seventy. It changes nothing about a CI run, which passes no section argument. */
+const ONLY = (() => {
+  const a = process.argv.find((x) => x.startsWith('--only='));
+  return a ? new Set(a.slice(7).split(',').map(Number)) : null;
+})();
+const plan = (section, label, spec) => { if (!ONLY || ONLY.has(section)) QUEUE.push({ section, label, spec }); };
 
 async function scenario(section, label, { mutate, expectText }) {
   const dir = mkdtempSync(join(tmpdir(), 'puppad-c26-'));
