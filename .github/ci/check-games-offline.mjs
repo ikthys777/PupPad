@@ -186,57 +186,238 @@ const SOFT = [   // notes, never failures
  * second substitution entirely, tier-2 tokens included. This is an explicit state
  * machine over a stack instead.
  *
- * KNOWN LIMIT, stated rather than implied: this is a scanner, not a parser, and a
- * REGEX LITERAL is not tracked. `const RE = /'/g;` opens a string as far as this is
- * concerned and can blank real code after it. That case is reported as a NOTE on every
- * module containing a regex literal, so a hidden token is never fully silent — the
- * previous version claimed it was "not silently hiding" tokens while its notes loop
- * covered tier 1 only.
+ * REGEX LITERALS ARE TRACKED, AND THEY DID NOT USED TO BE. The header here used to say
+ * so as a "KNOWN LIMIT, stated rather than implied" — `const RE = /'/g;` opened a string
+ * as far as this was concerned and blanked real code after it — and that was an honest
+ * limit for as long as the IMPORT scan ran on the raw source, because a stripper blind
+ * spot could then only ever cost a false NOTE. PUP-WO-0113 moved the import scan onto
+ * the stripped source to stop it reading English, and THE MOMENT IT DID, every blind
+ * spot in here became a way for a real remote import to go GREEN. Measured, four of
+ * them, each a genuine `import z from 'https://…'` that this gate stopped catching:
+ *
+ *     const RE = /`/;      the backtick opened a template and blanked to END OF FILE
+ *     const RE = /[/*]/;   the `/` `*` pair opened a block comment, likewise
+ *     const RE = /'/g;     the quote opened a string and blanked the rest of the line
+ *     // …<U+2028>import   U+2028 ENDS a line comment in JavaScript; this stopped at \n
+ *
+ * A fail-closed gate that passes is worse than one that fires on prose, so the limit had
+ * to close rather than be documented harder. A regex literal is CODE whose contents are
+ * not, which is exactly a string's shape: keep the delimiters, blank the body.
+ *
+ * WHETHER `/` OPENS A REGEX OR DIVIDES IS THE ONE THING A LEXER CANNOT DECIDE LOCALLY,
+ * and the heuristic is the same one this file already used for its regex NOTE: a regex
+ * can only start where an operator, an opening bracket, or one of a handful of keywords
+ * can be followed by one. It is a heuristic and it can be wrong in both directions, so
+ * it is not the only thing standing here — see `broke` below.
+ *
+ * AND THE STRIPPER NOW REPORTS WHEN IT LOSES ITS PLACE. Callers get `.broke`, set when a
+ * string, template, block comment or regex literal ran to end of file without closing.
+ * `scanModule` has ALREADY proved the module parses as an ES module before it strips, so
+ * in a file that parses, an unterminated anything is impossible — it means this scanner
+ * mis-lexed, and the honest response is to refuse a verdict on that module rather than
+ * to report the green that a blanked file always produces.
  * ---------------------------------------------------------------- */
+/* A LINE COMMENT ENDS AT ANY LINE TERMINATOR, AND JAVASCRIPT HAS FOUR. U+2028 and
+ * U+2029 are line terminators in the grammar; stopping only at \n let a `//` comment
+ * swallow the real statement that followed one. `\r` matters for a CRLF checkout. */
+const LINE_END = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029';
+
+/* Where a `/` can begin a REGEX rather than divide: after an operator, an opening
+ * bracket, or one of these keywords. After an identifier, a literal, `)` or `]` it is
+ * division.
+ *
+ * THIS IS A HEURISTIC AND IT CANNOT BE MADE CORRECT. Whether `/` opens a regex is a
+ * GRAMMAR question — `a = b\n/re/.test(c)` and `a = b / c / d` differ only in what the
+ * parser decided `b` was, and ASI can insert the boundary that changes the answer. No
+ * amount of lookbehind settles it. It is kept because the tier scans need SOME lexer;
+ * it is not what the import findings rest on any more.
+ *
+ * AND THE FIRST VERSION OF THIS COMMENT ARGUED A SAFETY PROPERTY THE CODE DOES NOT HAVE.
+ * It said being wrong in the `if (x) /re/.test(y)` direction "leaves a regex unblanked —
+ * a false RED, which is loud — rather than blanking real code, which would be a silent
+ * green." THAT IS BACKWARDS, and it was the safety argument of the gate itself. An
+ * unblanked regex has its BODY LEXED AS CODE, so a `/*` inside it opens a block comment
+ * that closes at the next one anywhere later in the file and blanks everything between —
+ * a real remote import went green through exactly that, with no finding and no note.
+ * NEITHER DIRECTION IS INHERENTLY LOUD. What makes this one loud is the parse-oracle
+ * cross-check in `scanModule`: V8 knows the specifiers, `strip()` is char-for-char, so a
+ * statement this lexer swallowed is detectable rather than argued about. A mechanism,
+ * not a claim. Check 12 proves that class refuses. */
+const REGEX_KEYWORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete',
+  'void', 'do', 'else', 'yield', 'await', 'instanceof']);
+const REGEX_PREV = '(,=:[!&|?{};+-*%~^<>';
+
 function strip(src, { keepStrings = false } = {}) {
   const out = src.split('');
   const n = src.length;
+  let broke = null;
   const blank = (from, to) => { for (let k = from; k < to && k < n; k++) if (out[k] !== '\n') out[k] = ' '; };
-  /* stack entries: 'tmpl' = inside template text, 'subst' = inside ${ } */
+  /* stack entries: 'tmpl' = inside template text, 'subst' = inside ${ }. `substDepth`
+   * counts the braces nested INSIDE a substitution, and its absence was a defect: an
+   * object literal or a block body inside `${…}` — `${xs.map((r) => { return r; })}` —
+   * closed the substitution on its own `}`, and the rest of the real code in it was then
+   * blanked as template TEXT. A `new WebSocket('wss://evil…')` after that brace went
+   * green, and the note that fired said it "appears only inside a comment or string"
+   * about executable code. Found by the adversarial pass. */
   const stack = [];
+  const substDepth = [];
   let i = 0;
+  /* The last significant character and the last complete word seen in CODE context —
+   * enough to answer the regex-or-division question without a parser. */
+  let prevSig = '';
+  let word = '';
+  /* WHITESPACE ENDS A WORD; IT MUST NOT ERASE IT. The first version cleared `word` here,
+   * so `regexAllowed()` reached `REGEX_KEYWORDS.has('')` — false — for every keyword
+   * written with a space after it. `return/re/` worked and `return /re/` did not, which
+   * is to say the keyword set was dead in all real code. Found by the adversarial pass. */
+  const advance = (c) => {
+    if (/\s/.test(c)) return;
+    if (/[A-Za-z0-9_$]/.test(c)) { if (prevSig !== 'w') word = ''; word += c; prevSig = 'w'; return; }
+    word = ''; prevSig = c;
+  };
+  const regexAllowed = () => {
+    if (prevSig === '') return true;
+    if (prevSig === 'w') return REGEX_KEYWORDS.has(word);
+    return REGEX_PREV.includes(prevSig);
+  };
   while (i < n) {
     const mode = stack[stack.length - 1];
     const c = src[i], d = src[i + 1];
     if (mode === 'tmpl') {
       if (c === '\\') { blank(i, i + 2); i += 2; continue; }
-      if (c === '`') { stack.pop(); i++; continue; }
-      if (c === '$' && d === '{') { stack.push('subst'); i += 2; continue; }
+      if (c === '`') { stack.pop(); prevSig = '`'; word = ''; i++; continue; }
+      if (c === '$' && d === '{') { stack.push('subst'); substDepth.push(0); prevSig = ''; word = ''; i += 2; continue; }
       if (!keepStrings) blank(i, i + 1);
       i++; continue;
     }
     // code context (top level, or inside a ${ } substitution)
-    if (c === '/' && d === '/') { let j = i; while (j < n && src[j] !== '\n') j++; blank(i, j); i = j; continue; }
-    if (c === '/' && d === '*') { let j = i + 2; while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++; blank(i, Math.min(j + 2, n)); i = Math.min(j + 2, n); continue; }
+    if (c === '/' && d === '/') { let j = i; while (j < n && !LINE_END(src[j])) j++; blank(i, j); i = j; continue; }
+    if (c === '/' && d === '*') {
+      let j = i + 2;
+      while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++;
+      if (j >= n) broke = broke || 'a block comment';
+      blank(i, Math.min(j + 2, n)); i = Math.min(j + 2, n); continue;
+    }
+    /* A REGEX LITERAL. `/` in expression position, consumed to its closing `/` with a
+     * character class treated as opaque — inside `[...]` a `/` is an ordinary character
+     * and does NOT end the literal, which is the whole of why `/[/*]/` used to open a
+     * block comment here. The body is blanked like a string's; the delimiters stay. */
+    if (c === '/' && regexAllowed()) {
+      let j = i + 1, cls = false, closed = false;
+      for (; j < n; j++) {
+        const e = src[j];
+        if (e === '\\') { j++; continue; }
+        if (LINE_END(e)) break;                 /* a regex cannot span a line */
+        if (cls) { if (e === ']') cls = false; continue; }
+        if (e === '[') { cls = true; continue; }
+        if (e === '/') { closed = true; break; }
+      }
+      if (!closed) { broke = broke || 'a regex literal'; blank(i + 1, j); i = j; prevSig = '/'; word = ''; continue; }
+      if (!keepStrings) blank(i + 1, j);
+      let k = j + 1;
+      while (k < n && /[a-z]/.test(src[k])) k++;  /* flags */
+      i = k; prevSig = 'w'; word = ''; continue;  /* a regex is a value: `/` after it divides */
+    }
     if (c === '"' || c === "'") {
       let j = i + 1;
-      while (j < n && src[j] !== c && src[j] !== '\n') { if (src[j] === '\\') j++; j++; }
+      let closed = false;
+      while (j < n && !LINE_END(src[j])) { if (src[j] === '\\') { j += 2; continue; } if (src[j] === c) { closed = true; break; } j++; }
+      if (!closed) broke = broke || 'a string literal';
       if (!keepStrings) blank(i + 1, j);
-      i = j + 1; continue;
+      i = j + 1; prevSig = 'w'; word = ''; continue;
     }
     if (c === '`') { stack.push('tmpl'); i++; continue; }
-    if (c === '}' && mode === 'subst') { stack.pop(); i++; continue; }
+    if (c === '{' && mode === 'subst') { substDepth[substDepth.length - 1]++; advance(c); i++; continue; }
+    if (c === '}' && mode === 'subst') {
+      if (substDepth[substDepth.length - 1] > 0) { substDepth[substDepth.length - 1]--; advance(c); i++; continue; }
+      stack.pop(); substDepth.pop(); prevSig = 'w'; word = ''; i++; continue;
+    }
+    advance(c);
     i++;
   }
-  return out.join('');
+  if (stack.length) broke = broke || 'a template literal';
+  return { text: out.join(''), broke };
 }
 
-/* Every import specifier in the source, static or dynamic, with whether it was a
- * literal. Runs on the STRIPPED source for position fidelity but reads the specifier
- * from the raw text, and is line-agnostic so `import{x}from'…'` and a specifier on the
- * next line are both seen — both evaded the previous line-based detector. */
-function imports(raw) {
+/* THE STATIC IMPORTS COME FROM V8, NOT FROM A REGULAR EXPRESSION, AND THAT IS A CHANGE
+ * OF MECHANISM RATHER THAN A FIFTH REFINEMENT OF ONE.
+ *
+ * PUP-WO-0113 moved this scan from the raw source onto the stripped source so it would
+ * stop reading English. That was right, and it made the STRIPPER load-bearing for the
+ * gate: every place the lexer could lose its place became a way for a real remote import
+ * to pass. Two rounds of adversarial review found SEVEN such inputs. Four were closed by
+ * refining the lexer. Then the next pass found three more, and the decisive one showed
+ * the refinements were being argued from a property the code did not have — see the
+ * header of `strip()`. The pattern was not converging.
+ *
+ * THE HONEST FINDING IS THAT `/` VERSUS DIVISION CANNOT BE DECIDED BY A SCANNER. It is a
+ * grammar question — `a = b\n/re/.test(c)` and `a = b / c / d` differ only in what the
+ * parser thinks `b` was — and no amount of lookbehind settles it, because ASI can insert
+ * the boundary that changes the answer. A heuristic here is not a rough edge to sand
+ * down; it is a wrong tool, and each refinement bought one input and cost another.
+ *
+ * SO STOP GUESSING AND ASK THE PARSER THAT IS ALREADY RUNNING. `scanModule` constructs a
+ * `vm.SourceTextModule` on the line above this one, to prove the file parses at all. That
+ * object carries `dependencySpecifiers`: V8's own list of every static specifier in the
+ * module, produced by the same parser the browser will use. It cannot be fooled by a
+ * regex literal, a template, a comment or a piece of prose, because it is not reading
+ * text — it is reading a parse.
+ *
+ * WHAT IT ALSO FIXES, FOR FREE AND WITHOUT A REGEX:
+ *   - the unbounded `[\s\S]*?` gap is GONE from the enforcement path. The work order was
+ *     right that the gap must not be BOUNDED — bounding it reintroduces the evasions it
+ *     exists to close — and it turns out the gap did not need bounding OR keeping: with a
+ *     parse in hand there is nothing for it to do. `import{x}from'y'`, a specifier on the
+ *     next line and every whitespace variant are the same three tokens to V8.
+ *   - `import.meta.url` followed by a side-effect `import '…';` — the lazy gap used to
+ *     consume the whole statement between them and `lastIndex` skipped it. Not a gap
+ *     problem: a `lastIndex` problem, and it does not exist without the regex.
+ *   - an escaped specifier. `dependencySpecifiers` returns the DECODED string, so
+ *     `import z from "./a/../../evil.js"` arrives here as
+ *     `./a/../../evil.js` and resolves out of games/ like any other escaping path. The
+ *     previous commit refused these as unjudgeable; they are judgeable now, correctly,
+ *     and the refusal is gone.
+ *
+ * WHAT IT DOES NOT COVER, STATED RATHER THAN LEFT TO BE FOUND:
+ *   - DYNAMIC `import(...)`, which is a call expression and not a module dependency. That
+ *     is still a text scan, below, and it is still the one place a mis-lex could hide an
+ *     import. The cross-check in `scanModule` is aimed at exactly that.
+ *   - SCOPE NOTE, FLAGGED AND NOT BURIED: `dependencySpecifiers` includes `export … from`
+ *     re-exports, which the previous text scan could not see at all and which CC-A has
+ *     taken for its own work order. There is no way to tell them apart from a parse
+ *     without going back to text, and writing code whose only purpose is to NOT report
+ *     `export * from 'https://evil'` in a gate built to stop remote code is not a thing
+ *     this file should contain. So they are reported. If that collides with the other
+ *     work order, the collision is that its subject is already closed. */
+function staticSpecifiers(mod, raw) {
+  /* THE LINE IS BEST-EFFORT AND SAYS SO WHEN IT IS NOT FOUND. V8 gives the specifier, not
+   * its position, so the line comes from locating the quoted literal in the raw text —
+   * which is a search for a string we already know, not a scan that has to recognise
+   * syntax. A decoded specifier (one written with escapes) will not appear verbatim; that
+   * is reported as line 0 rather than guessed at, and the finding still stands because
+   * the finding came from the parse. */
+  return mod.dependencySpecifiers.map((spec) => {
+    let line = 0;
+    for (const q of ["'", '"', '`']) {
+      const at = raw.indexOf(q + spec + q);
+      if (at >= 0) { line = raw.slice(0, at).split('\n').length; break; }
+    }
+    return { spec, literal: true, line, fromParse: true };
+  });
+}
+
+/* DYNAMIC `import()` ONLY. V8 does not list these — a dynamic import is a call, not a
+ * module dependency — so this is the one construct still recognised from text, and it
+ * runs on the stripped source. There is no `[\s\S]*?` here and never was: the specifier
+ * of a dynamic import is its first argument and nothing may come between. */
+function dynamicImports(raw, stripped) {
   const found = [];
-  const push = (spec, literal, idx) => found.push({ spec, literal, line: raw.slice(0, idx).split('\n').length });
-  const staticRe = /(?:^|[;}\s])import\s*(?:[\s\S]*?\bfrom\s*)?(['"`])([^'"`]*)\1/g;
-  for (let m; (m = staticRe.exec(raw)); ) push(m[2], true, m.index);
-  const dynRe = /(?<![A-Za-z0-9_$.])import\s*\(\s*(?:(['"`])([^'"`]*)\1)?/g;
-  for (let m; (m = dynRe.exec(raw)); ) push(m[2] ?? null, m[2] !== undefined, m.index);
+  const dynRe = /(?<![A-Za-z0-9_$.])(import)\s*\(\s*(?:(['"`])([^'"`]*)\2)?/dg;
+  for (let m; (m = dynRe.exec(stripped)); ) {
+    const g = m.indices[3];
+    found.push({ spec: g ? raw.slice(g[0], g[1]) : null, literal: !!g,
+                 line: raw.slice(0, m.indices[1][0]).split('\n').length, fromParse: false });
+  }
   return found;
 }
 
@@ -260,17 +441,78 @@ function scanModule(full) {
   try { src = readFileSync(full, 'utf8'); }
   catch (e) { bad(`${rel} — cannot be read`, e.code || e.message); return; }
 
-  try { new vm.SourceTextModule(src, { identifier: rel }); }
+  /* THE PARSE IS KEPT NOW, NOT THROWN AWAY. It used to be constructed only to prove the
+   * file is an ES module and then discarded — while, four lines below, a regular
+   * expression tried to work out from text what this object already knows exactly. */
+  let mod;
+  try { mod = new vm.SourceTextModule(src, { identifier: rel }); }
   catch (e) { bad(`${rel} — does not parse as an ES module`, `${e.constructor.name}: ${e.message}`); return; }
 
-  const stripped = strip(src);
+  /* THE STRIPPER'S OWN VERDICT ON ITSELF, AND IT IS FAIL-CLOSED. The parse above has
+   * proved this file is a valid ES module, so an unterminated string, template, block
+   * comment or regex literal is IMPOSSIBLE in it — if the stripper reports one, the
+   * stripper lost its place, and everything downstream is reading a file blanked to end
+   * of file. A blanked file scans clean. Refusing is the only honest answer. */
+  const _stripped = strip(src);
+  if (_stripped.broke) {
+    bad(`${rel} — this scanner lost its place: ${_stripped.broke} was never closed`,
+      'the module PARSES, so it cannot really contain one — this file mis-lexed it and everything after that point was blanked. No verdict is possible; nothing is established about this module in either direction.');
+    return;
+  }
+  const stripped = _stripped.text;
+
+  /* AND A SECOND, SHARPER CHECK ON THE STRIPPER, USING THE PARSE AS AN ORACLE.
+   *
+   * `.broke` catches a mis-lex that runs off the end of the file. It does NOT catch one
+   * that closes tidily — and that is the shape the last adversarial pass used: a `/*`
+   * inside a regex literal the heuristic read as division opens a block comment, which
+   * then closes at the next `*​/` anywhere later in the file. Everything between is
+   * blanked, `.broke` never fires, and the module reports clean. A real remote import
+   * went green that way with no finding and no note.
+   *
+   * The static findings no longer depend on the stripper, so that particular input can no
+   * longer hide an import. But the TIER SCANS still read `stripped`, and a `fetch(` in
+   * the blanked region would be just as invisible — the same defect, one column over.
+   *
+   * So: V8 knows where every static specifier is. `strip()` is char-for-char, and it
+   * keeps a string's own quote characters while blanking a comment entirely. Therefore,
+   * at the offset of a specifier's opening quote, an INTACT module still shows that quote
+   * in the stripped text, and a module whose statement was swallowed by a bogus comment
+   * shows a space. That is a cheap, exact test for "did this lexer eat real code", and it
+   * costs one indexOf per import.
+   *
+   * It is not a proof that the stripping is correct everywhere — nothing short of a
+   * parser is — but it converts the whole class the pass exploited into a REFUSAL, using
+   * the one authoritative fact available for free. The residual class is named in
+   * docs/feedback/PUP-WO-0113.md rather than left to be discovered: a mis-lex that
+   * swallows a tier token and no import at all is still silent, and closing that needs
+   * this file to scan a parse rather than a string. */
+  for (const spec of mod.dependencySpecifiers) {
+    /* EVERY OCCURRENCE, AND THE TEST IS "DID ANY SURVIVE". The first version took
+     * `indexOf` — the FIRST occurrence — and a module that mentions its own import path
+     * in a comment above the import has its first occurrence inside that comment, which
+     * is blanked by design. It refused every such module. Found by the control written
+     * for it, which is what that control is for: a mis-lex hides an import ANYWHERE it
+     * is written, so the question is whether the specifier survives SOMEWHERE, not
+     * whether the first place it appears does. */
+    const sites = [];
+    for (const q of ["'", '"', '`']) {
+      for (let at = src.indexOf(q + spec + q); at >= 0; at = src.indexOf(q + spec + q, at + 1)) sites.push(at);
+    }
+    if (sites.length && !sites.some((at) => stripped[at] === src[at])) {
+      bad(`${rel} — this scanner blanked a real import: '${spec}'`,
+        'V8 parsed that specifier out of this module and the stripped source has every occurrence of it overwritten — so a comment or string boundary was mis-read and an unknown amount of real code went with it. The tier scans read that same text, so no verdict is possible on this module.');
+      return;
+    }
+  }
+
   /* TIER 3 NEEDS THE STRING BODIES AND TIERS 1-2 MUST NOT HAVE THEM. A remote URL IS a
    * string literal, so matching `.src = 'https://…'` against the stripped source can
    * never fire — the first version of tier 3 was dead on arrival for exactly that
    * reason, and passed `new Image().src = 'https://evil/'` green. Comments are removed
    * for both; strings are removed only for tiers 1 and 2, where a token inside a
    * string is not reachable on its own. */
-  const noComments = strip(src, { keepStrings: true });
+  const noComments = strip(src, { keepStrings: true }).text;
   const rawLines = src.split('\n');
   const strippedLines = stripped.split('\n');
   const noCommentLines = noComments.split('\n');
@@ -290,19 +532,35 @@ function scanModule(full) {
    * too, because collectModules walked the whole tree. Anything else is refused:
    * a non-relative specifier is remote or bare, an escaping one leaves the scanned
    * set, and a non-literal dynamic specifier cannot be judged from text at all. */
-  for (const im of imports(src)) {
+  for (const im of [...staticSpecifiers(mod, src), ...dynamicImports(src, stripped)]) {
+    const where = im.line ? `${rel}:${im.line}` : rel;
+    const text = im.line ? (rawLines[im.line - 1] || '').trim().slice(0, 88)
+                         : '(written with an escape, so it does not appear verbatim — V8 decoded it)';
     if (!im.literal) {
-      hits.push({ name: 'import(<non-literal>)', why: 'a computed specifier cannot be checked; use a literal relative path', line: im.line, text: (rawLines[im.line - 1] || '').trim().slice(0, 88) });
+      hits.push({ name: 'import(<non-literal>)', why: 'a computed specifier cannot be checked; use a literal relative path', line: im.line, text });
       continue;
     }
     if (!isRelative(im.spec)) {
-      hits.push({ name: `import '${im.spec}'`, why: 'not a relative path — remote or bare specifiers reach outside games/', line: im.line, text: (rawLines[im.line - 1] || '').trim().slice(0, 88) });
+      hits.push({ name: `import '${im.spec}'`, why: 'not a relative path — remote or bare specifiers reach outside games/', line: im.line, text });
+      continue;
+    }
+    /* THE BACKSLASH REFUSAL IS GONE, AND IT WAS RIGHT TO ADD AND RIGHT TO REMOVE. It
+     * existed because `im.spec` used to be the RAW source text between the quotes, so
+     * `"./a\u002f..\u002f..\u002fevil.js"` passed `isRelative` and then `resolve()`
+     * treated the escape as ordinary filename characters and cleared it. A specifier that
+     * cannot be decoded cannot be judged, and refusing was the honest answer THEN.
+     * `dependencySpecifiers` hands over the DECODED string, so it is judgeable now and is
+     * judged: that one arrives as `./a/../../evil.js` and resolves out of games/ like any
+     * other escaping path. A dynamic specifier still comes from text and still may not. */
+    if (!im.fromParse && im.spec.includes('\\')) {
+      hits.push({ name: `import '${im.spec}'`, why: 'a dynamic specifier written with an escape cannot be decoded from the source text; write the path plainly', line: im.line, text });
       continue;
     }
     const target = resolve(dirname(full), im.spec);
     if (!target.startsWith(GAMES_DIR + sep)) {
-      hits.push({ name: `import '${im.spec}'`, why: 'resolves OUTSIDE games/, where nothing scans it', line: im.line, text: (rawLines[im.line - 1] || '').trim().slice(0, 88) });
+      hits.push({ name: `import '${im.spec}'`, why: 'resolves OUTSIDE games/, where nothing scans it', line: im.line, text });
     }
+    void where;
   }
 
   if (hits.length) for (const h of hits) bad(`${rel}:${h.line} — ${h.name}`, `${h.why}\n        ${h.text}`);
@@ -315,18 +573,32 @@ function scanModule(full) {
       notes.push(`${rel}: "${t.name}" appears in the source but only inside a comment or string — not a finding, but shown so the stripper is not silently hiding it`);
     }
   }
-  /* A REGEX-LITERAL HEURISTIC THAT DOES NOT FIRE ON DIVISION. The previous one was
-   * "any line containing two slashes", which is also every line containing two
-   * divisions: it fired four times on games/gyre.js, a file with no regex literal in it
-   * at all, the first being `count * (1 + size / 100 + tail / 100)`. A note that is lit
-   * on every green run carries no information, and it was the ONLY signal that would
-   * have surfaced a token hidden from the stripper — so the noise was not cosmetic, it
-   * was covering the one thing the note exists for. A regex literal can only START
-   * where an operator or a keyword can be followed by one. */
-  const REGEX_START = /(?:^|[(,=:[!&|?{};]|\breturn|\btypeof|\bcase)\s*\/(?![/*\s=])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+\/[gimsuyd]*/;
-  if (REGEX_START.test(stripped)) {
-    notes.push(`${rel}: contains what looks like a REGEX LITERAL. This scanner does not track regex literals, so a token after one on the same line can be hidden. Read this module by eye.`);
-  }
+  /* AND THE SAME COURTESY FOR IMPORTS, WHICH IS NEW AND IS THE PRICE OF SCANNING THE
+   * STRIPPED SOURCE. Matching stripped is what stops prose being read as code; the
+   * mirror-image risk is that the stripper blanks something that WAS code and an import
+   * disappears. The stripper's one stated blind spot is the regex literal — see its
+   * header — so this is not hypothetical. Nothing here is a finding: an import visible
+   * on raw and not on stripped is either a genuine mention in prose, which is the whole
+   * point, or a real one the stripper ate, which nobody would otherwise learn. The note
+   * says which pair to look at and leaves the judgement with a person. */
+  /* THE RAW-VERSUS-STRIPPED NOTE IS GONE TOO, AND THE REASON IS THE SAME ONE THAT
+   * RETIRED THE REGEX NOTE ONE COMMIT AGO: a gate replaced it. It said "these lines match
+   * before stripping and not after — read them", which is a request that a person notice
+   * something. The oracle cross-check above answers the same question with V8's own parse
+   * and REFUSES A VERDICT, which is not a request. Keeping both would leave a note that
+   * fires only in cases the check above has already failed on. */
+  /* THE REGEX-LITERAL NOTE IS GONE, AND ITS ABSENCE IS THE POINT. It said "This scanner
+   * does not track regex literals, so a token after one on the same line can be hidden.
+   * Read this module by eye." That sentence was true when it was written and this change
+   * made it FALSE — `strip()` tracks them now and blanks their bodies like a string's.
+   * Leaving it would be a comment describing a behaviour its code no longer has, which
+   * is the exact defect PUP-WO-0113 exists to remove; a note telling a reader to check
+   * by eye for a hazard that has been closed trains them to ignore notes.
+   *
+   * What replaced it is not another note. It is `strip().broke` — the stripper says so
+   * when it loses its place, and `scanModule` REFUSES A VERDICT rather than reporting the
+   * green a blanked file always gives. A fail-closed signal instead of a request that
+   * somebody read 900 lines carefully. Check 12 pins both directions. */
   for (const t of SOFT) {
     if (t.re.test(noComments)) notes.push(`${rel}: ${t.name} — ${t.why}`);
   }
