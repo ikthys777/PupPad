@@ -56,11 +56,27 @@ if (!files.length) {
   process.exit(1);
 }
 
-/* Registered = the file name appears as an invoked script in ci.yml. Matching the NAME
- * rather than a full command line, because the invocation varies — some pass `.`, some
- * take --experimental-vm-modules — and a check that demanded one spelling would fail a
- * correct registration. */
-const missing = files.filter((f) => !yml.includes(f));
+/* Registered = the file name appears ON A LINE THAT INVOKES NODE, in ci.yml, outside a
+ * comment. Still matching the NAME rather than a full command line, because the invocation
+ * varies — some pass `.`, some take --experimental-vm-modules — and a check that demanded
+ * one spelling would fail a correct registration.
+ *
+ * BUT `yml.includes(f)` ALONE COUNTED A MENTION IN A COMMENT AS A REGISTRATION. That is
+ * this project's own defect one level up, inside the very check built to stop it: a
+ * DESCRIBED registration reading like a real one, exactly as check 24 read the word
+ * `removeChannel` out of a comment describing the bug it fixed. A comment naming
+ * `demo-voice.mjs` would have satisfied the check that exists to prove `demo-voice.mjs`
+ * actually runs — and comments here name files constantly, because that is how this repo
+ * explains itself.
+ *
+ * So: comment lines are dropped first, and the name must sit on a line that also invokes
+ * `node`. Both halves are needed — dropping comments alone would still count a filename in
+ * a step NAME, and requiring `node` alone would still count a commented-out run line. */
+const runLines = yml
+  .split('\n')
+  .filter((line) => !line.trim().startsWith('#'))
+  .filter((line) => line.includes('node'));
+const missing = files.filter((f) => !runLines.some((line) => line.includes(f)));
 
 for (const f of files) console.log(`  ${missing.includes(f) ? 'MISSING ' : 'ok      '} ${f}`);
 console.log(`\n  ${files.length - missing.length} of ${files.length} demonstration(s) registered in ci.yml.`);
