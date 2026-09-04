@@ -8,9 +8,9 @@ against `916b0195`, checked as a command. Nothing needed a `urlsToCache` line.
 
 ---
 
-## DECISION NEEDED — TWO, and both are Scotty's, not mine
+## DECISIONS — ONE RULED, ONE STILL OPEN
 
-### 1. The map still tells OpenStreetMap where the child is
+### 1. The map still tells OpenStreetMap where the child is — **STILL OPEN, and it does NOT inherit the camera ruling**
 
 | field | |
 |---|---|
@@ -18,14 +18,21 @@ against `916b0195`, checked as a command. Nothing needed a `urlsToCache` line.
 | **where** | `openTreasureMap` → `L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19})` |
 | **type** | audience / privacy |
 | **recommendation** | **None offered.** This is **pre-existing and already yours**: `docs/architecture.md` logs the OSM tiles, plus the three CDN script loads, as an open **northstar re-ratification** — northstar §5 forbids third-party network calls as a category and the console has been making them since before this work order. Nothing here changed it. What changed is that voice and PupPad-to-PupPad location stopped, which makes the tiles the *largest remaining* location egress rather than one of several. |
-| **decision-needed** | **YES**, and it is the same ruling that is already open — this work order just made it sharper. **The honest summary is: the map no longer tells another PupPad device where your child is. It still tells a map server.** |
+| **decision-needed** | **YES — STILL OPEN.** Same ruling that was already open; this work order made it sharper. **The honest summary is: the map no longer tells another PupPad device where your child is. It still tells a map server.** |
+
+> **THIS DOES NOT INHERIT THE CAMERA RULING, and it is written here so proximity does not
+> close it.** Scotty's camera reasoning turns on the URL and the anon key being **household
+> credentials** — our backend, our key, our family, and a second household would stand up
+> its own and never be on that channel. **A tile request goes to a THIRD PARTY with an IP
+> attached, and nothing about it is ephemeral on their side.** None of the camera reasoning
+> reaches it. **Not in this work order's scope: `L.tileLayer` is untouched.**
 
 *The claim was caught by the adversarial pass, not by me. The comment in `index.html` and
 check 26 §24 now separate what this deletion bought from what it did not, with the numbers,
 and §24 asserts the tile layer is **present** so a green run can never be read as "nothing
 leaves".*
 
-### 2. The camera — and it is Scotty's, not mine
+### 2. The camera — **RULED 2026-09-04: PHOTOS STAY ON THE WIRE, UNCHANGED**
 
 | field | |
 |---|---|
@@ -33,7 +40,22 @@ leaves".*
 | **where** | `joinCameraChannel` / `broadcastPhoto`, channel `puppad-camera`, `config: { broadcast: { self: false } }` |
 | **type** | audience / privacy |
 | **recommendation** | **None offered, deliberately.** Scotty's stated reason for making voice local was the audience. **That reason applies to a photograph at least as strongly as to a voice clip, and arguably more** — a photo identifies the child to a stranger without them having to recognise a voice. But "make it local" is not obviously right for the camera the way it was for voice: the camera's whole point may be showing Grampa a photo, in a way that recording a silly voice was not. |
-| **decision-needed** | **YES.** Not folded in. `PUP-WO-0702` §6 says ask, do not assume, and this work order does not touch it. |
+| **decision-needed** | **CLOSED.** Asked, and answered: **the camera is unchanged.** |
+
+**THE REASONING, RECORDED BECAUSE THE VERDICT ALONE READS INCONSISTENT WITH THE VOICE
+RULING** and a future session would try to "fix" it:
+
+- **The audience is not "anyone with the URL" in practice.** The URL and the anon key are
+  **household credentials**. A second household running PupPad stands up its own backend
+  and its own key and is never on this channel. **That is a materially different fact from
+  the one that decided voice**, and my write-up above overstated it by describing the
+  audience without describing who can actually hold the key.
+- **Voice still stands for its own reason**: a voice is identifying in a way a photograph
+  the parents took is not, and local-only **cost Buddy nothing**, because the joy is in the
+  playback rather than the sending.
+
+**Both rulings live in `docs/roadmap.md` §4·RESUME with their reasons attached.** Nothing in
+this branch changes the camera.
 
 **One thing worth knowing before ruling:** this deletion did **not** make the camera safer.
 It removed voice and location from that channel and left photographs on it. If the answer
