@@ -576,6 +576,38 @@ jobs:
         # its own plant removed.
         run: node .github/ci/demo-voice-controls.mjs
 
+      - name: "Check 27 — the third-party allowlist"
+        # PUP-WO-0705. Scotty ruled on 2026-09-04 that the Map panel's OpenStreetMap
+        # basemap STAYS, knowingly, against three costed alternatives, and the northstar
+        # carries it as a NAMED EXCEPTION rather than a contradiction. THIS IS THE OTHER
+        # HALF OF THAT RULING: until the exception lives in a mechanism, nothing
+        # distinguishes the approved origin from a new one and nothing stops a SECOND
+        # arriving.
+        #
+        # It measures egress and does not perform it — every non-local request is
+        # intercepted and ABORTED, so it needs no network and discloses nothing. Service
+        # workers are BLOCKED, and that is load-bearing rather than tidy: Playwright's
+        # context.route does not intercept requests a service worker makes, and PupPad's
+        # worker claims cross-origin requests deliberately. Measured both ways while this
+        # was written — with the worker running the recorder saw 3 requests and DID NOT
+        # SEE ITS OWN WITNESS; blocked, it saw 4. An egress check that under-reports
+        # egress is the false green this suite has spent two work orders removing.
+        #
+        # A GREEN RUN HERE MEANS "ONLY THESE", NOT "NONE". Its pass line names the one
+        # ratified exception with its date AND the two origins that ship today which
+        # NOBODY HAS RULED ON (architecture §10) — so a reader of a green build learns
+        # they exist instead of inferring silence.
+        run: node .github/ci/demo-thirdparty.mjs .
+
+      - name: "Check 28 — check 27's controls, a second origin shown red"
+        # A check never seen red is not a check. Seven planted cases: a new origin on the
+        # cold-load path, one reached only when the Map opens, one reached only when a
+        # DIFFERENT panel opens, a hostname that merely CONTAINS the approved name, the
+        # approved origin alone staying GREEN, and both halves of the instrument — the pad
+        # walk and the Map panel opening — going red when they stop working, because "no
+        # unapproved origin" is also true of an app nobody exercised.
+        run: node .github/ci/demo-thirdparty-controls.mjs .
+
       - name: "Check 24 controls — every section of the inbound check, shown red"
         # Check 24 shipped WITHOUT controls, so its first four sections had never been
         # shown red. Its fifth already had -- a plant proved it passed with the release
