@@ -1697,6 +1697,21 @@ function closeCamera() {
 var voiceStream = null;
 var voiceRecorder = null;
 var voiceBuffer = null;      /* the raw clip, decoded. Never a base64 string. */
+
+/* === THREE SLOTS — PUP-WO-0703 §2 =========================================
+ * Three, because the panel already carries a preset row and two sliders on a 412px
+ * viewport: three fit as a row, three is enough to choose between, and a fourth costs the
+ * row its size before it earns anything. Measured at all three fleet widths.
+ *
+ * `voiceSlots` holds AudioBuffers and nothing else -- no string, no URL, nothing that
+ * could reach a wire even if one existed, which since PUP-WO-0702 it does not. All three
+ * die with the panel; teardown now has three times as much to release. */
+var VOICE_SLOT_COUNT = 3;
+var voiceSlots = [null, null, null];
+var voiceLiveSlot = -1;      /* the slot being recorded INTO or played FROM. -1 = none. */
+var voiceTargetSlot = 0;     /* where the microphone button will record next. */
+var voiceWaveRaf = 0;
+var voiceWavePhase = 0;
 var voiceNodes = [];         /* every live PLAYBACK node, disconnected on teardown. */
 var voicePending = false;    /* a getUserMedia request in flight. */
 var voiceGen = 0;            /* bumped by teardown; a grant from an older generation is dropped. */
@@ -1744,18 +1759,41 @@ function clampNum(v, lo, hi) {
  * three-year-old already owns and does not have to be taught.
  *
  * `label` is for aria only. Nothing here paints a word at a child. */
+/* TWO AXES PER PRESET — PUP-WO-0703 §3. Scotty wants MORE TO MOVE, not fewer: he watched
+ * Buddy enjoy moving a control and hearing it change, and that IS the feature.
+ *
+ * THE TEST FOR EVERY AXIS IS "DOES A CHILD HEAR IT MOVE". A slider with no audible result
+ * teaches that the panel is broken, so nothing here is decorative and check 26's sweep
+ * covers the FULL new grid rather than the old one.
+ *
+ * `b` IS A SECOND MECHANISM ON up/down AND I AM SAYING SO RATHER THAN DRESSING IT UP.
+ * Resampling has exactly ONE parameter -- pitch and tempo move together, that is what the
+ * effect IS -- so a second axis of the same mechanism does not exist. A lowpass on top of
+ * it is a second mechanism, and it earns its place on the only test that matters: sweeping
+ * it from 700Hz to 8kHz is dramatically audible on a squeaky voice. Robot's and cave's
+ * second axes ARE genuine second parameters of their own mechanisms (depth of the ring
+ * modulation; how much of the delay line is heard). */
+var TONE_HZ_MIN = 700, TONE_HZ_MAX = 8000;
+var RING_DEPTH_MIN = 0.25, RING_DEPTH_MAX = 1.0;
+var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.45;   /* MAX is the headroom bound -- see the cave branch. */
+
 var VOICE_PRESETS = [
   { id:'up',    icon:'\uD83D\uDC2D', label:'Squeaky voice', color:'#FBBF24',
-    min:1.25, max:VOICE_RATE_MAX, def:1.70 },
+    a:{ min:1.25, max:VOICE_RATE_MAX, def:1.70, icon:'\u2195\uFE0F', label:'How squeaky' },
+    b:{ min:TONE_HZ_MIN, max:TONE_HZ_MAX, def:7000, icon:'\u2600\uFE0F', label:'How bright' } },
   { id:'down',  icon:'\uD83D\uDC18', label:'Rumbly voice',  color:'#60A5FA',
-    min:VOICE_RATE_MIN, max:0.92, def:0.72 },
+    a:{ min:VOICE_RATE_MIN, max:0.92, def:0.72, icon:'\u2195\uFE0F', label:'How rumbly' },
+    b:{ min:TONE_HZ_MIN, max:TONE_HZ_MAX, def:3000, icon:'\u2600\uFE0F', label:'How bright' } },
   { id:'robot', icon:'\uD83E\uDD16', label:'Robot voice',   color:'#A78BFA',
-    min:RING_HZ_MIN, max:RING_HZ_MAX, def:70 },
+    a:{ min:RING_HZ_MIN, max:RING_HZ_MAX, def:70, icon:'\u3030\uFE0F', label:'Robot buzz' },
+    b:{ min:RING_DEPTH_MIN, max:RING_DEPTH_MAX, def:0.85, icon:'\uD83D\uDD0A', label:'How robot' } },
   { id:'cave',  icon:'\uD83C\uDFD4\uFE0F', label:'Cave voice',    color:'#34D399',
-    min:CAVE_DELAY_MIN, max:CAVE_DELAY_MAX, def:0.20 }
+    a:{ min:CAVE_DELAY_MIN, max:CAVE_DELAY_MAX, def:0.20, icon:'\u21A9\uFE0F', label:'Echo gap' },
+    b:{ min:CAVE_WET_MIN, max:CAVE_WET_MAX, def:0.35, icon:'\uD83D\uDD0A', label:'How much echo' } }
 ];
-var voiceSlider = {};
-VOICE_PRESETS.forEach(function(p) { voiceSlider[p.id] = p.def; });
+/* Two independent values per preset, so switching preset and back restores both. */
+var voiceSlider = {}, voiceSliderB = {};
+VOICE_PRESETS.forEach(function(p) { voiceSlider[p.id] = p.a.def; voiceSliderB[p.id] = p.b.def; });
 
 function voicePresetById(id) {
   for (var i = 0; i < VOICE_PRESETS.length; i++) if (VOICE_PRESETS[i].id === id) return VOICE_PRESETS[i];
@@ -1774,7 +1812,7 @@ function voicePresetById(id) {
  * `ctx` is a parameter, never a captured global, so an OfflineAudioContext can be handed
  * in. It builds nodes; it starts nothing except the ring carrier, which must run for the
  * modulation to exist at all. */
-function buildVoiceGraph(ctx, buffer, presetId, value) {
+function buildVoiceGraph(ctx, buffer, presetId, value, valueB) {
   var src = ctx.createBufferSource();
   src.buffer = buffer;
   var out = ctx.createGain();
@@ -1782,9 +1820,16 @@ function buildVoiceGraph(ctx, buffer, presetId, value) {
   var nodes = [src, out];
 
   if (presetId === 'up' || presetId === 'down') {
-    /* Resampling: pitch and tempo move together. That IS the chipmunk/monster effect. */
+    /* Resampling: pitch and tempo move together. That IS the chipmunk/monster effect --
+     * and it has exactly one parameter, which is why the second axis is a SECOND
+     * MECHANISM rather than a second knob on this one. A lowpass never boosts (no
+     * resonance is set), so it cannot cost headroom; it only takes brightness away. */
     src.playbackRate.value = clampNum(value, VOICE_RATE_MIN, VOICE_RATE_MAX);
-    src.connect(out);
+    var tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = clampNum(valueB, TONE_HZ_MIN, TONE_HZ_MAX);
+    src.connect(tone); tone.connect(out);
+    nodes.push(tone);
 
   } else if (presetId === 'robot') {
     /* Ring modulation. The carrier drives the GAIN of a gain node whose own gain rests
@@ -1798,9 +1843,16 @@ function buildVoiceGraph(ctx, buffer, presetId, value) {
     osc.frequency.value = clampNum(value, RING_HZ_MIN, RING_HZ_MAX);
     osc.connect(ring.gain);
     src.connect(ring);
-    ring.connect(out);
+    /* DEPTH is a genuine second parameter of ring modulation: how much of the output is
+     * the ringed signal and how much is the dry voice. The two legs SUM TO 1 by
+     * construction, so no depth can cost headroom -- derived, not tuned. */
+    var depth = clampNum(valueB, RING_DEPTH_MIN, RING_DEPTH_MAX);
+    var wetR = ctx.createGain(); wetR.gain.value = depth;
+    var dryR = ctx.createGain(); dryR.gain.value = 1 - depth;
+    ring.connect(wetR); wetR.connect(out);
+    src.connect(dryR); dryR.connect(out);
     osc.start();
-    nodes.push(ring, osc);
+    nodes.push(ring, osc, wetR, dryR);
 
   } else if (presetId === 'cave') {
     /* Dry + a delay line fed back on itself at a CONSTANT gain below 1, so it decays. */
@@ -1813,13 +1865,17 @@ function buildVoiceGraph(ctx, buffer, presetId, value) {
      *
      * Worst case is dry + the echo series: CAVE_DRY + CAVE_WET / (1 - CAVE_FEEDBACK).
      * 0.50 + 0.45/0.55 = 1.32, and 1.32 x 0.70 = 0.92 -- under 1 with the source at the
-     * level a microphone actually delivers. Derived, not tuned by ear. */
+     * level a microphone actually delivers. Derived, not tuned by ear.
+     *
+     * WET IS A SLIDER NOW AND CAVE_WET_MAX IS THAT DERIVATION'S BOUND, not a taste
+     * setting: raising the ceiling raises the worst case straight through the same
+     * arithmetic. The slider moves within it; it cannot move past it. */
     var dly = ctx.createDelay(CAVE_DELAY_MAX);
     dly.delayTime.value = clampNum(value, CAVE_DELAY_MIN, CAVE_DELAY_MAX);
     var fb = ctx.createGain();
     fb.gain.value = CAVE_FEEDBACK;
     var dry = ctx.createGain(); dry.gain.value = CAVE_DRY;
-    var wet = ctx.createGain(); wet.gain.value = CAVE_WET;
+    var wet = ctx.createGain(); wet.gain.value = clampNum(valueB, CAVE_WET_MIN, CAVE_WET_MAX);
     dly.connect(fb); fb.connect(dly);
     src.connect(dry); dry.connect(out);
     src.connect(dly); dly.connect(wet); wet.connect(out);
@@ -1887,13 +1943,109 @@ function clearVoiceTimers() {
  * question that did not agree. */
 function voiceCapturing() { return !!voiceRecorder || voicePending; }
 
+/* === THE SINE WAVE — PUP-WO-0703 §1.1, and it is the DEFECT this work order fixes ====
+ *
+ * Scotty, from watching Buddy: the record button dims everything else and stays bright,
+ * and NOTHING TELLS A NON-READER THAT RECORDING IS HAPPENING. DIMMING SAYS WHAT IS
+ * UNAVAILABLE; NOTHING SAID WHAT WAS HAPPENING. That is invariant 1 failing, not a
+ * missing flourish -- a three-year-old cannot read a label and cannot infer "recording"
+ * from the rest of the screen going dim.
+ *
+ * ONE ANIMATION, TWO MEANINGS, AND THAT IS BETTER THAN TWO ANIMATIONS. It runs on the
+ * slot being recorded INTO and on the slot being played FROM, so the child learns ONE
+ * thing -- THIS SLOT IS THE LIVE ONE -- rather than two.
+ *
+ * THREE STATES, AND NEVER ON COLOUR ALONE, because the panel has to survive a dim screen
+ * outdoors:
+ *   empty   -- a FLAT LINE, dashed outline, no delete control
+ *   holding -- a STATIC WAVE at rest amplitude, solid outline, delete control present
+ *   live    -- a MOVING WAVE at full amplitude, thick ring
+ * Shape carries it (flat vs wave), outline carries it (dashed vs solid vs thick), and the
+ * presence of a control carries it. Colour is the fourth signal, not the first. */
+var WAVE_W = 78, WAVE_H = 26;
+var WAVE_AMP_LIVE = 9.5, WAVE_AMP_HOLD = 4.0, WAVE_AMP_EMPTY = 0;
+var WAVE_CYCLES = 2.2, WAVE_STEP = 4;
+var WAVE_SPEED = 0.16;       /* radians per frame; a full cycle about every 2.4s at 60fps */
+
+function wavePath(amp, phase) {
+  var d = '';
+  for (var x = 0; x <= WAVE_W; x += WAVE_STEP) {
+    var y = WAVE_H / 2 + amp * Math.sin((x / WAVE_W) * WAVE_CYCLES * 2 * Math.PI + phase);
+    d += (x === 0 ? 'M' : 'L') + x + ' ' + y.toFixed(2) + ' ';
+  }
+  return d.trim();
+}
+
+function voiceReducedMotion() {
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch (e) { return false; }
+}
+
+/* Paints all three slots from state. Called on every transition; the rAF loop below only
+ * advances the phase, so a slot's SHAPE and OUTLINE never depend on the animation running. */
+function paintVoiceSlots() {
+  var overlay = document.getElementById('voiceOverlay');
+  if (!overlay) return;
+  var reduced = voiceReducedMotion();
+  for (var i = 0; i < VOICE_SLOT_COUNT; i++) {
+    var el = document.getElementById('voiceSlot' + i);
+    if (!el) continue;
+    var filled = !!voiceSlots[i];
+    var live = (voiceLiveSlot === i);
+    var path = el.querySelector('.voice-wave');
+    var del = el.querySelector('.voice-slot-del');
+    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);
+    if (path) {
+      path.setAttribute('d', wavePath(amp, live && !reduced ? voiceWavePhase : 0));
+      path.setAttribute('stroke-width', live ? '3' : '2');
+      path.setAttribute('stroke', live ? '#FDE68A' : (filled ? '#A78BFA' : 'rgba(148,197,255,0.35)'));
+    }
+    /* THE OUTLINE IS THE SECOND SIGNAL AND IT IS A SHAPE, NOT A COLOUR: dashed for empty,
+     * solid for holding, thick for live. Legible with every word covered and on a washed
+     * out screen. */
+    el.style.borderStyle = filled ? 'solid' : 'dashed';
+    el.style.borderWidth = live ? '4px' : '2px';
+    el.style.borderColor = live ? '#FDE68A' : (filled ? '#A78BFA' : 'rgba(148,197,255,0.35)');
+    el.style.background = live ? 'rgba(253,230,138,0.14)' : (filled ? 'rgba(167,139,250,0.10)' : 'rgba(255,255,255,0.03)');
+    el.dataset.state = live ? 'live' : (filled ? 'holding' : 'empty');
+    /* THE DELETE CONTROL EXISTS ONLY ON A FILLED SLOT, so an empty slot has nothing to
+     * press by mistake -- and it is a VISIBLE CONTROL, never a long press. A destructive
+     * action behind a hidden gesture is the worst pairing of an unreliable input and an
+     * irreversible result. */
+    if (del) del.style.display = filled ? 'flex' : 'none';
+  }
+}
+
+/* THE PHASE ADVANCES ONLY WHILE A SLOT IS LIVE, and the loop stops itself otherwise --
+ * a rAF that runs forever is a battery cost on a tablet for a panel that is usually idle.
+ * REDUCED MOTION STILLS THE WAVE AND DOES NOT ERASE IT: the live slot still has full
+ * amplitude, a thick ring and the brightest stroke, so the state stays unambiguous.
+ * Stillness is allowed; ambiguity is not. */
+function voiceWaveTick() {
+  if (voiceWaveRaf) return;
+  if (voiceReducedMotion()) { paintVoiceSlots(); return; }
+  function frame() {
+    if (voiceLiveSlot < 0 || !document.getElementById('voiceOverlay')) { voiceWaveRaf = 0; return; }
+    voiceWavePhase += WAVE_SPEED;
+    paintVoiceSlots();
+    voiceWaveRaf = requestAnimationFrame(frame);
+  }
+  voiceWaveRaf = requestAnimationFrame(frame);
+}
+
+function setVoiceLiveSlot(i) {
+  voiceLiveSlot = i;
+  paintVoiceSlots();
+  if (i >= 0) voiceWaveTick();
+}
+
 function voiceSetStage(stage) {
   var overlay = document.getElementById('voiceOverlay');
   if (!overlay) return;
   overlay.dataset.stage = stage;
   var recBtn = document.getElementById('voiceRecBtn');
   var playBtn = document.getElementById('voicePlayBtn');
-  var ready = (stage === 'ready');
+  var ready = (stage === 'ready') && anySlotFilled();
   if (recBtn) {
     recBtn.style.background = stage === 'recording' ? 'radial-gradient(circle,#FCA5A5,#EF4444)'
       : stage === 'arming' ? 'radial-gradient(circle,#D8B4FE,#A78BFA)'
@@ -1948,7 +2100,7 @@ function voiceRingTick(startedAt) {
   voiceRaf = requestAnimationFrame(frame);
 }
 
-function startVoiceRecording() {
+function startVoiceRecording(slot) {
   /* TWO GUARDS, BECAUSE `voiceRecorder` IS NOT SET UNTIL THE GRANT ARRIVES.
    *
    * `if (voiceRecorder) return` was the only re-entry guard, and voiceRecorder is assigned
@@ -1972,6 +2124,10 @@ function startVoiceRecording() {
   stopVoicePlayback();
   doSound('ping');
   voicePending = true;
+  /* WHICH SLOT THIS RECORDING IS FOR, decided ONCE and captured, so a tap on another slot
+   * while the grant is in flight cannot redirect the bytes. */
+  var slotFor = (typeof slot === 'number') ? slot : nextVoiceSlot();
+  voiceTargetSlot = slotFor;
   /* And say so on screen, so the second tap is never invited. */
   voiceSetStage('arming');
   var gen = voiceGen;
@@ -2006,7 +2162,8 @@ function startVoiceRecording() {
     try { rec = new MediaRecorder(stream); }
     catch (e) {
       stream.getTracks().forEach(function(t) { t.stop(); }); voiceStream = null;
-      voiceSetStage(voiceBuffer ? 'ready' : 'empty'); doSound('error'); return;
+      setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
+      doSound('error'); return;
     }
     voiceRecorder = rec;
     rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
@@ -2026,11 +2183,12 @@ function startVoiceRecording() {
       if (voiceRecorder === rec) voiceRecorder = null;
       if (voiceStream === stream) voiceStream = null;
       if (voiceRaf) { cancelAnimationFrame(voiceRaf); voiceRaf = 0; }
+      setVoiceLiveSlot(-1);
       /* F6: a failed capture must not paint over a clip that is still there. The
        * getUserMedia catch already got this right; these two transitions did not, and
        * `stage 'empty'` with a live voiceBuffer is §17's defect on a different edge --
        * play and send dim while the preset tiles stay live and will still play it. */
-      if (!chunks.length) { voiceSetStage(voiceBuffer ? 'ready' : 'empty'); return; }
+      if (!chunks.length) { setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty'); return; }
       var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
       blob.arrayBuffer().then(function(ab) {
         return getAudioCtx().decodeAudioData(ab);
@@ -2041,16 +2199,25 @@ function startVoiceRecording() {
          * against §S.1's "the clip dies with the panel", on the only identifying data this
          * app handles. The generation is the thing that actually died. */
         if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;
+        /* Into the slot this recording was FOR. `voiceBuffer` stays as the last-recorded
+         * clip so the transport's play button has an obvious subject. */
+        voiceSlots[slotFor] = buf;
         voiceBuffer = buf;
+        voiceTargetSlot = slotFor;
+        setVoiceLiveSlot(-1);
         voiceSetStage('ready');
         doSound('chime');
       }).catch(function() {
         if (gen !== voiceGen) return;
-        voiceSetStage(voiceBuffer ? 'ready' : 'empty'); doSound('error');
+        setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty'); doSound('error');
       });
     };
     rec.start();
     voiceSetStage('recording');
+    /* THE WHOLE POINT OF THE WORK ORDER: the moment the microphone is actually live, the
+     * slot it is filling starts waving. Not when the button was pressed -- when the
+     * RECORDING is happening. */
+    setVoiceLiveSlot(slotFor);
     voiceRingTick(Date.now());
     /* THE HARD STOP. A three-year-old will hold the button; the timer does not care. */
     voiceTimers.push(setTimeout(function() { stopVoiceRecording(); }, MAX_RECORD_MS));
@@ -2058,8 +2225,9 @@ function startVoiceRecording() {
     /* Same rule on the failure path, which had no generation check at all. */
     if (gen !== voiceGen) return;
     voicePending = false;
+    setVoiceLiveSlot(-1);
     /* A refused or failed microphone must not leave the panel looking busy. */
-    voiceSetStage(voiceBuffer ? 'ready' : 'empty');
+    voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
     doSound('error');
   });
 }
@@ -2069,16 +2237,57 @@ function stopVoiceRecording() {
   try { voiceRecorder.stop(); } catch (e) { voiceRecorder = null; }
 }
 
-/* === PLAYBACK — the effect is applied HERE, never at capture =============== */
-function playVoice() {
-  if (!voiceBuffer) return;
+/* === PLAYBACK — the effect is applied HERE, never at capture ===============
+ * `playVoice(i)` plays slot i; with no argument it plays the last-used slot, which is what
+ * the transport's play button and the slider's release both want. THE WAVE RUNS ON THE
+ * SLOT BEING PLAYED FROM, and stops when the source ends -- so the child sees which clip
+ * is speaking, not merely that something is. */
+function playVoice(i) {
+  var idx = (typeof i === 'number') ? i : voiceTargetSlot;
+  var buf = voiceSlots[idx];
+  if (!buf) return;
   stopVoicePlayback();
+  voiceTargetSlot = idx;
   var ctx = getAudioCtx();
-  var g = buildVoiceGraph(ctx, voiceBuffer, voicePreset, voiceSlider[voicePreset]);
+  var gen = voiceGen;
+  var g = buildVoiceGraph(ctx, buf, voicePreset, voiceSlider[voicePreset], voiceSliderB[voicePreset]);
   g.out.connect(ctx.destination);
   g.nodes.forEach(voiceTrack);
   voiceTrack(g.out);
+  /* GENERATION-SCOPED, like every other async continuation in this panel. Teardown stops
+   * the source, which fires `onended` LATER -- and a stale one was reaching into the NEXT
+   * panel and clearing its live slot, so a slot that was recording silently stopped
+   * waving. Found by check 26 §28, which read the resulting state change as animation. */
+  g.source.onended = function() {
+    if (gen !== voiceGen) return;
+    if (voiceLiveSlot === idx) setVoiceLiveSlot(-1);
+  };
   g.source.start();
+  setVoiceLiveSlot(idx);
+}
+
+/* Which slot the microphone button will fill: the first empty one, or -- when all three
+ * are full -- the last one used, which it RECORDS OVER. That is §2's "record over a slot"
+ * with no mode and no confirm, and the child sees which slot is being replaced because the
+ * wave starts running on it the moment recording begins. */
+function anySlotFilled() {
+  for (var i = 0; i < VOICE_SLOT_COUNT; i++) if (voiceSlots[i]) return true;
+  return false;
+}
+
+function nextVoiceSlot() {
+  for (var i = 0; i < VOICE_SLOT_COUNT; i++) if (!voiceSlots[i]) return i;
+  return voiceTargetSlot;
+}
+
+function deleteVoiceSlot(i) {
+  if (!voiceSlots[i]) return;
+  if (voiceLiveSlot === i) { stopVoicePlayback(); setVoiceLiveSlot(-1); }
+  voiceSlots[i] = null;
+  voiceBuffer = voiceSlots[voiceTargetSlot] || null;
+  paintVoiceSlots();
+  voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
+  doSound('blip');
 }
 
 /* === THE PANEL ============================================================ */
@@ -2103,14 +2312,16 @@ var VOICE_Z = 80;
  * work order, which is a worse trade than one duplicated widget. What must not drift is
  * the CLIENTWIDTH RULE, and it cannot drift silently: check 26 asserts the painted
  * position against the value on this slider directly. */
-function buildVoiceSlider(preset) {
+function buildVoiceSlider(preset, axis) {
+  var store = axis === 'b' ? voiceSliderB : voiceSlider;
   var track = document.createElement('div');
-  track.id = 'voiceSlider';
+  track.id = axis === 'b' ? 'voiceSliderB' : 'voiceSlider';
+  track.dataset.axis = axis;
   track.setAttribute('role', 'slider');
   track.setAttribute('tabindex', '0');
-  track.setAttribute('aria-label', preset.label);
-  track.setAttribute('aria-valuemin', String(preset.min));
-  track.setAttribute('aria-valuemax', String(preset.max));
+  track.setAttribute('aria-label', preset[axis].label);
+  track.setAttribute('aria-valuemin', String(preset[axis].min));
+  track.setAttribute('aria-valuemax', String(preset[axis].max));
   track.style.cssText = 'position:relative;flex:1 1 auto;height:50px;border-radius:14px;'
     + 'background:rgba(255,255,255,0.10);box-shadow:inset 0 0 0 2px rgba(255,255,255,0.20);'
     + 'overflow:hidden;touch-action:none;cursor:pointer;min-width:0';
@@ -2125,27 +2336,28 @@ function buildVoiceSlider(preset) {
 
   function paint() {
     var p = voicePresetById(voicePreset);
-    var v = clampNum(voiceSlider[p.id], p.min, p.max);
-    var t = (v - p.min) / (p.max - p.min);
+    var ax = p[axis];
+    var v = clampNum(store[p.id], ax.min, ax.max);
+    var t = (v - ax.min) / (ax.max - ax.min);
     t = t < 0 ? 0 : t > 1 ? 1 : t;
     fill.style.width = (t * 100) + '%';
     knob.style.left = (t * 100) + '%';
     fill.style.background = 'linear-gradient(90deg,' + p.color + '55,' + p.color + ')';
-    track.setAttribute('aria-label', p.label);
-    track.setAttribute('aria-valuemin', String(p.min));
-    track.setAttribute('aria-valuemax', String(p.max));
+    track.setAttribute('aria-label', ax.label);
+    track.setAttribute('aria-valuemin', String(ax.min));
+    track.setAttribute('aria-valuemax', String(ax.max));
     track.setAttribute('aria-valuenow', String(v));
   }
   track.__paint = paint;
 
   function valueAt(clientX) {
-    var p = voicePresetById(voicePreset);
+    var p = voicePresetById(voicePreset), ax = p[axis];
     var r = track.getBoundingClientRect();
     var pad = track.clientWidth;                 /* the padding box, by definition. */
     var edge = (r.width - pad) / 2;
     var t = pad > 0 ? (clientX - r.left - edge) / pad : 0;
     t = t < 0 ? 0 : t > 1 ? 1 : t;
-    return Number((p.min + t * (p.max - p.min)).toFixed(6));
+    return Number((ax.min + t * (ax.max - ax.min)).toFixed(6));
   }
 
   var dragging = -1;
@@ -2153,12 +2365,12 @@ function buildVoiceSlider(preset) {
     if (dragging !== -1) return;
     dragging = e.pointerId;
     try { track.setPointerCapture(e.pointerId); } catch (err) {}
-    voiceSlider[voicePreset] = valueAt(e.clientX);
+    store[voicePreset] = valueAt(e.clientX);
     paint();
   });
   track.addEventListener('pointermove', function(e) {
     if (e.pointerId !== dragging) return;
-    voiceSlider[voicePreset] = valueAt(e.clientX);
+    store[voicePreset] = valueAt(e.clientX);
     paint();
   });
   function endDrag(e) {
@@ -2167,7 +2379,7 @@ function buildVoiceSlider(preset) {
     try { track.releasePointerCapture(e.pointerId); } catch (err) {}
     /* Hear it immediately -- unless the microphone is open, in which case this would play
      * the previous clip into it. Same expression as the painting. */
-    if (voiceBuffer && !voiceCapturing()) playVoice();
+    if (anySlotFilled() && !voiceCapturing()) playVoice();
   }
   track.addEventListener('pointerup', endDrag);
   track.addEventListener('pointercancel', endDrag);
@@ -2183,6 +2395,10 @@ function openVoice() {
   if (document.getElementById('voiceOverlay')) return;
   voicePreset = 'up';
   voiceBuffer = null;
+  voiceSlots = [null, null, null];
+  voiceLiveSlot = -1;
+  voiceTargetSlot = 0;
+  voiceWavePhase = 0;
   doSound('ping');
 
   var overlay = document.createElement('div');
@@ -2192,7 +2408,7 @@ function openVoice() {
    * never scrolls, exactly as cameraOverlay carries it. */
   overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#070D18;'
     + 'z-index:' + VOICE_Z + ';display:flex;flex-direction:column;align-items:center;'
-    + 'justify-content:center;gap:10px;font-family:Trebuchet MS,sans-serif;touch-action:none';
+    + 'justify-content:center;gap:8px;font-family:Trebuchet MS,sans-serif;touch-action:none';
 
   var title = document.createElement('div');
   title.style.cssText = 'display:flex;align-items:center;gap:8px;position:absolute;top:8px;left:50%;transform:translateX(-50%)';
@@ -2202,15 +2418,18 @@ function openVoice() {
 
   /* PRESETS. Four glyphs, no words, sized for a three-year-old's aim. */
   var presetRow = document.createElement('div');
-  presetRow.style.cssText = 'display:flex;gap:14px;align-items:center;justify-content:center';
-  var sliderEl = null;
+  presetRow.style.cssText = 'display:flex;gap:12px;align-items:center;justify-content:center';
+  var sliderEl = null, sliderElB = null;
   VOICE_PRESETS.forEach(function(p) {
     var tile = document.createElement('button');
     tile.className = 'voice-preset';
     tile.dataset.preset = p.id;
     tile.setAttribute('aria-label', p.label);
-    tile.style.cssText = 'width:76px;height:76px;border-radius:18px;border:0;cursor:pointer;'
-      + 'display:flex;align-items:center;justify-content:center;font-size:38px;line-height:1;'
+    /* 64px, down from 76. THE ROW HAD TO PAY FOR THE SLOT ROW AND THE SECOND SLIDER, and
+     * a 412px-tall landscape viewport is the only budget that counts. Still well over the
+     * 44px floor, and remeasured at all three fleet sizes. */
+    tile.style.cssText = 'width:64px;height:64px;border-radius:16px;border:0;cursor:pointer;'
+      + 'display:flex;align-items:center;justify-content:center;font-size:34px;line-height:1;'
       + 'background:rgba(255,255,255,0.05);box-shadow:inset 0 0 0 2px transparent;padding:0';
     tile.textContent = p.icon;
     /* wireTap, never bare click. A synthetic click is not a finger: multi-touch and a tap
@@ -2222,6 +2441,7 @@ function openVoice() {
       voicePreset = p.id;
       paintPresets();
       if (sliderEl && sliderEl.__paint) sliderEl.__paint();
+      if (sliderElB && sliderElB.__paint) sliderElB.__paint();
       doSound('tap');
       if (voiceBuffer) playVoice();
     }, { repeat: true });
@@ -2241,16 +2461,94 @@ function openVoice() {
   }
   paintPresets();
 
+  /* === THE SLOT ROW — three clips, and the only thing on this panel that tells a
+   * non-reader what is happening. Each slot is a BUTTON: empty -> record into it,
+   * filled -> play it. The delete control is a child of the slot and stops the tap from
+   * reaching it, so the two actions never collide. */
+  var slotRow = document.createElement('div');
+  slotRow.style.cssText = 'display:flex;gap:16px;align-items:center;justify-content:center';
+  for (var si = 0; si < VOICE_SLOT_COUNT; si++) {
+    (function(i) {
+      var slot = document.createElement('button');
+      slot.id = 'voiceSlot' + i;
+      slot.className = 'voice-slot';
+      slot.dataset.slot = String(i);
+      slot.setAttribute('aria-label', 'Clip ' + (i + 1));
+      slot.style.cssText = 'position:relative;width:' + (WAVE_W + 18) + 'px;height:' + (WAVE_H + 22) + 'px;'
+        + 'border-radius:14px;border:2px dashed rgba(148,197,255,0.35);cursor:pointer;padding:0;'
+        + 'display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.03)';
+      slot.innerHTML = '<svg width="' + WAVE_W + '" height="' + WAVE_H + '" viewBox="0 0 ' + WAVE_W + ' ' + WAVE_H + '" '
+        + 'style="pointer-events:none;overflow:visible">'
+        + '<path class="voice-wave" fill="none" stroke-linecap="round" stroke-linejoin="round" '
+        + 'stroke="rgba(148,197,255,0.35)" stroke-width="2" d=""></path></svg>';
+
+      var del = document.createElement('span');
+      del.className = 'voice-slot-del';
+      del.setAttribute('role', 'button');
+      del.setAttribute('aria-label', 'Delete clip ' + (i + 1));
+      /* 44px of HIT BOX with a smaller painted disc, the same separation makeBackButton
+       * uses: reachability is a property of the box, dominance a property of the paint. */
+      del.style.cssText = 'position:absolute;top:-14px;right:-14px;width:44px;height:44px;'
+        + 'display:none;align-items:center;justify-content:center;cursor:pointer;background:transparent';
+      del.innerHTML = '<span style="width:26px;height:26px;border-radius:50%;background:#EF4444;'
+        + 'box-shadow:0 2px 6px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;'
+        + 'pointer-events:none"><svg width="12" height="12" viewBox="0 0 12 12">'
+        + '<path d="M1 1 L11 11 M11 1 L1 11" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>'
+        + '</svg></span>';
+      /* THE DELETE TAP MUST NOT ALSO REACH THE SLOT, and saying so in a comment is not
+       * doing it -- the first version claimed the child "stops the tap from reaching it"
+       * and stopped nothing. A probe caught it in one press: deleting a clip emptied the
+       * slot AND immediately started recording into it, because the same pointerup ran
+       * both handlers. wireTap listens on pointerdown, pointerup and click, so all three
+       * are stopped here, at the delete control, before they bubble. */
+      ['pointerdown', 'pointerup', 'pointercancel', 'click'].forEach(function(evt) {
+        del.addEventListener(evt, function(e) { e.stopPropagation(); });
+      });
+      wireTap(del, function() { deleteVoiceSlot(i); }, { repeat: true });
+      slot.appendChild(del);
+
+      wireTap(slot, function() {
+        /* THE SLOT THAT IS LIVE IS ALSO THE STOP BUTTON, because that is what a child
+         * does: tap it to start, tap it again to stop. A probe caught this -- the second
+         * tap was swallowed by the capturing guard and the only way to stop was to find
+         * the microphone button, which is not where the child is looking. The wave is on
+         * THIS slot; the control has to be here too. */
+        if (voiceLiveSlot === i) {
+          if (voiceRecorder) stopVoiceRecording();
+          else { stopVoicePlayback(); setVoiceLiveSlot(-1); }
+          return;
+        }
+        /* A tap on a DIFFERENT slot mid-capture is ignored rather than redirecting the
+         * bytes -- the recording already belongs to a slot and moving it would make the
+         * wave a lie. */
+        if (voiceCapturing()) return;
+        if (voiceSlots[i]) playVoice(i);
+        else startVoiceRecording(i);
+      }, { repeat: true });
+      slotRow.appendChild(slot);
+    })(si);
+  }
+  overlay.appendChild(slotRow);
+
   var sliderRow = document.createElement('div');
-  sliderRow.style.cssText = 'display:flex;align-items:center;gap:10px;width:min(560px,86vw)';
-  sliderEl = buildVoiceSlider(voicePresetById(voicePreset));
+  sliderRow.style.cssText = 'display:flex;align-items:center;gap:8px;width:min(560px,86vw)';
+  sliderEl = buildVoiceSlider(voicePresetById(voicePreset), 'a');
   sliderRow.appendChild(sliderEl);
   overlay.appendChild(sliderRow);
+
+  /* THE SECOND AXIS. Scotty wants MORE TO MOVE -- and every axis here is one a child can
+   * hear move, which is the only test that keeps a slider from teaching that the panel is
+   * broken. */
+  var sliderRowB = document.createElement('div');
+  sliderRowB.style.cssText = 'display:flex;align-items:center;gap:8px;width:min(560px,86vw)';
+  sliderElB = buildVoiceSlider(voicePresetById(voicePreset), 'b');
+  sliderRowB.appendChild(sliderElB);
+  overlay.appendChild(sliderRowB);
 
   /* TRANSPORT ROW: play — record — send. Record is centre and biggest; it is the one
    * control the child reaches for first. */
   var row = document.createElement('div');
-  row.style.cssText = 'display:flex;align-items:center;gap:26px;justify-content:center';
+  row.style.cssText = 'display:flex;align-items:center;gap:24px;justify-content:center';
 
   var playBtn = document.createElement('button');
   playBtn.id = 'voicePlayBtn';
@@ -2260,12 +2558,12 @@ function openVoice() {
     + 'display:flex;align-items:center;justify-content:center;padding:0';
   playBtn.innerHTML = '<div style="width:0;height:0;border-left:22px solid #34D399;'
     + 'border-top:14px solid transparent;border-bottom:14px solid transparent;margin-left:6px;pointer-events:none"></div>';
-  wireTap(playBtn, function() { playVoice(); }, { repeat: true });
+  wireTap(playBtn, function() { playVoice(voiceTargetSlot); }, { repeat: true });
 
   var recWrap = document.createElement('div');
-  recWrap.style.cssText = 'position:relative;width:92px;height:92px;flex-shrink:0';
+  recWrap.style.cssText = 'position:relative;width:80px;height:80px;flex-shrink:0';
   /* The countdown ring: an SVG stroke that empties. No text, no number, no word. */
-  recWrap.innerHTML = '<svg width="92" height="92" viewBox="0 0 92 92" '
+  recWrap.innerHTML = '<svg width="80" height="80" viewBox="0 0 92 92" '
     + 'style="position:absolute;top:0;left:0;pointer-events:none;transform:rotate(-90deg)">'
     + '<circle cx="46" cy="46" r="30" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="5"></circle>'
     + '<circle id="voiceRing" cx="46" cy="46" r="30" fill="none" stroke="#F472B6" stroke-width="5" '
@@ -2273,7 +2571,7 @@ function openVoice() {
   var recBtn = document.createElement('button');
   recBtn.id = 'voiceRecBtn';
   recBtn.setAttribute('aria-label', 'Record');
-  recBtn.style.cssText = 'position:absolute;top:14px;left:14px;width:64px;height:64px;'
+  recBtn.style.cssText = 'position:absolute;top:8px;left:8px;width:64px;height:64px;'
     + 'border-radius:50%;border:0;cursor:pointer;padding:0;font-size:30px;line-height:1;'
     + 'background:radial-gradient(circle,#F472B6,#EC4899);box-shadow:0 4px 12px rgba(0,0,0,0.5);'
     + 'display:flex;align-items:center;justify-content:center';
@@ -2281,7 +2579,10 @@ function openVoice() {
   /* ONE CONTROL, TWO MEANINGS, AND THE STATE DECIDES -- not a second button the child
    * has to find while a red ring is counting down. Press to start; press to stop early. */
   wireTap(recBtn, function() {
-    if (voiceRecorder) stopVoiceRecording(); else startVoiceRecording();
+    /* RECORD OVER, with no mode and no confirm: with an empty slot it fills the first one,
+     * and with all three full it replaces the last one used -- and the child SEES which,
+     * because the wave starts running on that slot the moment the microphone opens. */
+    if (voiceRecorder) stopVoiceRecording(); else startVoiceRecording(nextVoiceSlot());
   }, { repeat: true });
   recWrap.appendChild(recBtn);
 
@@ -2301,6 +2602,10 @@ function openVoice() {
   back.id = 'voiceBack';
   overlay.appendChild(back);
   document.body.appendChild(overlay);
+  /* AFTER the overlay is in the document, because paintVoiceSlots resolves the slots by
+   * id and an element that is not yet attached is not findable -- so painting before this
+   * line left all three slots with no state at all, which the layout probe caught. */
+  paintVoiceSlots();
   voiceSetStage('empty');
 }
 
@@ -2324,6 +2629,12 @@ function closeVoice() {
   clearVoiceTimers();
   stopVoicePlayback();          /* disconnects nodes. NEVER audioCtx.close(). */
   voiceBuffer = null;           /* the clip dies with the panel -- and now nowhere else. */
+  /* THREE TIMES AS MUCH TO RELEASE, and the teardown discipline does not get to weaken
+   * because there is more of it. Every slot's AudioBuffer goes, the wave loop is
+   * cancelled, and the live-slot marker is cleared. */
+  voiceSlots = [null, null, null];
+  voiceLiveSlot = -1;
+  if (voiceWaveRaf) { cancelAnimationFrame(voiceWaveRaf); voiceWaveRaf = 0; }
   /* NO CHANNEL TO RELEASE. PUP-WO-0702 removed the transport entirely, so the teardown
    * that used to release a subscription now has none to release. THE TEARDOWN GUARANTEES
    * THAT REMAIN ARE THE ONES THAT MATTERED MOST and they are untouched: the generation
@@ -2340,6 +2651,7 @@ function closeVoice() {
  * which live playback calls. Nothing else here is exported for a check's convenience. */
 window.__voice = {
   buildGraph: buildVoiceGraph,
+  slotCount: VOICE_SLOT_COUNT,
   presets: VOICE_PRESETS,
   clamp: clampNum,
   MAX_RECORD_MS: MAX_RECORD_MS,
@@ -2360,6 +2672,10 @@ window.__voice = {
         return t.readyState === 'live';
       }).length : 0,
       nodes: voiceNodes.length,
+      slots: voiceSlots.map(function(b) { return !!b; }),
+      liveSlot: voiceLiveSlot,
+      target: voiceTargetSlot,
+      waveRaf: !!voiceWaveRaf,
       capturing: voiceCapturing(),
       timers: voiceTimers.length,
       preset: voicePreset,

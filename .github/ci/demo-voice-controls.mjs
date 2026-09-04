@@ -389,6 +389,88 @@ plan(23, 'the voice panel broadcasts on the camera channel instead of its own', 
   expectText: 'SENT 1 broadcast(s) on an existing channel',
 });
 
+/* §25 — THE WORDS-COVERED TEST, which is the whole work order. If two states photograph
+ * identically with the words hidden, a child cannot tell them apart -- so the plant makes
+ * the live state look exactly like the merely-filled one. NOTHING ELSE CHANGES: the
+ * recording still works, the state string is still right, and only the PICTURE collapses.
+ * That is the defect Scotty described. */
+plan(25, 'the live slot paints exactly like a filled one', {
+  mutate: (s) => sub(s, "    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);",
+                        "    var amp = filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY;\n    if (live) { /* PLANT: live looks like filled */ }"),
+  expectText: 'PHOTOGRAPHICALLY IDENTICAL with words covered',
+});
+
+/* AND THE OTHER HALF: a filled slot that looks empty. Nothing shows a slot holds anything
+ * was one of Scotty's three complaints by name. */
+plan(25, 'a filled slot paints exactly like an empty one', {
+  mutate: (s) => sub(s, "    el.style.borderStyle = filled ? 'solid' : 'dashed';",
+                        "    el.style.borderStyle = 'dashed';"),
+  expectText: 'PHOTOGRAPHICALLY IDENTICAL with words covered',
+});
+
+/* §26 — COLOUR ALONE. The states still differ, and ONLY by colour, which is what fails
+ * outdoors on a washed-out screen. Every non-colour signal is flattened at once. */
+plan(26, 'the three states differ by colour alone', {
+  mutate: (s) => sub(sub(sub(s,
+      "    el.style.borderStyle = filled ? 'solid' : 'dashed';", "    el.style.borderStyle = 'solid';"),
+      "    el.style.borderWidth = live ? '4px' : '2px';", "    el.style.borderWidth = '2px';"),
+      "    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);",
+      "    var amp = WAVE_AMP_HOLD;"),
+  expectText: 'differ by COLOUR ALONE',
+});
+
+/* §27 — A STATIC WAVE IS A DECORATION. The element is there, the shape is right, the
+ * state string is right; only the MOTION is gone. A check that asserted the element would
+ * pass this. */
+plan(27, 'the wave is drawn but never animated', {
+  mutate: (s) => sub(s, "    voiceWavePhase += WAVE_SPEED;", "    /* PLANT: no phase advance. */"),
+  expectText: 'NOT MOVING while recording',
+});
+
+/* AND MOVEMENT MUST MEAN LIVE. A wave that moves on every slot carries no information at
+ * all -- the child cannot tell which one is the live one, which is the entire design. */
+plan(27, 'every slot waves, so movement means nothing', {
+  mutate: (s) => sub(s, "      path.setAttribute('d', wavePath(amp, live && !reduced ? voiceWavePhase : 0));",
+                        "      path.setAttribute('d', wavePath(amp || WAVE_AMP_HOLD, reduced ? 0 : voiceWavePhase));"),
+  expectText: 'moves on an EMPTY slot too',
+});
+
+/* §28 — REDUCED MOTION MUST NOT ERASE THE ONLY SIGNAL A NON-READER HAS. Stillness is
+ * allowed; ambiguity is not. */
+plan(28, 'reduced motion flattens the live slot into a filled one', {
+  mutate: (s) => sub(s, "    el.style.borderWidth = live ? '4px' : '2px';",
+                        "    el.style.borderWidth = (live && !voiceReducedMotion()) ? '4px' : '2px';"),
+  expectText: 'indistinguishable from a merely filled one',
+});
+
+/* §29 — THE DELETE TAP REACHING THE SLOT UNDERNEATH IT. This shipped, briefly, and a
+ * functional probe caught it: deleting a clip emptied the slot AND started recording into
+ * it, because one pointerup ran both handlers. */
+plan(29, 'the delete tap bubbles to the slot and starts a recording', {
+  mutate: (s) => sub(s, "      ['pointerdown', 'pointerup', 'pointercancel', 'click'].forEach(function(evt) {\n        del.addEventListener(evt, function(e) { e.stopPropagation(); });\n      });\n", ""),
+  expectText: 'deleting a slot STARTED A RECORDING',
+});
+
+/* AND DELETE MUST BE THERE AT ALL, on the filled slot, at 44px -- never a long press. */
+plan(29, 'the delete control is hidden on filled slots too', {
+  mutate: (s) => sub(s, "    if (del) del.style.display = filled ? 'flex' : 'none';",
+                        "    if (del) del.style.display = 'none';"),
+  expectText: 'delete control is not present on a filled slot',
+});
+
+/* §3 — THE SECOND AXIS MUST BE CLAMPED LIKE THE FIRST. A new slider is a new way to reach
+ * an AudioParam, and cave's wet ceiling IS the headroom derivation rather than a taste. */
+plan(3, "cave's wet mix is taken straight from the slider", {
+  mutate: (s) => sub(s, "    var wet = ctx.createGain(); wet.gain.value = clampNum(valueB, CAVE_WET_MIN, CAVE_WET_MAX);",
+                        "    var wet = ctx.createGain(); wet.gain.value = valueB;"),
+  expectText: 'reached an AudioParam unclamped',
+});
+
+plan(3, 'the cave wet ceiling is raised past its headroom derivation', {
+  mutate: (s) => sub(s, "var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.45;", "var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.95;"),
+  expectText: 'CLIP (peak > 1)',
+});
+
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);
 const results = [];
 for (const q of QUEUE) results.push(await scenario(q.section, q.label, q.spec));

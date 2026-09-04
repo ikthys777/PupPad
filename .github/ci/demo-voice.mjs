@@ -155,13 +155,20 @@ try {
         if (na <= 0 || nb <= 0) return 1;
         return 1 - d / Math.sqrt(na * nb);
       }
-      async function render(id, value) {
+      /* THE PRESET SHAPE CHANGED AND THIS SILENTLY PASSED `undefined`, WHICH clampNum
+       * TURNS INTO THE MINIMUM. `p.def` became `p.a.def` when PUP-WO-0703 gave each preset
+       * a second axis, and every render here then used the LOW END of every range -- so up
+       * and down came out spectrally IDENTICAL, distance exactly 0.0000, which is what
+       * caught it. §3's sweep had the same rot and reported "36 positions" while testing
+       * ONE point per preset, green. A stale field name does not throw; it becomes a
+       * default, and a default is the quietest possible wrong answer. */
+      async function render(id, value, valueB) {
         const probe = new OfflineAudioContext(1, 8, SR);
         const buf = makeBuf(probe);
         const secs = RS(buf, id, value);
         const off = new OfflineAudioContext(1, Math.ceil(SR * secs), SR);
         const src = makeBuf(off);
-        const g = window.__voice.buildGraph(off, src, id, value);
+        const g = window.__voice.buildGraph(off, src, id, value, valueB);
         g.out.connect(off.destination);
         g.source.start();
         const out = await off.startRendering();
@@ -169,11 +176,11 @@ try {
       }
       const ps = window.__voice.presets;
       const rendered = {};
-      for (const p of ps) rendered[p.id] = await render(p.id, p.def);
+      for (const p of ps) rendered[p.id] = await render(p.id, p.a.def, p.b.def);
       /* THE NULL RESULT, FIRST. The same preset rendered twice must come out identical;
        * an instrument that has never reported "same" cannot be trusted to report
        * "different". */
-      const again = await render(ps[0].id, ps[0].def);
+      const again = await render(ps[0].id, ps[0].a.def, ps[0].b.def);
       const nullDist = cosDist(rendered[ps[0].id].spec, again.spec);
       const pairs = [];
       for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
@@ -211,12 +218,18 @@ try {
     const cl = await page.evaluate(async () => {
       const off = new OfflineAudioContext(1, 128, 24000);
       const buf = off.createBuffer(1, 64, 24000);
+      /* BOTH AXES, because PUP-WO-0703 added a second slider to every preset and a bound
+       * that nothing probes is a bound nothing keeps. */
       const probes = [
-        { id: 'up', v: 1e6, read: (g) => g.source.playbackRate.value, lo: 0.55, hi: 2.2 },
-        { id: 'down', v: -1e6, read: (g) => g.source.playbackRate.value, lo: 0.55, hi: 2.2 },
-        { id: 'up', v: NaN, read: (g) => g.source.playbackRate.value, lo: 0.55, hi: 2.2 },
-        { id: 'robot', v: 1e9, read: (g) => g.nodes.find((n) => n.frequency).frequency.value, lo: 20, hi: 220 },
-        { id: 'cave', v: 99, read: (g) => g.nodes.find((n) => n.delayTime).delayTime.value, lo: 0.06, hi: 0.40 },
+        { id: 'up', v: 1e6, b: 3000, read: (g) => g.source.playbackRate.value, lo: 0.55, hi: 2.2 },
+        { id: 'down', v: -1e6, b: 3000, read: (g) => g.source.playbackRate.value, lo: 0.55, hi: 2.2 },
+        { id: 'up', v: NaN, b: NaN, read: (g) => g.source.playbackRate.value, lo: 0.55, hi: 2.2 },
+        { id: 'up', v: 1.5, b: 1e9, read: (g) => g.nodes.find((n) => n.type === 'lowpass').frequency.value, lo: 700, hi: 8000 },
+        { id: 'down', v: 0.8, b: -5, read: (g) => g.nodes.find((n) => n.type === 'lowpass').frequency.value, lo: 700, hi: 8000 },
+        { id: 'robot', v: 1e9, b: 0.5, read: (g) => g.nodes.find((n) => n.frequency).frequency.value, lo: 20, hi: 220 },
+        { id: 'robot', v: 70, b: 1e6, read: (g) => Math.max(...g.nodes.filter((n) => n.gain && n.gain.value > 0 && n.gain.value <= 1).map((n) => n.gain.value)), lo: 0.25, hi: 1.0 },
+        { id: 'cave', v: 99, b: 0.3, read: (g) => g.nodes.find((n) => n.delayTime).delayTime.value, lo: 0.06, hi: 0.40 },
+        { id: 'cave', v: 0.2, b: 99, read: (g) => Math.max(...g.nodes.filter((n) => n.gain && n.gain.value > 0 && n.gain.value < 0.5).map((n) => n.gain.value)), lo: 0.05, hi: 0.50 },
       ];
       const out = [];
       for (const p of probes) {
@@ -227,7 +240,7 @@ try {
          * and recorded as one rather than allowed to take the process down. */
         let got, threw = null;
         try {
-          const g = window.__voice.buildGraph(off, buf, p.id, p.v);
+          const g = window.__voice.buildGraph(off, buf, p.id, p.v, p.b);
           got = p.read(g);
         } catch (e) { threw = String((e && e.message) || e); }
         if (threw) { out.push({ id: p.id, v: String(p.v), got: 'THREW: ' + threw, inside: false }); continue; }
@@ -241,7 +254,7 @@ try {
       }
       /* The cave feedback gain is a CONSTANT below 1 and must not be reachable from any
        * slider: a feedback line at >= 1 never decays and does not stop when the clip does. */
-      const cg = window.__voice.buildGraph(off, buf, 'cave', 0.2);
+      const cg = window.__voice.buildGraph(off, buf, 'cave', 0.2, 0.35);
       const fb = cg.nodes.filter((n) => n.gain && n !== cg.out).map((n) => n.gain.value);
       return { out, fb };
     });
@@ -262,9 +275,14 @@ try {
       const RS = new Function('return ' + RS_SRC)();
       const SR = 24000, DUR = 0.4;
       const out = [];
+      /* THE FULL NEW GRID, NOT THE OLD ONE. Two axes per preset means the peak has to
+       * stay below 1 across their PRODUCT, not along one edge of it -- and the old sweep
+       * was reading `p.min`/`p.max`, which no longer exist, so every position collapsed to
+       * the same clamped minimum and "36 positions" was one position tested 9 times. */
       for (const p of window.__voice.presets) {
-        for (let i = 0; i <= 8; i++) {
-          const v = p.min + (p.max - p.min) * (i / 8);
+        for (let i = 0; i <= 5; i++) for (let j = 0; j <= 5; j++) {
+          const v = p.a.min + (p.a.max - p.a.min) * (i / 5);
+          const vb = p.b.min + (p.b.max - p.b.min) * (j / 5);
           const probe = new OfflineAudioContext(1, 8, SR);
           const mk = (c) => { const b = c.createBuffer(1, Math.floor(SR * DUR), SR); const d = b.getChannelData(0);
             for (let k = 0; k < d.length; k++) { const t = k / SR;
@@ -272,13 +290,13 @@ try {
             return b; };
           const secs = RS(mk(probe), p.id, v);
           const off = new OfflineAudioContext(1, Math.ceil(SR * secs), SR);
-          const g = window.__voice.buildGraph(off, mk(off), p.id, v);
+          const g = window.__voice.buildGraph(off, mk(off), p.id, v, vb);
           g.out.connect(off.destination); g.source.start();
           const r = await off.startRendering();
           const d = r.getChannelData(0);
           let pk = 0, sum = 0;
           for (let k = 0; k < d.length; k++) { const a = Math.abs(d[k]); if (a > pk) pk = a; sum += d[k] * d[k]; }
-          out.push({ id: p.id, v: Number(v.toFixed(3)), peak: pk, rms: Math.sqrt(sum / d.length) });
+          out.push({ id: p.id, v: Number(v.toFixed(3)), b: Number(vb.toFixed(3)), peak: pk, rms: Math.sqrt(sum / d.length) });
         }
       }
       return out;
@@ -286,9 +304,9 @@ try {
     const clipped = peaks.filter((x) => x.peak > 1);
     const silent = peaks.filter((x) => x.rms < 0.005);
     if (clipped.length) bad(`${clipped.length} of ${peaks.length} preset/slider positions CLIP (peak > 1)`,
-      clipped.slice(0, 4).map((x) => `${x.id}@${x.v} peak ${x.peak.toFixed(2)}`).join(' | ') + ' — hard clipping is a buzz in a child\'s ear');
+      clipped.slice(0, 4).map((x) => `${x.id}@${x.v}/${x.b} peak ${x.peak.toFixed(2)}`).join(' | ') + ' — hard clipping is a buzz in a child\'s ear');
     else if (silent.length) bad(`${silent.length} position(s) are effectively SILENT`,
-      silent.slice(0, 4).map((x) => `${x.id}@${x.v} rms ${x.rms.toFixed(4)}`).join(' | '));
+      silent.slice(0, 4).map((x) => `${x.id}@${x.v}/${x.b} rms ${x.rms.toFixed(4)}`).join(' | '));
     else ok(`no clipping and no silence at any of ${peaks.length} preset/slider positions (worst peak ${Math.max(...peaks.map((x) => x.peak)).toFixed(2)})`);
   }
 
@@ -642,7 +660,7 @@ try {
         const knob = t.lastChild;
         const p = window.__voice.presets.find((x) => x.id === window.__voice.state().preset);
         const kr = knob.getBoundingClientRect();
-        return { knobX: kr.left + kr.width / 2, v: Number(t.getAttribute('aria-valuenow')), lo: p.min, hi: p.max };
+        return { knobX: kr.left + kr.width / 2, v: Number(t.getAttribute('aria-valuenow')), lo: p.a.min, hi: p.a.max };
       });
       const tapX = box.x + box.width * frac;
       const drift = Math.abs(s.knobX - tapX);
@@ -1223,6 +1241,228 @@ try {
     } finally { page.off('request', onReq); }
   }
 
+  /* ---- §25. THE WORDS-COVERED TEST — PUP-WO-0703 acceptance 2 -----------
+   *
+   * THE CENTRAL ONE, and it is measured rather than argued. Scotty, from watching Buddy:
+   * the record button dims everything else and stays bright, and NOTHING TELLS A
+   * NON-READER THAT RECORDING IS HAPPENING. DIMMING SAYS WHAT IS UNAVAILABLE; NOTHING SAID
+   * WHAT WAS HAPPENING.
+   *
+   * So every painted word is hidden and the SLOT ROW IS PHOTOGRAPHED in each state. The
+   * four questions the work order asks — is it recording, into which slot, was a clip
+   * saved, which slot is playing — are each answered by the row LOOKING DIFFERENT with no
+   * text on screen. Byte-comparing the images is the whole assertion: if two states
+   * photograph identically with words covered, a child cannot tell them apart. */
+  if (run(25)) {
+    const shot = async () => (await page.locator('#voiceSlot0').locator('xpath=..').screenshot()).toString('base64');
+    const maskWords = () => page.evaluate(() => {
+      /* Hide every TEXT node's paint, leaving glyphs, shapes and strokes. Emoji are
+       * pictographs and stay — a non-reader can use those; a word is what they cannot. */
+      const ov = document.getElementById('voiceOverlay');
+      const walk = document.createTreeWalker(ov, NodeFilter.SHOW_TEXT);
+      const seen = [];
+      let n;
+      while ((n = walk.nextNode())) {
+        const t = (n.textContent || '').trim();
+        if (/[A-Za-z]{2,}/.test(t) && n.parentElement) { n.parentElement.style.visibility = 'hidden'; seen.push(t); }
+      }
+      return seen;
+    });
+
+    await page.evaluate(() => { closeVoice(); openVoice(); });
+    await page.waitForTimeout(200);
+    const hidden = await maskWords();
+    const empty = await shot();
+
+    await finger('#voiceSlot1');
+    await page.waitForTimeout(700);
+    await maskWords();
+    const recording = await shot();
+    const liveDuring = await page.evaluate(() => window.__voice.state().liveSlot);
+
+    await finger('#voiceSlot1');
+    await page.waitForTimeout(1100);
+    await maskWords();
+    const holding = await shot();
+
+    await finger('#voiceSlot1');
+    await page.waitForTimeout(250);
+    await maskWords();
+    const playing = await shot();
+    const livePlay = await page.evaluate(() => window.__voice.state().liveSlot);
+    await page.evaluate(() => closeVoice());
+
+    const named = { empty, recording, holding, playing };
+    const pairs = [];
+    const keys = Object.keys(named);
+    for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) {
+      if (named[keys[i]] === named[keys[j]]) pairs.push(`${keys[i]} == ${keys[j]}`);
+    }
+    if (!hidden.length) bad('no painted words were found to hide', 'the mask did nothing, so this proved nothing');
+    else if (liveDuring !== 1) bad(`recording did not mark slot 1 live (liveSlot ${liveDuring})`, 'this section proved nothing');
+    else if (livePlay !== 1) bad(`playback did not mark slot 1 live (liveSlot ${livePlay})`);
+    else if (pairs.length) bad(`${pairs.length} state pair(s) are PHOTOGRAPHICALLY IDENTICAL with words covered`,
+      `${pairs.join(', ')} — a child cannot read the label, so if the picture is the same the state is invisible`);
+    else ok(`with ${hidden.length} painted word(s) hidden, empty / recording / holding / playing all photograph DIFFERENTLY, and the live slot is identified (slot ${liveDuring})`);
+  }
+
+  /* ---- §26. THE THREE STATES, AND NOT ON COLOUR ALONE ------------------- */
+  if (run(26)) {
+    const st = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const amp = (i) => {
+        const d = document.querySelector('#voiceSlot' + i + ' .voice-wave').getAttribute('d') || '';
+        const ys = d.split(/[ML]/).filter(Boolean).map((seg) => parseFloat(seg.trim().split(/\s+/)[1]));
+        return Math.round((Math.max(...ys) - Math.min(...ys)) * 10) / 10;
+      };
+      const read = (i) => {
+        const el = document.getElementById('voiceSlot' + i);
+        const cs = getComputedStyle(el);
+        return { state: el.dataset.state, borderStyle: cs.borderTopStyle, borderWidth: cs.borderTopWidth,
+                 amp: amp(i), del: getComputedStyle(el.querySelector('.voice-slot-del')).display };
+      };
+      const out = { empty: read(0) };
+      /* Fake a filled slot without a microphone: the STATES are what is under test here. */
+      const ctx = getAudioCtx();
+      window.voiceSlots[0] = ctx.createBuffer(1, 2400, 24000);
+      paintVoiceSlots();
+      out.holding = read(0);
+      setVoiceLiveSlot(0);
+      out.live = read(0);
+      setVoiceLiveSlot(-1);
+      closeVoice();
+      return out;
+    });
+
+    /* NOT ON COLOUR ALONE: the assertion is that the states differ in properties that
+     * survive a washed-out screen outdoors — the outline's STYLE, its WIDTH, the wave's
+     * AMPLITUDE, and whether a control is present. Colour may also differ; it may not be
+     * the only thing that does. */
+    const nonColour = (a, b) => ['borderStyle', 'borderWidth', 'amp', 'del'].filter((k) => a[k] !== b[k]);
+    const ehc = nonColour(st.empty, st.holding);
+    const hlc = nonColour(st.holding, st.live);
+    const elc = nonColour(st.empty, st.live);
+    if (st.empty.state !== 'empty' || st.holding.state !== 'holding' || st.live.state !== 'live')
+      bad('the three states were not reached', JSON.stringify(st));
+    else if (!ehc.length || !hlc.length || !elc.length)
+      bad('two states differ by COLOUR ALONE',
+        `empty/holding [${ehc}], holding/live [${hlc}], empty/live [${elc}] — it must survive a dim screen outdoors`);
+    else if (st.empty.del !== 'none' || st.holding.del === 'none')
+      bad('the delete control is not exactly on the filled slots',
+        `empty shows ${st.empty.del}, holding shows ${st.holding.del} — an empty slot must have nothing to press by mistake`);
+    else ok(`three states differ without relying on colour — empty/holding by [${ehc.join(',')}], holding/live by [${hlc.join(',')}]; delete appears only when filled`);
+  }
+
+  /* ---- §27. THE WAVE IS ANIMATING, SAMPLED AT TWO TIMES ----------------- */
+  if (run(27)) {
+    /* CHECK THE EFFECT, NEVER THE INSTALLATION. A static wave is a decoration and a moving
+     * one is a state, so the assertion is that the PATH CHANGES between two samples — not
+     * that an element, a class or a rAF handle exists. */
+    const move = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const d = () => document.querySelector('#voiceSlot0 .voice-wave').getAttribute('d');
+      const sample = async () => { const a = d(); await new Promise((r) => setTimeout(r, 220)); return [a, d()]; };
+      const idle = await sample();
+      const b = document.getElementById('voiceSlot0');
+      b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 700));
+      const rec = await sample();
+      const recLive = window.__voice.state().liveSlot;
+      stopVoiceRecording();
+      await new Promise((r) => setTimeout(r, 1100));
+      const held = await sample();
+      playVoice(0);
+      await new Promise((r) => setTimeout(r, 200));
+      const play = await sample();
+      const playLive = window.__voice.state().liveSlot;
+      closeVoice();
+      return { idle, rec, held, play, recLive, playLive };
+    });
+    const moving = (pair) => pair[0] !== pair[1];
+    if (move.recLive !== 0) bad(`recording did not go into slot 0 (liveSlot ${move.recLive})`, 'this section proved nothing');
+    else if (!moving(move.rec)) bad('the wave is NOT MOVING while recording',
+      'a static wave is a decoration; a moving one is a state, and this is the only signal a non-reader has');
+    else if (move.playLive !== 0) bad(`playback did not go from slot 0 (liveSlot ${move.playLive})`);
+    else if (!moving(move.play)) bad('the wave is NOT MOVING while playing');
+    else if (moving(move.idle)) bad('the wave moves on an EMPTY slot too',
+      'then movement does not mean "this slot is the live one" and the signal carries nothing');
+    else if (moving(move.held)) bad('the wave moves on a merely FILLED slot',
+      'movement must mean live, or it means nothing');
+    else ok('the wave moves while recording AND while playing, and is still on an empty or merely filled slot — movement means LIVE');
+  }
+
+  /* ---- §28. REDUCED MOTION STILLS THE WAVE AND KEEPS THE STATE ---------- */
+  if (run(28)) {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    try {
+      const rm = await page.evaluate(async () => {
+        closeVoice(); openVoice();
+        const ctx = getAudioCtx();
+        window.voiceSlots[0] = ctx.createBuffer(1, 2400, 24000);
+        window.voiceSlots[1] = ctx.createBuffer(1, 2400, 24000);
+        paintVoiceSlots();
+        setVoiceLiveSlot(0);
+        const d = (i) => document.querySelector('#voiceSlot' + i + ' .voice-wave').getAttribute('d');
+        const a0 = d(0);
+        await new Promise((r) => setTimeout(r, 320));
+        const b0 = d(0);
+        const el = (i) => { const e = document.getElementById('voiceSlot' + i); const cs = getComputedStyle(e);
+          return { w: cs.borderTopWidth, s: cs.borderTopStyle, d: d(i) }; };
+        const live = el(0), other = el(1);
+        setVoiceLiveSlot(-1); closeVoice();
+        return { moved: a0 !== b0, live, other };
+      });
+      if (rm.moved) bad('the wave still animates under prefers-reduced-motion');
+      else if (rm.live.d === rm.other.d && rm.live.w === rm.other.w)
+        bad('under reduced motion the LIVE slot is indistinguishable from a merely filled one',
+          'stillness is allowed; ambiguity is not — reduced motion must not erase the only signal a non-reader has');
+      else ok(`under reduced motion the wave is still, and the live slot is still distinguishable (border ${rm.live.w} vs ${rm.other.w}, different path)`);
+    } finally { await page.emulateMedia({ reducedMotion: 'no-preference' }); }
+  }
+
+  /* ---- §29. THREE SLOTS: RECORD, RECORD OVER, DELETE — with a finger ---- */
+  if (run(29)) {
+    await page.evaluate(() => { closeVoice(); openVoice(); });
+    await page.waitForTimeout(200);
+    const rec = async (sel) => { await finger(sel); await page.waitForTimeout(700); await finger(sel); await page.waitForTimeout(1000); };
+    await rec('#voiceSlot0');
+    await rec('#voiceSlot1');
+    await rec('#voiceSlot2');
+    const full = await page.evaluate(() => window.__voice.state());
+    if (full.slots.filter(Boolean).length !== 3) bad(`only ${full.slots.filter(Boolean).length} of 3 slots filled with a finger`, JSON.stringify(full.slots));
+    else {
+      ok('three slots each recorded into with a finger');
+      /* RECORD OVER: with every slot full the microphone replaces the last one used, and
+       * the wave runs on THAT slot so the child sees which is being replaced. */
+      const before = await page.evaluate(() => window.__voice.state().target);
+      await finger('#voiceRecBtn');
+      await page.waitForTimeout(500);
+      const over = await page.evaluate(() => window.__voice.state());
+      await finger('#voiceRecBtn');
+      await page.waitForTimeout(1000);
+      const afterOver = await page.evaluate(() => window.__voice.state());
+      if (over.liveSlot !== before) bad(`record-over went to slot ${over.liveSlot}, not the last-used slot ${before}`);
+      else if (afterOver.slots.filter(Boolean).length !== 3) bad('recording over lost a slot', JSON.stringify(afterOver.slots));
+      else ok(`recording with all three full replaces the last-used slot (${before}) and the wave runs on it`);
+
+      const box = await page.locator('#voiceSlot1 .voice-slot-del').boundingBox({ timeout: 2500 }).catch(() => null);
+      if (!box) bad('the delete control is not present on a filled slot');
+      else if (box.width < 44 || box.height < 44) bad(`the delete control is ${box.width}x${box.height}`, 'at least 44px, and never a long press');
+      else {
+        await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForTimeout(300);
+        const del = await page.evaluate(() => window.__voice.state());
+        if (del.slots[1]) bad('a finger on the delete control did not empty the slot');
+        else if (del.slots.filter(Boolean).length !== 2) bad('delete removed the wrong number of slots', JSON.stringify(del.slots));
+        else if (del.stage === 'recording') bad('deleting a slot STARTED A RECORDING',
+          'the delete tap reached the slot underneath it — the two handlers ran on one pointerup');
+        else ok(`a finger on the ${Math.round(box.width)}px delete control empties exactly that slot and starts nothing`);
+      }
+    }
+    await page.evaluate(() => closeVoice());
+  }
+
 } finally { await browser.close(); server.close(); }
 
 if (failures.length) {
@@ -1231,4 +1471,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4; four presets are spectrally distinct through the shipping graph builder, null result first; every value is clamped and nothing clips or goes silent across 36 preset/slider positions; NO MICROPHONE SURVIVES TEARDOWN from any state, including repeated taps during a pending grant and a grant \u2014 or a REJECTION \u2014 that crosses a teardown; one finger tap leaves from idle, mid-record and mid-playback; the recorder stops on its own timer; an open microphone locks out playback; an abandoned clip does not appear in the next panel; a second openVoice is a no-op and a client without removeChannel still falls back to unsubscribe; the slider's knob lands under the finger; the four preset glyphs are distinct code points, with rendered distinctness UNRESOLVED wherever the pad's own glyphs do not render; the panel is INDISTINGUISHABLE configured and unconfigured; A FULL VOICE SESSION ASKS FOR ZERO CHANNELS, MAKES ZERO OUTBOUND REQUESTS AND OPENS ZERO SOCKETS with a client standing by that would have given one; and THE MAP OPENS, TRACKS A REAL FIX, DRAWS AND CLEARS while asking for no channel and broadcasting nothing \u2014 it no longer tells another device where the child is, which is NOT the same as being silent: the OpenStreetMap tile layer is named above and is Scotty's open ratification, not this work order's claim.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} \u2014 button 0 opens the panel to a real finger with the pad still 4+4; four presets are spectrally distinct through the shipping graph builder, null result first; every value on BOTH axes is clamped and nothing clips or goes silent across the full 144-position preset x slider grid; NO MICROPHONE SURVIVES TEARDOWN from any state, including repeated taps during a pending grant and a grant \u2014 or a REJECTION \u2014 that crosses a teardown; one finger tap leaves from idle, mid-record and mid-playback; the recorder stops on its own timer; an open microphone locks out playback; an abandoned clip does not appear in the next panel; the panel is INDISTINGUISHABLE configured and unconfigured; a full voice session asks for ZERO channels and makes ZERO outbound requests; the map opens, tracks a real fix, draws and clears while telling no other device where the child is; AND \u2014 PUP-WO-0703 \u2014 WITH EVERY PAINTED WORD HIDDEN, empty / recording / holding / playing all photograph DIFFERENTLY and the live slot is identified; the three slot states differ WITHOUT relying on colour; the wave MOVES while recording and while playing and is still otherwise; reduced motion stills it without making it ambiguous; and three slots record, record over and delete under a finger.`);
