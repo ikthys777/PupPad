@@ -339,6 +339,39 @@ findings entirely.
 > PR, verify it resolves, and only then message. `SendMessage` is the POINTER, never the
 > RECORD.**
 
+**A NOTIFIER MUST MEASURE THE CONDITION IT NAMES — AND THE VERB BOUNDARY IS WHAT MADE ITS
+FIRST MISFIRE FREE.** *(Recorded 2026-09-04, from the watchdog nudge's FIRST LIVE FIRING.)*
+
+The nudge fired correctly formed — marked machine-generated, once per PR, and saying
+**REVIEW** rather than merge, exactly to the three conditions. **Its premise was false.** It
+reported *"PR #68 has been open and GREEN for 18 min."* Measured at the same moment:
+
+```
+$ gh pr view 68 --json statusCheckRollup
+Checks: FAILURE          Publish both copies: SKIPPED     Deploy to GitHub Pages: SKIPPED
+$ gh run list --branch build/wo-0704-celebration
+completed  failure  ...  1m0s
+```
+
+**One run, `failure`, and the rollup says `FAILURE` in the first row.** The two `SKIPPED`
+jobs are the plausible trap — *a green-ness test that tolerates `SKIPPED` and reads only
+whether anything succeeded will call this PR green.*
+
+> **Same root as everything else this week: the condition was ASSERTED rather than MEASURED.
+> A detector that reports a state must read that state, not infer it from the shape of the
+> reply.** *"There is a PR and nothing obviously failed"* is not *"it is green."*
+
+**AND THIS IS WHY THE VERB WAS THE RULING.** The nudge named **no action**. So a false
+premise cost **one look and nothing else** — CC-A checked, found it red, and carried on.
+**Had the nudge said *"MERGE #68"*, a compliant agent acting on a correctly-formatted,
+authoritative-looking instruction would have merged a PR whose CI had failed 18 minutes
+earlier.**
+
+*The condition that looked like caution on the day it was written is the one that paid on
+the mechanism's first live use. Keep it: **a notification moves attention; the moment it
+carries an action it is a remote control**, and it inherits the correctness of whatever
+computes its premise.*
+
 **AN ALARM ROUTED ONLY TO SOMEONE WHO CANNOT ACT ON IT IS A DETECTOR WITH NO ACTOR.**
 *(Ruled 2026-09-04, and it is the SECOND failure of this loop's notification path in two
 days — a different one.)*
