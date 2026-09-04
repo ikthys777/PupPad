@@ -85,6 +85,31 @@ ships — was travelling by the one channel we already knew does not survive.**
 
 > **A review is an artifact. If it exists only in a context window, it does not exist.**
 
+### 9a. RECORD WHAT WAS EXAMINED AND UPHELD, NOT ONLY WHAT WAS CHANGED
+
+*Added 2026-09-04, same ruling.*
+
+**A review that lists only requested changes makes the builder's judgment invisible.** Every
+design call the builder made and the reviewer examined and KEPT belongs in the record by
+name, with the reason it survived — **not merely left unmentioned.**
+
+Three reasons, and the third is the one that pays:
+
+- **Silence is ambiguous.** *"Not mentioned"* reads identically as *not noticed*, *noticed
+  and tolerated*, and *examined and endorsed.* Only one of those is a ruling.
+- **It protects a good decision from the next reader.** An upheld call that is written down
+  survives the reviewer; one that is merely un-objected-to gets re-litigated by whoever comes
+  next, usually against the work order's original wording rather than the reasoning that
+  beat it.
+- **UPHOLDING JUDGMENT ON THE RECORD IS WHAT MAKES THE NEXT FLAG-AND-STOP CREDIBLE.** A
+  builder who is only ever corrected learns that raising a deviation costs something. A
+  builder whose deviations are examined and sometimes ratified **in writing** learns that
+  the channel works — and that is the channel this whole arrangement depends on.
+
+**The builder's `FEEDBACK.md` records the deviation; the reviewer's PR comment records the
+ruling on it. Both, every time.**
+
+
 
 ---
 
