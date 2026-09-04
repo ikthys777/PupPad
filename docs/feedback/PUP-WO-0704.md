@@ -459,3 +459,37 @@ behaviour its clause asserts, with no plant pre-empted by an earlier clause** ·
 §5 trap itself**: the words-covered assertion cannot pass on the winning clear's leftover
 sparks, confirmed structurally and measured at 53.95% with 38 sparks in frame and 53.95%
 with none.
+
+---
+
+# WHY THIS BRANCH TOUCHES THE VOICE CHECK
+
+**`.github/ci/demo-voice.mjs` and `.github/ci/demo-voice-controls.mjs` belong to
+`PUP-WO-0703`, not to this work order.** One commit on this branch changes them —
+`check 26 §27 raced a callback it started itself` — and this section exists so the next
+reader does not have to wonder why the celebration touched the voice panel's check.
+*(Kept here rather than split out by CC-A's ruling; 0704's fence permits `.github/`, and
+the alternative was leaving the branch red with the cause known and unfixed.)*
+
+**It is not a celebration change and it is not a voice-panel change. It is a defect in a
+CHECK, and both halves of it are mine.**
+
+Check 26 §27 plays slot 0, re-arms the live marker by hand, and probes 150 ms later. The
+module change `PUP-WO-0703` shipped — a finished playback's `onended` releasing its graph
+and clearing the live marker — fires at about 400 ms, and the probe window opened at
+roughly 250 ms and closed at 400 ms. **Whether the callback landed inside the window was
+decided by how fast the machine was.** CI is slower than this one, so it went red on a PR
+that touches neither the voice panel nor that check.
+
+**The section's own comment names the hazard and then walks into it:** *"a 0.7s clip at the
+default preset's 1.70x is over in about 0.4s — the positive control would then be sampling
+a playback that had already finished."* It says that, and leaves the playback running.
+**Same family as everything else in this work order: a comment describing a property its
+code does not have. I wrote the comment and the `onended` one work order apart.**
+
+**Reproduced rather than re-run.** Three local runs green; green under full CPU saturation;
+then the probe window widened to 700 ms so the callback was *certain* to land inside it —
+**red 3 for 3, with CI's exact message.** The fix stops the playback before re-arming, so a
+pending `onended` is inert on a token mismatch. **It is green at 700 ms now — the window
+that failed 3/3 — which is the test that separates closing a race from hiding it behind a
+shorter wait.** All three §27 plants remain red for their own stated reasons.
