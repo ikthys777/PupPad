@@ -479,10 +479,9 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0703` — voice slots + the sine-wave feedback** | **DISPATCHED 2026-09-04.** Three slots, more sliders, and **an invariant-1 fix**: nothing tells a non-reader that recording is happening | in flight |
-| 2 | **`PUP-WO-0704` — Block Pop's celebration** | authored. **§0 is a measurement first**: the flash and spark volleys already exist in `celebrate()`, so find what suppresses them before adding | nobody |
-| 3 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
-| 4 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
+| 1 | **`PUP-WO-0704` — Block Pop's celebration** | authored. **§0 is a measurement first**: `flash()` and the spark volleys already exist in `celebrate()`, and `burstAt` returns 0 outright under reduced motion — which Samsung ships ON | nobody |
+| 2 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
+| 3 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
 | 4 | `PUP-WO-0112` — the CI job split | scoped, no file | nobody |
 | 5 | `PUP-WO-0113` — check 11 fires on English prose | scoped in §4a, no file | nobody |
