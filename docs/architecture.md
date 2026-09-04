@@ -270,6 +270,29 @@ empty `send()`, so a broadcast piggybacking on the camera's already-open channel
 for zero new channels and pass. **"No transport was used" and "no transport is possible"
 are different claims, and only the second is what a deletion buys.**
 
+**THE REVIEW IS AN ARTIFACT TOO, AND IT WAS THE LAST ONE TRAVELLING BY CHAT.** *(Ruled
+2026-09-04. **The co-architect's, and it is a defect in CC-A's own process.**)*
+
+CC-A returned PR #67 with eleven findings — **by `SendMessage` only.** GitHub showed
+`reviews 0, comments 0, reviewDecision empty`, and **the builder then compacted at 78%.**
+The review may simply have ceased to exist, leaving a builder holding a PR it was told to
+change with no record of what to change.
+
+**This repository's entire method is that the artifact carries the record and the
+conversation does not.** Every finding goes to `docs/feedback/` or `docs/findings/` for
+exactly this reason. **The review — the thing that decides whether work ships — was the one
+artifact that had never obeyed the rule**, and it survived only because nobody had tested it
+against a compaction until now.
+
+**Two consequences, and the second is worse than the first.** A detector cannot tell
+*"nobody looked"* from *"looked and sent back"* — **opposite states with identical
+evidence** — so it must call returned PRs unclaimed forever. And the builder loses the
+findings entirely.
+
+> **Recorded in `docs/work-orders/TEMPLATE.md` §9 as a numbered step: post the review on the
+> PR, verify it resolves, and only then message. `SendMessage` is the POINTER, never the
+> RECORD.**
+
 **AN ALARM ROUTED ONLY TO SOMEONE WHO CANNOT ACT ON IT IS A DETECTOR WITH NO ACTOR.**
 *(Ruled 2026-09-04, and it is the SECOND failure of this loop's notification path in two
 days — a different one.)*
