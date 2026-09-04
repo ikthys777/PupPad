@@ -96,8 +96,12 @@ what the claim actually means.
   clean. **A filter that hides the defect it is hunting** is the same shape as a check that
   recomputes the formula it is checking. Read by position now.
 
-**Final state: 51 of 51 plants red for their own stated reason; check 26 green at 46
-assertions; the full 21-check regression sweep green; the fence diffs to empty.**
+**Final state at `835c04d`: 51 of 51 plants red for their own stated reason; check 26 green
+at 46 assertions; the full 21-check regression sweep green; the fence diffs to empty.**
+
+**That state did not survive review.** CC-A found five HIGH findings at this commit, three
+of them created by the repairs recorded above — see
+`docs/findings/PUP-WO-0703-review-round2.md`, which supersedes these numbers.
 
 ## A process note that is mine, not the pass's
 

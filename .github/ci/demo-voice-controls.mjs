@@ -14,6 +14,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
 const REPO = resolve(join(import.meta.dirname, '..', '..'));
@@ -143,7 +144,7 @@ plan(6, 'the exit is removed while a recording is running', {
 /* §7 — THE HARD STOP. A three-year-old will hold the button; the timer is the only thing
  * that does not care. */
 plan(7, 'the cap never fires — nothing stops the recorder but a finger', {
-  mutate: (s) => sub(s, "    voiceTimers.push(setTimeout(function() { stopVoiceRecording(); }, MAX_RECORD_MS));",
+  mutate: (s) => sub(s, "    stopTimer = setTimeout(function() { stopVoiceRecording(); }, MAX_RECORD_MS);\n    voiceTimers.push(stopTimer);",
                         "    /* PLANT: no timed stop at all. */"),
   expectText: 'STILL RUNNING past its own cap',
 });
@@ -177,17 +178,30 @@ plan(12, 'the pending-grant guard is removed — taps during the window orphan m
   expectText: 'LIVE after the child left',
 });
 
-/* AND THE OTHER HALF: a grant belonging to a panel that has been closed and REOPENED. */
-plan(5, 'the generation token is dropped — a stale grant is adopted by the new panel', {
-  mutate: (s) => sub(s, "    if (gen !== voiceGen || !document.getElementById('voiceOverlay')) {",
-                        "    if (false) {"),
-  expectText: 'LIVE after closing the panel',
-});
+/* THERE USED TO BE A SECOND ENTRY HERE AND IT WAS BYTE-IDENTICAL TO THE ONE ABOVE --
+ * same mutation, same expected text -- so 51 plants were 50 defects, and its label claimed
+ * a close-then-REOPEN case its scenario never staged. A described defect reading like a
+ * demonstrated one, inside the list of demonstrations.
+ *
+ * IT IS GONE RATHER THAN REWRITTEN, AND THE REASON IS WORTH MORE THAN THE PLANT WAS.
+ * The obvious rewrite is to remove the OTHER half of the guard -- keep the overlay check,
+ * drop the generation -- and run it against §15, which does stage a grant in flight across
+ * a teardown AND a reopen. Written, run, and it reported GREEN, correctly: a stale grant
+ * adopted by the reopened panel still cannot leak a microphone, because THE TRACKS ARE
+ * PROTECTED UNCONDITIONALLY ON THREE OTHER PATHS -- `rec.onstop` stops the stream its own
+ * recorder owns before it checks anything, and `closeVoice` stops whatever `voiceStream`
+ * points at. A PLANT THAT APPLIES IS NOT A PLANT THAT REPRODUCES, and this one is defence
+ * in depth working rather than an assertion that is missing.
+ *
+ * So the generation half of the ON-ARRIVAL guard has no plant, and that is stated rather
+ * than papered over. What it actually defends is state, not tracks; §18 plants the
+ * generation half of the DECODE guard, where the consequence -- the previous session's
+ * clip installed into the fresh panel -- is observable. */
 
 /* §15 — the stale continuation clearing a live panel's guard: the code as first written. */
 plan(15, "a stale grant clears voicePending before checking its generation", {
-  mutate: (s) => sub(s, "      return;\n    }\n    voicePending = false;\n    voiceStream = stream;",
-                        "      voicePending = false;\n      return;\n    }\n    voiceStream = stream;"),
+  mutate: (s) => sub(s, "      return;\n    }\n    voicePending = false;\n",
+                        "      voicePending = false;\n      return;\n    }\n"),
   expectText: 'LIVE after a grant crossed a teardown',
 });
 
@@ -293,7 +307,7 @@ plan(21, 'a rejected grant stops checking its generation', {
  * catch already asked `voiceBuffer ? 'ready' : 'empty'`; these two transitions did not,
  * and a stage of 'empty' with a live buffer leaves the tiles able to play it. */
 plan(17, 'a failed decode paints empty over a surviving clip', {
-  mutate: (s) => sub(s, "        setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty'); doSound('error');",
+  mutate: (s) => sub(s, "        voiceSettle(); doSound('error');",
                         "        setVoiceLiveSlot(-1); voiceSetStage('empty'); doSound('error');"),
   expectText: 'says EMPTY',
 });
@@ -408,9 +422,19 @@ plan(23, 'the voice panel broadcasts on the camera channel instead of its own', 
  *
  * Collapsing the STATE collapses everything derived from it in one substitution, which is
  * what "the live slot paints exactly like a filled one" actually means. */
+/* AND WHAT IT DEMONSTRATES CHANGED WHEN §25 STARTED STILLING THE WAVE, which is worth
+ * recording rather than quietly re-pointing. A build where no slot ever paints as LIVE
+ * cannot produce a moving wave at all -- so the first thing this plant reaches is §25's own
+ * camera control, which fails because two photographs of what should be a moving wave come
+ * out identical. That is the RIGHT report: the section says its instrument has nothing to
+ * see rather than pretending to compare states with it. The ROW comparison keeps its own
+ * plant, one line below, which collapses `filled` and leaves the live paint intact.
+ *
+ * The state-collapse itself is still caught head-on by §26, whose first branch is that the
+ * three states were never reached. */
 plan(25, 'the live slot paints exactly like a filled one', {
   mutate: (s) => sub(s, "    var live = (voiceLiveSlot === i);", "    var live = false;"),
-  expectText: 'SLOT ROW cannot tell',
+  expectText: 'came out byte-identical',
 });
 
 plan(25, 'a filled slot paints exactly like an empty one', {
@@ -499,12 +523,12 @@ plan(3, 'the cave wet ceiling is raised past its headroom derivation', {
  * with no wave, no ring and an idle-looking button, and then writing the clip back into
  * the slot the child had just emptied. */
 plan(30, 'deleting a slot mid-record leaves the microphone running', {
-  mutate: (s) => sub(s, "  if (voiceRecorder && voiceLiveSlot === i) {\n    voiceDeletedDuringRecord[i] = voiceGen;\n    stopVoiceRecording();\n  }\n", ""),
+  mutate: (s) => sub(s, "  if (capturingInto) {\n    voiceDeletedDuringRecord[i] = voiceGen;\n", "  if (false) {\n"),
   expectText: 'STILL RUNNING',
 });
 
 plan(30, 'the in-flight decode writes back into the deleted slot', {
-  mutate: (s) => sub(s, "        if (voiceDeletedDuringRecord[slotFor] === gen) { delete voiceDeletedDuringRecord[slotFor]; return; }\n", ""),
+  mutate: (s) => sub(s, "        if (voiceDeletedDuringRecord[slotFor] === gen) {", "        if (false) {"),
   expectText: 'the delete was UNDONE',
 });
 
@@ -535,6 +559,224 @@ plan(34, 'slider B is not dimmed with slider A', {
   mutate: (s) => sub(s, "    ['voiceSlider', 'voiceSliderB'].forEach(function(id) {", "    ['voiceSlider'].forEach(function(id) {"),
   expectText: 'not inert during a recording',
 });
+
+/* ===================================================================================
+ * PUP-WO-0703 REVIEW ROUND 2 — a plant for every assertion the review found could not
+ * fail, and for the live branches that had none.
+ *
+ * THREE OF THE FIVE HIGH FINDINGS IN THAT REVIEW WERE CREATED BY THE REPAIR FOR AN
+ * EARLIER ONE, and that is structural rather than careless: repairing an unfalsifiable
+ * assertion means asserting something NEARBY, and nearby is exactly where the same
+ * degeneracy lives -- same scenario, same arrange, same handful of values. A REPAIR IS A
+ * NEW ASSERTION AND INHERITS NONE OF THE OLD ONE'S CREDIBILITY. So every repair below is
+ * planted, including the repairs to the plants.
+ * =================================================================================== */
+
+/* §3 — THE BOUND THAT DRIFTED WITHOUT CLIPPING. Raising cave's wet ceiling to 0.50 keeps
+ * the peak sweep green (0.50 + 0.50/0.55 = 1.41 against a 0.70 source is 0.99, under 1)
+ * and the probe's own literal used to allow it. Only the pin catches this one. */
+plan(3, "the cave wet ceiling is raised to a value that still does not clip", {
+  mutate: (s) => sub(s, "var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.45;", "var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.50;"),
+  expectText: 'have DRIFTED from the app',
+});
+
+/* AND THE GRAPH'S OWN CLAMP MOVING WHILE THE CONSTANT STAYS PUT — the other direction of
+ * the same disagreement, which the pin cannot see and the probe's read must. */
+plan(3, "cave's wet is clamped to a literal instead of its constant", {
+  mutate: (s) => sub(s, "wet.gain.value = clampNum(valueB, CAVE_WET_MIN, CAVE_WET_MAX);",
+                        "wet.gain.value = clampNum(valueB, CAVE_WET_MIN, 0.9);"),
+  expectText: 'reached an AudioParam unclamped',
+});
+
+/* §20 — THE HALF-SENTENCE. `re.left` was measured, returned and never asserted while the
+ * pass line said "and teardown removes it". */
+plan(20, 'teardown stops removing the overlay from the document', {
+  mutate: (s) => sub(s, "  if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);",
+                        "  /* PLANT: the panel is gone from the app and still painted. */"),
+  expectText: 'SURVIVED closeVoice',
+});
+
+/* §23 — THE TWO WITNESSES THAT HAD NEVER FIRED IN THIS SECTION. "No transport used" is
+ * not "no transport possible", and a witness with no plant is a witness nobody has seen
+ * report. */
+plan(23, 'a preset tap posts the choice to a server', {
+  mutate: (s) => sub(s, "      voicePreset = p.id;\n",
+                        "      try { fetch('https://puppad.invalid/preset?p=' + p.id); } catch (e) {}\n      voicePreset = p.id;\n"),
+  expectText: 'outbound request(s) during a voice session',
+});
+
+plan(23, 'a preset tap opens a raw WebSocket', {
+  mutate: (s) => sub(s, "      paintPresets();\n      if (sliderEl && sliderEl.__paint) sliderEl.__paint();",
+                        "      try { new WebSocket('wss://puppad.invalid/voice'); } catch (e) {}\n      paintPresets();\n      if (sliderEl && sliderEl.__paint) sliderEl.__paint();"),
+  expectText: 'WebSocket(s) opened during a voice session',
+});
+
+/* §25 — THE CAMERA'S OWN TWO CONTROLS. A byte comparison of screenshots could not report
+ * `recording == playing` at all while the wave was animating between captures, so the
+ * pair this section exists for was unreportable. Both controls are plantable because the
+ * app owns the animation and the preference. */
+plan(25, 'the wave never advances, so two photographs of a live slot are identical', {
+  mutate: (s) => sub(s, "    voiceWavePhase += WAVE_SPEED;\n    paintVoiceSlots();",
+                        "    paintVoiceSlots();"),
+  expectText: 'came out byte-identical',
+});
+
+plan(25, 'prefers-reduced-motion is ignored, so the phase never freezes', {
+  mutate: (s) => sub(s, "  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }",
+                        "  try { return false; }"),
+  expectText: 'came out DIFFERENT',
+});
+
+/* AND THE PANEL-LEVEL COMPARISON, WHICH IS A DIFFERENT BRANCH FROM THE ROW'S. Flattening
+ * the slots alone is not enough to make two whole panels photograph the same -- the play
+ * button is lit for a panel that holds a clip and dimmed for one that does not, which is a
+ * second carrier doing its job. Take that away as well and `empty` and `holding` become
+ * one picture: nothing on screen says a clip was saved. */
+plan(25, 'a panel holding a clip photographs exactly like an empty one', {
+  mutate: (s) => sub(sub(s,
+      "    var filled = !!voiceSlots[i];", "    var filled = false;"),
+      "    pair[0].style.opacity = pair[1] ? '1' : '0.25';", "    pair[0].style.opacity = '1';"),
+  expectText: 'PHOTOGRAPHICALLY IDENTICAL',
+});
+
+/* §28 — THE PREFERENCE ITSELF, asked of the section that exists for it. The same
+ * substitution runs against §25 above, where it breaks that section's frozen-phase
+ * control; here it is the defect §28 is named after. */
+plan(28, 'prefers-reduced-motion is ignored and the wave keeps animating', {
+  mutate: (s) => sub(s, "  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }",
+                        "  try { return false; }"),
+  expectText: 'still animates under prefers-reduced-motion',
+});
+
+/* §27 — THE FRAME GUARD, which is the whole reason the loop is not a battery cost. */
+plan(27, 'the wave loop stops checking whether anything is still live', {
+  mutate: (s) => sub(s, "    if (voiceLiveSlot < 0 || !document.getElementById('voiceOverlay')) { voiceWaveRaf = 0; return; }",
+                        "    if (!document.getElementById('voiceOverlay')) { voiceWaveRaf = 0; return; }"),
+  expectText: 'KEEPS RUNNING after the live slot goes away',
+});
+
+/* §28 — THE COUNTDOWN UNDER REDUCED MOTION. The ruling is that it steps rather than
+ * stops, because it is an essential indicator and one of only two non-colour carriers of
+ * "recording". A build that treats it like the wave freezes it at its starting value. */
+plan(28, 'the countdown ring is frozen by prefers-reduced-motion', {
+  mutate: (s) => sub(s, "    if (voiceReducedMotion()) t = Math.round(t * RING_STEPS) / RING_STEPS;",
+                        "    if (voiceReducedMotion()) { voiceRaf = 0; return; }"),
+  expectText: 'FROZE under reduced motion',
+});
+
+/* §29 — RECORD-OVER TARGETING, which is an upheld design decision that had no enforcement
+ * at all: the assertion compared against a constant the defect also produces. */
+plan(29, 'record-over always takes the first slot', {
+  mutate: (s) => sub(s, "function nextVoiceSlot() {\n  for (var i = 0; i < VOICE_SLOT_COUNT; i++) if (!voiceSlots[i]) return i;\n  return voiceTargetSlot;\n}",
+                        "function nextVoiceSlot() {\n  for (var i = 0; i < VOICE_SLOT_COUNT; i++) if (!voiceSlots[i]) return i;\n  return 0;\n}"),
+  expectText: 'not the last-used slot',
+});
+
+/* §30 — THE PANEL THAT NEVER COMES BACK. The fix for the delete-mid-record defect created
+ * this: a guard that suppresses a continuation also suppresses everything that
+ * continuation was responsible for, and the stage is what re-enables every control. */
+plan(30, 'the discarded decode returns without repainting the panel', {
+  mutate: (s) => sub(s, "          voiceSettle();\n          return;\n        }\n        voiceSlots[slotFor] = buf;",
+                        "          return;\n        }\n        voiceSlots[slotFor] = buf;"),
+  expectText: 'STILL pointer-events:none',
+});
+
+/* §35 — THE CARRIER THAT MUST NOT EMPTY. Two ways to lose it: never paint it, or make it
+ * fade with the countdown, which is the shape the ring already had. */
+plan(35, 'the record button keeps its resting glyph while recording', {
+  mutate: (s) => sub(s, "      if (stage === 'recording') { glyph.textContent = ''; glyph.style.cssText = REC_GLYPH_REC; }",
+                        "      if (false) { glyph.textContent = ''; glyph.style.cssText = REC_GLYPH_REC; }"),
+  expectText: 'identical in every non-colour property',
+});
+
+plan(35, 'the recording glyph shrinks away with the countdown', {
+  mutate: (s) => sub(s, "    if (t !== painted) { painted = t; el.style.strokeDashoffset = String(circ * t); }",
+                        "    if (t !== painted) { painted = t; el.style.strokeDashoffset = String(circ * t);\n      var gg = document.getElementById('voiceRecGlyph');\n      if (gg && !gg.textContent) { gg.style.width = (22 * (1 - t)).toFixed(1) + 'px'; gg.style.height = gg.style.width; } }"),
+  expectText: 'CHANGES as the clip runs',
+});
+
+/* §36 — THE ARMING WINDOW. Both defects that lived in it, one each. */
+plan(36, 'a stopped playback leaves its slot marked live', {
+  mutate: (s) => sub(s, "  if (!voiceRecorder && voiceLiveSlot >= 0) setVoiceLiveSlot(-1);",
+                        "  /* PLANT: the marker outlives the sound. */"),
+  expectText: 'still marked LIVE through the arming window',
+});
+
+plan(36, 'the delete guard covers only the recording half of the window', {
+  mutate: (s) => sub(s, "  var capturingInto = (voiceRecorder && voiceLiveSlot === i) || (voicePending && voiceTargetSlot === i);",
+                        "  var capturingInto = (voiceRecorder && voiceLiveSlot === i);"),
+  expectText: 'a microphone opened for a slot that no longer exists',
+});
+
+/* §37 — THE TWO THINGS THAT OUTLIVED THEIR OWNERS, and for the timer BOTH HALVES OF ITS
+ * CLEANUP, because cancelling the timeout and dropping it from the list are two effects
+ * and a guard applied to one of them is the defect family this repo names most often. */
+plan(37, 'a recording stopped early leaves its hard-stop timer running', {
+  mutate: (s) => sub(s, "      clearVoiceTimer(stopTimer);\n", ""),
+  expectText: 'timer(s) survived a recording that was stopped early',
+});
+
+plan(37, 'the orphan timer is dropped from the list but never cancelled', {
+  mutate: (s) => sub(s, "function clearVoiceTimer(t) {\n  if (!t) return;\n  clearTimeout(t);",
+                        "function clearVoiceTimer(t) {\n  if (!t) return;"),
+  expectText: "stopped by an earlier one's orphaned timer",
+});
+
+plan(37, 'a playback that ends on its own never disconnects its nodes', {
+  mutate: (s) => sub(s, "    voiceNodes = stopNodes(voiceNodes);\n    if (voiceLiveSlot === idx) setVoiceLiveSlot(-1);",
+                        "    if (voiceLiveSlot === idx) setVoiceLiveSlot(-1);"),
+  expectText: 'still connected after the clip ended on its own',
+});
+
+/* §38 — THE GUARD THAT ATE A FIRST TAP. Checked above the stop branch, the settle window
+ * swallowed the child's tap on the slot that was waving at them. */
+plan(38, 'the settle window is checked above the stop branch', {
+  mutate: (s) => sub(sub(s,
+      "        if (Date.now() - voiceDeletedAt[i] < SLOT_ARM_MS) return;\n", ""),
+      "        if (voiceLiveSlot === i) {\n          if (voiceRecorder) stopVoiceRecording();",
+      "        if (Date.now() - voiceDeletedAt[i] < SLOT_ARM_MS) return;\n        if (voiceLiveSlot === i) {\n          if (voiceRecorder) stopVoiceRecording();"),
+  expectText: 'stop tap was SWALLOWED',
+});
+
+/* === PRE-FLIGHT: EVERY PLANT MUST APPLY, CHANGE SOMETHING, AND BE ITS OWN DEFECT =====
+ *
+ * Three ways a plant list rots, all of them silent, all of them found here in seconds
+ * rather than in the hour the full run takes:
+ *
+ *   - A STALE ANCHOR. `sub` throws, the scenario reports HARNESS-BROKE, and the number in
+ *     the summary line goes down without anyone reading why.
+ *   - A NO-OP. The mutation applies and removes no behaviour, so the section reports green
+ *     CORRECTLY and the plant proves nothing about the assertion.
+ *   - A DUPLICATE. Two entries whose mutated file and expected text are byte-identical are
+ *     ONE defect counted twice -- and the second label then claims a case its scenario
+ *     never stages, which is a described defect reading like a demonstrated one INSIDE the
+ *     list of demonstrations. The count is this check's headline; it has to be a count of
+ *     DISTINCT defects.
+ *
+ * Run unconditionally, because a flag nobody passes is a check nobody runs. */
+{
+  const src = readFileSync(join(REPO, 'index.html'), 'utf8');
+  const seen = new Map();
+  const problems = [];
+  for (const q of QUEUE) {
+    let out;
+    try { out = q.spec.mutate(src); }
+    catch (e) { problems.push(`§${q.section} ${q.label} — ANCHOR: ${String(e.message).slice(0, 120)}`); continue; }
+    if (out === src) { problems.push(`§${q.section} ${q.label} — NO-OP: the mutation changed nothing`); continue; }
+    const key = createHash('sha256').update(out).update(' ').update(q.spec.expectText).digest('hex');
+    const first = seen.get(key);
+    if (first) problems.push(`§${q.section} ${q.label} — DUPLICATE of §${first.section} ${first.label}: byte-identical mutation, same expected text`);
+    else seen.set(key, q);
+  }
+  if (problems.length) {
+    console.error(`::error::CHECK 26 CONTROLS — ${problems.length} plant(s) are not usable.`);
+    for (const p of problems) console.error(`  ${p}`);
+    process.exit(1);
+  }
+  console.log(`  ${QUEUE.length} plants: all apply, all change the file, all distinct.`);
+  if (process.argv.includes('--dry')) process.exit(0);
+}
+
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);
 const results = [];

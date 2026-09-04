@@ -1793,6 +1793,29 @@ var TONE_Q_DB = -3.0103;
  * in the first place. */
 var RING_BOX = 80, RING_R = 35, RING_STROKE = 5;
 var RING_CIRC = 2 * Math.PI * RING_R;
+
+/* === "RECORDING" NEEDS A SECOND NON-COLOUR CARRIER, AND ONE THAT DOES NOT EMPTY ======
+ *
+ * The slot's wave says WHICH SLOT IS LIVE and deliberately says nothing else -- one
+ * animation, two meanings, so the child learns one thing rather than two. That decision
+ * stands, and it has a consequence that was not paid for: THE SLOT ROW CANNOT TELL
+ * RECORDING FROM PLAYING AT ALL. Acceptance 2(a) -- that it is apparent recording is
+ * happening -- therefore rested on the transport row, and there on exactly two things:
+ * the record button's COLOUR (measured 11/255 of luminance between the idle pink and the
+ * recording red, which is nothing on a dim screen outdoors) and the countdown ring. THE
+ * RING IS A COUNTDOWN, SO IT EMPTIES AS IT RUNS: by t = 13s of a 15s clip the only
+ * non-colour discriminator has faded to almost nothing while the microphone is still
+ * open. Every other state in this panel is carried twice by design; this one was carried
+ * once, and it is the state the work order is named after.
+ *
+ * A SHAPE, HELD FOR THE WHOLE RECORDING. The microphone pictograph becomes a solid white
+ * SQUARE the moment the recorder starts and stays a square until it stops -- the same
+ * record/stop shape language every tape machine the child will ever meet uses, legible
+ * with the screen washed out, and independently true of the ring's countdown. It also
+ * says the truth about what the button now does: press it to stop. */
+var REC_GLYPH_IDLE = 'font-size:30px;line-height:1;pointer-events:none';
+var REC_GLYPH_REC = 'width:22px;height:22px;border-radius:4px;background:#ffffff;'
+  + 'box-shadow:0 0 0 2px rgba(0,0,0,0.35);pointer-events:none';
 var RING_DEPTH_MIN = 0.25, RING_DEPTH_MAX = 1.0;
 var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.45;   /* MAX is the headroom bound -- see the cave branch. */
 
@@ -1837,6 +1860,16 @@ function buildVoiceGraph(ctx, buffer, presetId, value, valueB) {
   var out = ctx.createGain();
   out.gain.value = 1;
   var nodes = [src, out];
+  /* EVERY PARAMETER THIS GRAPH CLAMPS, BY NAME.
+   *
+   * A check that wants to read back "the value that actually reached cave's wet gain" used
+   * to find it POSITIONALLY -- `nodes[nodes.length - 1]` -- after an earlier round replaced
+   * a value filter that had hidden the very defect it was hunting. Position is the same
+   * defect wearing a different hat: reordering this branch's `nodes.push` is an ordinary
+   * refactor that changes no behaviour, and it silently repoints the probe at the DRY gain,
+   * whose value happens to sit inside cave's wet bound. Selecting by identity is the only
+   * form that a refactor cannot quietly redirect. */
+  var params = {};
 
   if (presetId === 'up' || presetId === 'down') {
     /* Resampling: pitch and tempo move together. That IS the chipmunk/monster effect --
@@ -1861,6 +1894,7 @@ function buildVoiceGraph(ctx, buffer, presetId, value, valueB) {
     tone.frequency.value = clampNum(valueB, TONE_HZ_MIN, TONE_HZ_MAX);
     src.connect(tone); tone.connect(out);
     nodes.push(tone);
+    params.rate = src.playbackRate; params.tone = tone.frequency; params.toneQ = tone.Q;
 
   } else if (presetId === 'robot') {
     /* Ring modulation. The carrier drives the GAIN of a gain node whose own gain rests
@@ -1884,6 +1918,7 @@ function buildVoiceGraph(ctx, buffer, presetId, value, valueB) {
     src.connect(dryR); dryR.connect(out);
     osc.start();
     nodes.push(ring, osc, wetR, dryR);
+    params.ringHz = osc.frequency; params.depth = wetR.gain; params.dry = dryR.gain;
 
   } else if (presetId === 'cave') {
     /* Dry + a delay line fed back on itself at a CONSTANT gain below 1, so it decays. */
@@ -1911,11 +1946,12 @@ function buildVoiceGraph(ctx, buffer, presetId, value, valueB) {
     src.connect(dry); dry.connect(out);
     src.connect(dly); dly.connect(wet); wet.connect(out);
     nodes.push(dly, fb, dry, wet);
+    params.delay = dly.delayTime; params.feedback = fb.gain; params.dry = dry.gain; params.wet = wet.gain;
 
   } else {
     src.connect(out);
   }
-  return { source: src, out: out, nodes: nodes };
+  return { source: src, out: out, nodes: nodes, params: params };
 }
 
 /* `voiceRenderSeconds` LIVED HERE AND HAS BEEN MOVED INTO CHECK 26.
@@ -1957,11 +1993,32 @@ function stopVoicePlayback() {
   voicePlayToken++;
   if (voiceRaf) { cancelAnimationFrame(voiceRaf); voiceRaf = 0; }
   voiceNodes = stopNodes(voiceNodes);
+  /* AND THE LIVE MARKER GOES WITH THE SOUND. It did not, and the fix for F2 -- making a
+   * superseded playback's `onended` a total no-op -- removed the last thing that happened
+   * to clear it. So: play slot 0, tap the microphone. `startVoiceRecording` stops the
+   * playback here and then waits on the grant, and FOR THE WHOLE OF THAT WINDOW SLOT 0
+   * WAVES AT FULL AMPLITUDE INSIDE AN AMBER RING WHILE IT IS SILENT AND THE MICROPHONE IS
+   * NOT YET OPEN. On first use that window is however long the adult takes on the
+   * permission bubble -- the longest and most confusing moment in the panel's life, and
+   * the one moment where "movement means live" is a lie.
+   *
+   * Guarded on the recorder because a RECORDING's marker is not this function's to clear:
+   * `deleteVoiceSlot` calls this while a record-over is still stopping. */
+  if (!voiceRecorder && voiceLiveSlot >= 0) setVoiceLiveSlot(-1);
 }
 
 function clearVoiceTimers() {
   voiceTimers.forEach(function(t) { clearTimeout(t); });
   voiceTimers = [];
+}
+
+/* ONE timer, cancelled and dropped from the list. A recording that ends early must take
+ * its own hard-stop timer with it -- see rec.onstop. */
+function clearVoiceTimer(t) {
+  if (!t) return;
+  clearTimeout(t);
+  var i = voiceTimers.indexOf(t);
+  if (i >= 0) voiceTimers.splice(i, 1);
 }
 
 
@@ -2086,6 +2143,15 @@ function voiceSetStage(stage) {
     recBtn.style.background = stage === 'recording' ? 'radial-gradient(circle,#FCA5A5,#EF4444)'
       : stage === 'arming' ? 'radial-gradient(circle,#D8B4FE,#A78BFA)'
       : 'radial-gradient(circle,#F472B6,#EC4899)';
+    /* THE SHAPE, NOT THE COLOUR, IS THE CARRIER -- see REC_GLYPH_REC. Square only while
+     * the recorder is actually running: 'arming' keeps the microphone, because during
+     * arming nothing is being recorded yet and a square there would be the same lie the
+     * wave was telling. */
+    var glyph = document.getElementById('voiceRecGlyph');
+    if (glyph) {
+      if (stage === 'recording') { glyph.textContent = ''; glyph.style.cssText = REC_GLYPH_REC; }
+      else { glyph.style.cssText = REC_GLYPH_IDLE; glyph.textContent = '\uD83C\uDFA4'; }
+    }
   }
   /* The ring belongs to the recording. Anything that is not a recording empties it, so a
    * clip stopped early does not leave 90% of a pink arc painted until the next one. */
@@ -2120,20 +2186,63 @@ function voiceSetStage(stage) {
   });
 }
 
+/* === ONE PATH OWNS THE PANEL AFTER A RECORDING, AND EVERY EXIT GOES THROUGH IT =======
+ *
+ * `voiceSetStage` reads `voiceCapturing()` AT CALL TIME and, when it is true, sets
+ * `pointer-events:none` on all four preset tiles, BOTH sliders and the play button. So a
+ * stage painted while a capture is still settling paints a DEAD PANEL, and only a later
+ * stage call can lift it.
+ *
+ * That is exactly what the fix for F1 created. `deleteVoiceSlot` ended with a
+ * `voiceSetStage` of its own, and `rec.stop()` is ASYNCHRONOUS -- it does not null
+ * `voiceRecorder` on the success path -- so `voiceCapturing()` was still true and every
+ * control went inert. The one call that would have lifted it is in the decode `.then`,
+ * and the F1 guard makes that return early. NOTHING LIFTED IT. The slots still played
+ * when tapped, so it did not look broken; it looked like the panel had stopped
+ * responding, and the whole of the "more to move" this work order exists for was inert.
+ *
+ * A GUARD THAT SUPPRESSES A CONTINUATION ALSO SUPPRESSES EVERYTHING THAT CONTINUATION WAS
+ * RESPONSIBLE FOR. The repair is not another guard: it is that the settlement of a
+ * recording has ONE expression, called on every exit -- no chunks, decode failed, decode
+ * succeeded, and the clip discarded because the child deleted its slot. */
+function voiceSettle() {
+  setVoiceLiveSlot(-1);
+  voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
+}
+
 /* The countdown. NO TEXT -- a ring that empties, so the child can SEE the end coming.
  * Driven off Date.now() rather than a frame count, because a dropped frame on a low-end
  * tablet must not make the ring disagree with the timer that actually stops the
  * recorder. Two expressions that must agree, closed by having only one clock. */
+/* PREFERS-REDUCED-MOTION: THE RING IS LOAD-BEARING, SO IT DOES NOT STOP -- IT STEPS.
+ *
+ * The wave honours the preference by standing still, and it can: stillness costs it
+ * nothing because a live slot still has full amplitude, a thick ring and the brightest
+ * stroke. The countdown ring has no such spare signal. It IS the answer to "how much
+ * longer", it is one of only two non-colour carriers of "recording is happening", and a
+ * ring frozen at its starting value would state something false about the clip.
+ *
+ * So this is a decision, not an omission: an ESSENTIAL indicator keeps updating, and the
+ * preference is honoured in the way that is available -- the sweep becomes fifteen
+ * one-second steps instead of a continuous crawl. The loop's battery cost is bounded by
+ * the recording it belongs to, at most fifteen seconds; the wave's loop is unbounded,
+ * which is why that one stops outright and this one does not. */
+var RING_STEPS = 15;
+
 function voiceRingTick(startedAt) {
   var ring = document.getElementById('voiceRing');
   if (!ring) return;
   var circ = RING_CIRC;
+  var painted = -1;
   function frame() {
     var el = document.getElementById('voiceRing');
     if (!el) { voiceRaf = 0; return; }
     var t = (Date.now() - startedAt) / MAX_RECORD_MS;
     if (t < 0) t = 0; if (t > 1) t = 1;
-    el.style.strokeDashoffset = String(circ * t);
+    if (voiceReducedMotion()) t = Math.round(t * RING_STEPS) / RING_STEPS;
+    /* Nothing is written unless the value moved, so a stepped ring also stops touching
+     * the DOM between its steps. */
+    if (t !== painted) { painted = t; el.style.strokeDashoffset = String(circ * t); }
     if (t >= 1) { voiceRaf = 0; return; }
     voiceRaf = requestAnimationFrame(frame);
   }
@@ -2198,18 +2307,45 @@ function startVoiceRecording(slot) {
       return;
     }
     voicePending = false;
+    /* THE CHILD DELETED THIS SLOT WHILE THE PERMISSION BUBBLE WAS STILL OPEN.
+     *
+     * `voiceDeletedDuringRecord` was set from a guard reading `voiceRecorder &&
+     * voiceLiveSlot === i`, and during arming BOTH are unset -- so the arming half of the
+     * window was uncovered and the decode wrote the clip back into the slot the child had
+     * just emptied. F1's exact shape on the half of the window F1's fix did not reach, and
+     * the more reachable half: on first use the arming window is as long as the adult
+     * takes on the bubble, which is where a bored three-year-old presses things.
+     *
+     * Caught HERE rather than at the decode, because catching it at the decode would mean
+     * opening the microphone for fifteen more seconds first and then throwing the bytes
+     * away. A recording whose slot no longer exists must not start. */
+    if (voiceDeletedDuringRecord[slotFor] === gen) {
+      delete voiceDeletedDuringRecord[slotFor];
+      stream.getTracks().forEach(function(t) { t.stop(); });
+      voiceSettle();
+      return;
+    }
     voiceStream = stream;
     var chunks = [];
     var rec;
     try { rec = new MediaRecorder(stream); }
     catch (e) {
       stream.getTracks().forEach(function(t) { t.stop(); }); voiceStream = null;
-      setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
+      voiceSettle();
       doSound('error'); return;
     }
     voiceRecorder = rec;
     rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
     rec.onstop = function() {
+      /* THE HARD-STOP TIMER BELONGS TO THIS RECORDING AND DIES WITH IT.
+       *
+       * `clearVoiceTimers` has exactly one caller, `closeVoice`, so a recording stopped
+       * EARLY -- by the slot, by the record button, by a delete -- left its 15-second
+       * timer running with nothing to cancel it. Record 3s into slot 0 and stop; start
+       * slot 1 at t=5s; at t=15s THE FIRST RECORDING'S ORPHAN TIMER STOPS THE SECOND, at
+       * 10 of its 15 seconds, while its ring still shows a third to go. `voiceRingTick`'s
+       * comment claims "only one clock"; there was one per recording ever started. */
+      clearVoiceTimer(stopTimer);
       /* STOP THE STREAM THIS RECORDER OWNS, NOT WHATEVER `voiceStream` NOW POINTS AT.
        *
        * These four mutations used to run before any generation check. Forced ordering
@@ -2230,7 +2366,7 @@ function startVoiceRecording(slot) {
        * getUserMedia catch already got this right; these two transitions did not, and
        * `stage 'empty'` with a live voiceBuffer is §17's defect on a different edge --
        * play and send dim while the preset tiles stay live and will still play it. */
-      if (!chunks.length) { setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty'); return; }
+      if (!chunks.length) { voiceSettle(); return; }
       var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
       blob.arrayBuffer().then(function(ab) {
         return getAudioCtx().decodeAudioData(ab);
@@ -2245,18 +2381,25 @@ function startVoiceRecording(slot) {
          * clip so the transport's play button has an obvious subject. */
         /* The child deleted this slot while it was recording. The bytes belong to a clip
          * that no longer exists; writing them would undo a delete they watched happen. */
-        if (voiceDeletedDuringRecord[slotFor] === gen) { delete voiceDeletedDuringRecord[slotFor]; return; }
+        if (voiceDeletedDuringRecord[slotFor] === gen) {
+          delete voiceDeletedDuringRecord[slotFor];
+          /* AND THE PANEL STILL HAS TO COME BACK. This branch used to be a bare `return`,
+           * which discarded the clip correctly and left every control pointer-events:none
+           * for the life of the panel. */
+          voiceSettle();
+          return;
+        }
         voiceSlots[slotFor] = buf;
         voiceBuffer = buf;
         voiceTargetSlot = slotFor;
-        setVoiceLiveSlot(-1);
-        voiceSetStage('ready');
+        voiceSettle();
         doSound('chime');
       }).catch(function() {
         if (gen !== voiceGen) return;
-        setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty'); doSound('error');
+        voiceSettle(); doSound('error');
       });
     };
+    var stopTimer = 0;
     rec.start();
     voiceSetStage('recording');
     /* THE WHOLE POINT OF THE WORK ORDER: the moment the microphone is actually live, the
@@ -2265,14 +2408,14 @@ function startVoiceRecording(slot) {
     setVoiceLiveSlot(slotFor);
     voiceRingTick(Date.now());
     /* THE HARD STOP. A three-year-old will hold the button; the timer does not care. */
-    voiceTimers.push(setTimeout(function() { stopVoiceRecording(); }, MAX_RECORD_MS));
+    stopTimer = setTimeout(function() { stopVoiceRecording(); }, MAX_RECORD_MS);
+    voiceTimers.push(stopTimer);
   }).catch(function() {
     /* Same rule on the failure path, which had no generation check at all. */
     if (gen !== voiceGen) return;
     voicePending = false;
-    setVoiceLiveSlot(-1);
     /* A refused or failed microphone must not leave the panel looking busy. */
-    voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
+    voiceSettle();
     doSound('error');
   });
 }
@@ -2314,6 +2457,13 @@ function playVoice(i) {
   var token = ++voicePlayToken;
   g.source.onended = function() {
     if (gen !== voiceGen || token !== voicePlayToken) return;
+    /* A NATURAL END DISCONNECTS ITS OWN GRAPH. It only cleared the marker, so a finished
+     * `robot` playback left an OSCILLATOR RUNNING and still connected to the destination
+     * until the next play or the panel closed -- inaudible on its own, and a node the
+     * teardown discipline everywhere else in this file exists to prevent. Not
+     * stopVoicePlayback: this playback is already over, and bumping the token would tell
+     * a later one it had been superseded. */
+    voiceNodes = stopNodes(voiceNodes);
     if (voiceLiveSlot === idx) setVoiceLiveSlot(-1);
   };
   g.source.start();
@@ -2349,7 +2499,12 @@ var voicePlayToken = 0;
 var SLOT_ARM_MS = 400;
 
 function deleteVoiceSlot(i) {
-  if (!voiceSlots[i] && !(voiceRecorder && voiceLiveSlot === i)) return;
+  /* "THE MICROPHONE IS FILLING THIS SLOT" HAS TWO HALVES AND THE GUARD ONLY HAD ONE.
+   * Between the tap and the grant there is no recorder and no live slot -- only
+   * `voicePending` and the slot the request was made FOR. On first use that window is as
+   * long as the adult takes on the permission bubble. */
+  var capturingInto = (voiceRecorder && voiceLiveSlot === i) || (voicePending && voiceTargetSlot === i);
+  if (!voiceSlots[i] && !capturingInto) return;
   /* DELETING THE SLOT THE MICROPHONE IS FILLING MUST STOP THE MICROPHONE.
    *
    * A record-over target is FILLED and LIVE at the same time, so the delete control was
@@ -2359,9 +2514,11 @@ function deleteVoiceSlot(i) {
    * with the wave gone, the record button repainted idle and the ring reset, and then the
    * decode wrote the new clip into the slot the child had just emptied. THE DELETE WAS
    * SILENTLY UNDONE, and the panel showed nothing at all while it happened. */
-  if (voiceRecorder && voiceLiveSlot === i) {
+  if (capturingInto) {
     voiceDeletedDuringRecord[i] = voiceGen;
-    stopVoiceRecording();
+    /* There is nothing to stop yet during arming; the grant reads the flag on arrival and
+     * never opens the recorder at all. */
+    if (voiceRecorder) stopVoiceRecording();
   }
   if (voiceLiveSlot === i) { stopVoicePlayback(); setVoiceLiveSlot(-1); }
   voiceSlots[i] = null;
@@ -2377,7 +2534,20 @@ function deleteVoiceSlot(i) {
   voiceBuffer = voiceSlots[voiceTargetSlot] || null;
   voiceDeletedAt[i] = Date.now();
   paintVoiceSlots();
-  voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
+  /* AND THE STAGE IS NOT THIS FUNCTION'S TO PAINT WHILE A CAPTURE IS STILL SETTLING.
+   *
+   * `rec.stop()` is asynchronous, so on the record-over path `voiceCapturing()` is still
+   * true here -- and a stage painted under it sets pointer-events:none on all four preset
+   * tiles, both sliders and the play button. The one call that lifts that lives in the
+   * decode continuation, which the delete itself makes return early. NOTHING LIFTED IT and
+   * the panel was permanently dead while still looking alive.
+   *
+   * During ARMING it also erased the 'arming' stage, which is arming's only signal, while
+   * the microphone request was genuinely still in flight -- so the panel stopped saying
+   * the true thing about itself as well.
+   *
+   * The capture's own settlement owns the stage. See voiceSettle. */
+  if (!voiceCapturing()) voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
   doSound('blip');
 }
 
@@ -2601,15 +2771,6 @@ function openVoice() {
       slot.appendChild(del);
 
       wireTap(slot, function() {
-        /* A CONTROL THAT DISAPPEARS MID-GESTURE IS THE MIRROR OF ONE THAT APPEARS.
-         *
-         * The delete control sits INSIDE the slot's rect. The instant the first tap empties
-         * the slot it becomes display:none -- so a SECOND tap at the same point, which is
-         * exactly what a three-year-old does to confirm a button worked, lands on the slot
-         * underneath and OPENS THE MICROPHONE. A settle window on the slot after a delete
-         * closes it, the same shape PUP-WO-0404 used for the celebration a gesture
-         * destroyed. The delete itself is unaffected; only the slot's own action waits. */
-        if (Date.now() - voiceDeletedAt[i] < SLOT_ARM_MS) return;
         /* THE SLOT THAT IS LIVE IS ALSO THE STOP BUTTON, because that is what a child
          * does: tap it to start, tap it again to stop. A probe caught this -- the second
          * tap was swallowed by the capturing guard and the only way to stop was to find
@@ -2620,6 +2781,26 @@ function openVoice() {
           else { stopVoicePlayback(); setVoiceLiveSlot(-1); }
           return;
         }
+        /* A CONTROL THAT DISAPPEARS MID-GESTURE IS THE MIRROR OF ONE THAT APPEARS.
+         *
+         * The delete control sits INSIDE the slot's rect. The instant the first tap empties
+         * the slot it becomes display:none -- so a SECOND tap at the same point, which is
+         * exactly what a three-year-old does to confirm a button worked, lands on the slot
+         * underneath and OPENS THE MICROPHONE. A settle window on the slot after a delete
+         * closes it, the same shape PUP-WO-0404 used for the celebration a gesture
+         * destroyed. The delete itself is unaffected; only the slot's own action waits.
+         *
+         * AND IT SITS BELOW THE STOP, NOT ABOVE IT. Above, it could swallow a
+         * stop: delete slot 1, tap the record button -- nextVoiceSlot picks the slot just
+         * emptied -- the grant lands in well under 400ms, and the child's tap on the now
+         * live slot did nothing. A guard against a second tap must never eat a first one.
+         *
+         * AND THE WINDOW STAYS, because wireTap's `detail === 0` guard does not close this
+         * hazard. That guard closes the trailing COMPATIBILITY CLICK from the delete's own
+         * touch, which is a synthesized click. What this window closes is a SECOND REAL
+         * FINGER landing where the control just vanished -- ordinary pointerdown and
+         * pointerup, detail >= 1, indistinguishable at the event from a deliberate press. */
+        if (Date.now() - voiceDeletedAt[i] < SLOT_ARM_MS) return;
         /* A tap on a DIFFERENT slot mid-capture is ignored rather than redirecting the
          * bytes -- the recording already belongs to a slot and moving it would make the
          * wave a lie. */
@@ -2680,7 +2861,9 @@ function openVoice() {
     + 'border-radius:50%;border:0;cursor:pointer;padding:0;font-size:30px;line-height:1;'
     + 'background:radial-gradient(circle,#F472B6,#EC4899);box-shadow:0 4px 12px rgba(0,0,0,0.5);'
     + 'display:flex;align-items:center;justify-content:center';
-  recBtn.textContent = '\uD83C\uDFA4';
+  /* The glyph is a SPAN so the stage can swap its shape without disturbing the button:
+   * a microphone at rest, a solid square while the recorder runs. See REC_GLYPH_REC. */
+  recBtn.innerHTML = '<span id="voiceRecGlyph" style="' + REC_GLYPH_IDLE + '">\uD83C\uDFA4</span>';
   /* ONE CONTROL, TWO MEANINGS, AND THE STATE DECIDES -- not a second button the child
    * has to find while a red ring is counting down. Press to start; press to stop early. */
   wireTap(recBtn, function() {
@@ -2760,6 +2943,21 @@ window.__voice = {
   presets: VOICE_PRESETS,
   clamp: clampNum,
   MAX_RECORD_MS: MAX_RECORD_MS,
+  /* THE BOUNDS THE GRAPH CLAMPS TO, SO A CHECK'S PINNED COPY CAN BE ASSERTED AGAINST THEM
+   * RATHER THAN SLOWLY DRIFTING FROM THEM. Check 26 §3 carries its own literal for every
+   * bound -- deliberately, because those literals are the SPECIFICATION and the app's
+   * constants are the implementation. That only works if a disagreement is reported: one
+   * of them had already drifted (the probe allowed cave's wet up to 0.50 while
+   * CAVE_WET_MAX is 0.45), so raising the app's headroom ceiling by 11% was green
+   * suite-wide. Two expressions that must agree, and now they are asked to. */
+  bounds: {
+    rate:      [VOICE_RATE_MIN, VOICE_RATE_MAX],
+    tone:      [TONE_HZ_MIN, TONE_HZ_MAX],
+    ringHz:    [RING_HZ_MIN, RING_HZ_MAX],
+    depth:     [RING_DEPTH_MIN, RING_DEPTH_MAX],
+    delay:     [CAVE_DELAY_MIN, CAVE_DELAY_MAX],
+    wet:       [CAVE_WET_MIN, CAVE_WET_MAX]
+  },
   state: function() {
     return {
       open: !!document.getElementById('voiceOverlay'),
