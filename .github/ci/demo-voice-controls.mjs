@@ -55,7 +55,6 @@ async function scenario(section, label, { mutate, expectText }) {
   return { section, label, observed, detail, pass: observed === 'RED' };
 }
 
-
 /* §1 — THE GRID. A ninth button re-flows the pad at a 412px CSS viewport, which is the
  * only device that counts, and that is why the door is an EXISTING button. */
 plan(1, 'a ninth button is added to the pad', {
@@ -156,13 +155,6 @@ plan(7, 'the duration cap is derived from the byte cap', {
   expectText: 'not 15000',
 });
 
-/* §8 — DEGRADATION. A panel that throws with Supabase unconfigured is a panel that is
- * broken for every device that was never paired. */
-plan(8, 'send throws when there is no client', {
-  mutate: (s) => sub(s, "  if (!voiceChannel) return;", "  /* PLANT: no guard. */"),
-  expectText: 'throws',
-});
-
 /* §9 — INVARIANT 1. A preset a non-reader cannot identify from its icon is not a preset,
  * and two presets wearing one glyph are one preset painted twice. */
 plan(9, 'two presets are given the same glyph', {
@@ -183,39 +175,6 @@ plan(10, 'the hit test reads the border box while the paint uses the padding box
   expectText: 'from the finger',
 });
 
-/* §11 — THE DEFECT THIS SECTION WAS WRITTEN AND THEN IMMEDIATELY CAUGHT. Restoring the
- * un-normalised MediaRecorder label puts `;codecs=opus` back between the media type and
- * `;base64`, which safeMediaUrl's pattern has no room for -- so the device refuses its
- * own clip before it reaches the wire, and nothing ever crosses. */
-const UNNORMALISE = (s) => sub(s, "    var rawType = (chunks[0].type || 'audio/webm').split(';')[0];\n    var blob = new Blob(chunks, { type: /^audio\\//i.test(rawType) ? rawType : 'audio/webm' });",
-                                    "    var blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });");
-
-plan(11, "the sender stops normalising its own media type", {
-  mutate: UNNORMALISE,
-  expectText: 'refused its own payload',
-});
-
-/* THE SECOND BRANCH NEEDS ITS OWN PLANT, because the first one can never reach it:
- * sendVoice gates before broadcasting, so an unacceptable payload stops there and
- * `captured` stays null. Remove that guard as well and the bad payload reaches the wire,
- * which is the arrangement `passesOwnGate` exists for. A BRANCH NEVER SEEN RED IS NOT A
- * BRANCH -- both of this section's failure paths are demonstrated, not just the reachable
- * one. */
-plan(11, 'an unacceptable payload reaches the wire because sendVoice stops gating too', {
-  mutate: (s) => sub(UNNORMALISE(s),
-    "      if (safeMediaUrl(url, 'audio')) { broadcastVoice(url); doSound('powerUp'); }\n      else doSound('error');",
-    "      broadcastVoice(url); doSound('powerUp');"),
-  expectText: 'refused by the gate this device RUNS',
-});
-
-/* AND THE ARRIVAL ITSELF -- a gate that refuses everything satisfies every "hostile
- * payload was refused" assertion in this section while breaking the feature entirely. */
-plan(11, 'the inbound handler drops every payload', {
-  mutate: (s) => sub(s, "    var url = safeMediaUrl(payload && payload.payload && payload.payload.dataUrl, 'audio');\n    if (!url) return;\n    playRemoteVoice(url);",
-                        "    return;"),
-  expectText: 'produced NOTHING on the second device',
-});
-
 /* §12 — THE ORPHAN. Restoring the single guard is the code as first written: voiceRecorder
  * is not assigned until the grant lands, so every tap in that window opens a microphone
  * that nothing will ever hold a reference to. */
@@ -231,45 +190,11 @@ plan(5, 'the generation token is dropped — a stale grant is adopted by the new
   expectText: 'LIVE after closing the panel',
 });
 
-/* §13 — THE SHARED NODE LIST. Putting the render back in the playback list restores the
- * defect exactly: any playback control stops the send's source mid-flight. */
-plan(13, 'the render graph shares the playback node list again', {
-  mutate: (s) => sub(s, "  g.nodes.forEach(function(n) { voiceSendNodes.push(n); });\n  voiceSendNodes.push(g.out, dest);",
-                        "  g.nodes.forEach(voiceTrack);\n  voiceTrack(g.out);"),
-  expectText: 'truncated the clip on the wire',
-});
-
-/* AND THE RENDER'S RECORDER, whose only stop trigger used to be a timer teardown clears. */
-plan(13, "teardown stops clearing the render's recorder", {
-  mutate: (s) => sub(s, "  if (voiceSendRec) { try { voiceSendRec.stop(); } catch (e) {} voiceSendRec = null; }", "  /* PLANT: the render runs on. */"),
-  expectText: 'STILL recording after teardown',
-});
-
-/* §14 — THE UNSTOPPABLE CLIP. Untracking the inbound source puts it beyond the reach of
- * the one control this app promises from every state. */
-plan(14, 'an inbound clip is not tracked, so the exit cannot stop it', {
-  mutate: (s) => sub(s, "    voiceInbound.push(s);", "    /* PLANT: held by nothing. */"),
-  expectText: 'STILL PLAYING after the exit',
-});
-
-/* AND THE BOUND ON THE QUANTITY THAT COSTS. */
-plan(14, 'the audio payload cap is removed — the decoder is handed the string cap', {
-  mutate: (s) => sub(s, "  if (dataUrl.length > MAX_INBOUND_AUDIO_BYTES) return;", "  /* PLANT: unbounded. */"),
-  expectText: 'oversized inbound audio payload was accepted',
-});
-
 /* §15 — the stale continuation clearing a live panel's guard: the code as first written. */
 plan(15, "a stale grant clears voicePending before checking its generation", {
   mutate: (s) => sub(s, "      return;\n    }\n    voicePending = false;\n    voiceStream = stream;",
                         "      voicePending = false;\n      return;\n    }\n    voiceStream = stream;"),
   expectText: 'LIVE after a grant crossed a teardown',
-});
-
-/* §16 — the cap counting voices instead of allocations. */
-plan(16, 'the concurrent-decode count is dropped from the inbound guard', {
-  mutate: (s) => sub(s, "  if (voiceInbound.length + voiceDecoding >= VOICE_MAX_INBOUND) return;",
-                        "  if (voiceInbound.length >= VOICE_MAX_INBOUND) return;"),
-  expectText: 'decodes ran at once against a cap',
 });
 
 /* §17 — two expressions of "is this panel busy" that do not agree, restored. */
@@ -291,13 +216,6 @@ plan(18, "the record path checks the overlay instead of the generation", {
   expectText: "PREVIOUS session's clip was installed",
 });
 
-/* §19 — the duration cap, which nothing asserted until now: deleting the line left the
- * whole suite green, which is the definition of an unguarded invariant. */
-plan(19, 'the decoded-duration cap is deleted', {
-  mutate: (s) => sub(s, "    if (buf.duration > MAX_INBOUND_SECONDS) return;", "    /* PLANT: no duration cap. */"),
-  expectText: 'was PLAYED',
-});
-
 /* §7 — THE BRANCH THAT COULD NOT FIRE. Its whole point is the rule this repo repeats most,
  * and until now no plant could reach it: it sat behind an `else if` that required
  * MAX_INBOUND_BYTES to equal 15000. */
@@ -309,16 +227,6 @@ plan(7, 'the duration requirement is derived from the byte backstop', {
 plan(7, 'the two caps are collapsed into one number', {
   mutate: (s) => sub(s, "var MAX_INBOUND_BYTES = 3 * 1024 * 1024;", "var MAX_INBOUND_BYTES = 15000;"),
   expectText: 'SAME NUMBER',
-});
-
-plan(7, 'the audio cap is loosened until it bounds nothing', {
-  mutate: (s) => sub(s, "var MAX_INBOUND_AUDIO_BYTES = 1024 * 1024;", "var MAX_INBOUND_AUDIO_BYTES = 8 * 1024 * 1024;"),
-  expectText: 'is not tighter than the general one',
-});
-
-plan(7, 'a named bound is deleted rather than changed', {
-  mutate: (s) => sub(s, "var MAX_INBOUND_SECONDS = 40;", "/* PLANT: gone. */"),
-  expectText: 'not live numbers',
 });
 
 /* §9 — THE PIXEL BRANCH, WHICH ABSTAINS ON EVERY CI RUN AND SO HAS NEVER BEEN SHOWN RED.
@@ -373,14 +281,6 @@ plan(20, 'the channel release fallback goes back into the catch', {
   expectText: 'released NOTHING and threw nothing',
 });
 
-/* §16 — THE DECREMENT THAT WAS NOT GENERATION-SCOPED. One guard applied to one of two
- * effects: the callbacks checked `gen` before SOUNDING and not before DECREMENTING, so a
- * decode in flight at teardown decremented a counter closeVoice had already zeroed. */
-plan(16, 'the decode counter is decremented without checking the generation', {
-  mutate: (s) => sub(s, "    if (gen === voiceGen) voiceDecoding--;", "    voiceDecoding--;"),
-  expectText: 'drifted to',
-});
-
 /* §21 — THE `.catch` HALF OF THE GENERATION GUARD, which the whole suite left unasserted:
  * deleting it stayed green while reintroducing a live orphaned microphone. A DENIED
  * permission is the likeliest first-use path of all. */
@@ -390,13 +290,6 @@ plan(21, 'a rejected grant stops checking its generation', {
   expectText: 'LIVE after a REJECTED grant',
 });
 
-/* §22 — the send's own late continuation. Deleting this one line broadcast a dead panel's
- * clip on the new panel's channel, with the suite green. */
-plan(22, "fr.onload stops checking whether its panel still exists", {
-  mutate: (s) => sub(s, "      /* Still ours? A clip must not be broadcast by the panel that replaced the one that\n       * recorded it. */\n      if (gen !== voiceGen) return;\n", ""),
-  expectText: 'BROADCAST by the panel that replaced',
-});
-
 /* §17 — F6: a failed capture painting over a clip that is still there. The getUserMedia
  * catch already asked `voiceBuffer ? 'ready' : 'empty'`; these two transitions did not,
  * and a stage of 'empty' with a live buffer leaves the tiles able to play it. */
@@ -404,6 +297,58 @@ plan(17, 'a failed decode paints empty over a surviving clip', {
   mutate: (s) => sub(s, "        voiceSetStage(voiceBuffer ? 'ready' : 'empty'); doSound('error');",
                         "        voiceSetStage('empty'); doSound('error');"),
   expectText: 'says EMPTY',
+});
+
+/* §7 — THE ABSENCE MUST BE ASSERTED, NOT ASSUMED. Re-declaring a cap the transport used
+ * to need is exactly the shape a future edit takes: a bound with no subject, which a
+ * reader then treats as live. */
+plan(7, 'an inbound audio cap is re-introduced with nothing to bound', {
+  mutate: (s) => sub(s, "var MAX_RECORD_MS = 15000;", "var MAX_INBOUND_SECONDS = 40;\nvar MAX_RECORD_MS = 15000;"),
+  expectText: 'still exist after the transport was removed',
+});
+
+/* §8 — THE EQUALITY IS THE PROPERTY THIS WORK ORDER BUYS. Anything that makes the panel
+ * behave differently when Supabase is configured breaks it -- here, a control that only
+ * appears when there is a client, which is precisely the old send button returning. */
+plan(8, 'a control appears only when Supabase is configured', {
+  mutate: (s) => sub(s, "  row.appendChild(playBtn); row.appendChild(recWrap);",
+    "  if (isSupabaseConfigured()) { var extra = document.createElement('button'); extra.id = 'voiceExtraBtn'; row.appendChild(extra); }\n  row.appendChild(playBtn); row.appendChild(recWrap);"),
+  expectText: 'BEHAVES DIFFERENTLY with Supabase unconfigured',
+});
+
+/* §23 — THE WIRE COMING BACK. This is the defect the whole work order exists to prevent,
+ * and it must be caught AT THE NETWORK rather than by a name search: the plant below uses
+ * a DIFFERENT function name from the one that was deleted, so a source grep for
+ * `joinVoiceChannel` would sail past it. */
+plan(23, 'the voice panel takes a channel again, under a new name', {
+  mutate: (s) => sub(s, "  voicePreset = 'up';\n  voiceBuffer = null;\n  doSound('ping');",
+    "  voicePreset = 'up';\n  voiceBuffer = null;\n  try { var c = getSupabaseClient(); if (c) c.channel('puppad-voice-v2').subscribe(function(){}); } catch (e) {}\n  doSound('ping');"),
+  expectText: 'asked for 1 Supabase channel',
+});
+
+/* AND THE INSTRUMENT'S OWN CONTROL. If the channel recorder cannot fire, the zero it
+ * reports is a silence rather than a measurement -- so breaking the camera's join must
+ * make the section red for THAT reason, not for the voice one. */
+plan(23, 'the channel recorder is left unable to fire', {
+  mutate: (s) => sub(s, "  cameraChannel = client.channel('puppad-camera', {", "  cameraChannel = ({}) || client.channel('puppad-camera', {"),
+  expectText: 'never fired for a path that DOES take a channel',
+});
+
+/* §24 — THE MAP LEAK, RESTORED. Real WGS84 beside a stable device id on a global channel:
+ * the code as it shipped for months. */
+plan(24, 'the map broadcasts a stamp again — real coordinates on a global channel', {
+  mutate: (s) => sub(s, "      mapStamps.push(stamp);",
+    "      mapStamps.push(stamp);\n      try { var mc = getSupabaseClient(); if (mc) mc.channel('puppad-treasuremap').send({ type:'broadcast', event:'map-stamp', payload:{ lat:stamp.lat, lng:stamp.lng, did:deviceId } }); } catch (e) {}"),
+  expectText: 'asked for 1 Supabase channel',
+});
+
+/* AND GEOLOCATION MUST NOT BE THE THING THAT GETS DELETED. "Local function only" means the
+ * map still knows where it is; removing the tracking is the wrong fix in the other
+ * direction and the section must catch that too. */
+plan(24, 'the location marker is removed along with the transport', {
+  mutate: (s) => sub(s, "    mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);\n  }, function() {",
+    "  }, function() {"),
+  expectText: 'did not track the fix',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);

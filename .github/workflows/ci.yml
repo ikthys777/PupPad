@@ -581,7 +581,7 @@ jobs:
         # shown red. Its fifth already had -- a plant proved it passed with the release
         # DELETED, because it was reading a comment. The other four were never asked.
         #
-        # Asking them found another: §1 called safeMediaUrl ITSELF and only then invoked
+        # Asking them found another: §1 called the gate ITSELF and only then invoked
         # the sink, so it demonstrated that the validator refuses a URL -- which was never
         # in doubt -- while saying nothing about whether the SINK IS GATED. Deleting the
         # gate from the real handler left it green. It now drives the app's own registered

@@ -113,9 +113,13 @@ plan(5, 'closeCanvas stops releasing', {
   expectText: 'closeCanvas NEVER RELEASES',
 });
 
-plan(5, 'closeTreasureMap releases but leaves the handle set', {
-  mutate: (s) => sub(s, "  releaseChannel(mapChannel);\n  mapChannel = null;", "  releaseChannel(mapChannel);"),
-  expectText: 'leaves the handle set',
+/* THE MAP PLANT IS NOW THE OPPOSITE ASSERTION. Its channel is gone, so the defect worth
+ * demonstrating is the transport COMING BACK -- which is what a future edit would do by
+ * accident, and what the check must catch. Re-declaring the handle is enough: the row
+ * asserts there is no handle, no join and no senders. */
+plan(5, 'the map transport is re-introduced', {
+  mutate: (s) => sub(s, "var mapStrokes = [];", "var mapChannel = null;\nvar mapStrokes = [];"),
+  expectText: 'the map transport still exists',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);

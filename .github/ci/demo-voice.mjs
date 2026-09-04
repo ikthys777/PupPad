@@ -8,8 +8,8 @@
  * `readyState` knows. Every section below asks the runtime, never the source text.
  *
  * §3 IS MEASURED, NOT ASSERTED. Four presets are rendered through THE SHIPPING GRAPH
- * BUILDER — window.__voice.buildGraph, the same function live playback and the send
- * render call — into an OfflineAudioContext, and their band energies are compared. A
+ * BUILDER — window.__voice.buildGraph, the same function live playback calls — into an
+ * OfflineAudioContext, and their band energies are compared. A
  * check that built its own graph would be agreeing with itself: a check that recomputes
  * the formula agrees with a WRONG formula. And the null result runs FIRST: a preset is
  * compared against ITSELF and must come out identical, because an instrument that has
@@ -401,6 +401,15 @@ try {
       rec: window.MAX_RECORD_MS, inbound: window.MAX_INBOUND_BYTES,
       audio: window.MAX_INBOUND_AUDIO_BYTES, secs: window.MAX_INBOUND_SECONDS,
     }));
+    /* THE AUDIO CAPS ARE GONE AND THIS SECTION MUST SAY SO RATHER THAN QUIETLY SHRINK.
+     * PUP-WO-0702 removed the voice transport, so MAX_INBOUND_AUDIO_BYTES and
+     * MAX_INBOUND_SECONDS have no subject. A check that simply stopped mentioning them
+     * would pass because ITS SUBJECT IS GONE rather than because a property holds --
+     * which is the exact failure the work order names. So their ABSENCE is asserted. */
+    if (nums.audio !== undefined || nums.secs !== undefined)
+      bad('the inbound audio caps still exist after the transport was removed',
+        `MAX_INBOUND_AUDIO_BYTES=${nums.audio}, MAX_INBOUND_SECONDS=${nums.secs} — a bound with no subject is a limb a future reader treats as live`);
+    else ok('the inbound audio caps are gone with the transport they bounded');
     /* THE ASSERTION FOR "A REQUIREMENT AND ITS BACKSTOP MUST NOT BE THE SAME NUMBER" COULD
      * NOT FIRE. It was an `else if` behind `rec !== 15000`, so reaching it required
      * rec === 15000 AND rec === inbound — i.e. MAX_INBOUND_BYTES === 15000, which it never
@@ -409,19 +418,16 @@ try {
      * value is asserted rather than merely printed: MAX_INBOUND_BYTES was interpolated
      * into the pass line without being checked, so deleting it read "is undefined bytes"
      * and still passed. */
-    const named = [['MAX_RECORD_MS', nums.rec], ['MAX_INBOUND_BYTES', nums.inbound],
-                   ['MAX_INBOUND_AUDIO_BYTES', nums.audio], ['MAX_INBOUND_SECONDS', nums.secs]];
+    const named = [['MAX_RECORD_MS', nums.rec], ['MAX_INBOUND_BYTES', nums.inbound]];
     const missing = named.filter(([, v]) => typeof v !== 'number' || !isFinite(v) || v <= 0);
     if (missing.length) bad(`${missing.length} bound(s) are not live numbers`, missing.map(([n, v]) => `${n}=${v}`).join(', '));
-    else ok(`all four bounds are live numbers: ${named.map(([n, v]) => `${n}=${v}`).join(', ')}`);
+    else ok(`both surviving bounds are live numbers: ${named.map(([n, v]) => `${n}=${v}`).join(', ')}`);
 
     if (nums.rec !== 15000) bad(`MAX_RECORD_MS is ${nums.rec}, not 15000`);
-    else ok('MAX_RECORD_MS is 15000 — the requirement');
-    if (nums.rec === nums.inbound) bad('the requirement and its backstop are the SAME NUMBER',
-      'a duration cap and a byte cap must fail differently; one derived from the other is one guard wearing two hats');
-    else if (nums.audio >= nums.inbound) bad(`the audio cap (${nums.audio}) is not tighter than the general one (${nums.inbound})`,
-      'then it bounds nothing the general cap did not already bound');
-    else ok(`the caps are independent: a ${nums.rec} ms duration, a ${nums.inbound} B general cap, a tighter ${nums.audio} B audio cap, and a ${nums.secs} s decoded-duration cap`);
+    else ok('MAX_RECORD_MS is 15000 — the recording requirement');
+    if (nums.rec === nums.inbound) bad('the recording cap and the inbound photo cap are the SAME NUMBER',
+      'a duration and a size must fail differently; one derived from the other is one guard wearing two hats');
+    else ok(`the two remaining caps are independent: a ${nums.rec} ms recording duration and a ${nums.inbound} B inbound photo cap`);
 
     /* The mechanism, at a shortened value, because a three-year-old holding the button
      * is exactly the case a 15-second CI wait would test. The CONSTANT is asserted above;
@@ -447,36 +453,53 @@ try {
     await page.evaluate(() => closeVoice());
   }
 
-  /* ---- §8. ACCEPTANCE 7 — SUPABASE UNCONFIGURED ------------------------- */
+  /* ---- §8. ACCEPTANCE 6 — CONFIGURED AND UNCONFIGURED MUST BE IDENTICAL --
+   *
+   * THIS EQUALITY IS THE PROPERTY THIS WORK ORDER BUYS. Before, Supabase-unconfigured
+   * meant a DEGRADED voice panel: it opened and recorded but could not send. Now there is
+   * nothing to degrade, so the two configurations must be INDISTINGUISHABLE — and that is
+   * a far stronger statement than "it does not throw".
+   *
+   * It is asserted by RUNNING THE SAME SCRIPT TWICE and comparing the observable state,
+   * rather than by asserting a list of things that should be absent. A list is a list of
+   * the ones someone thought of. */
   if (run(8)) {
-    const degraded = await page.evaluate(async () => {
+    const scenario = async (unconfigured) => page.evaluate(async (off) => {
       const realGet = window.getSupabaseClient, realCfg = window.isSupabaseConfigured;
-      window.getSupabaseClient = () => null;
-      window.isSupabaseConfigured = () => false;
+      if (off) { window.getSupabaseClient = () => null; window.isSupabaseConfigured = () => false; }
       try {
-        openVoice();
-        const st = window.__voice.state();
-        let threw = null;
-        /* sendVoice() RETURNS EARLY WITH NO CLIP, so calling it on an empty panel walks
-         * none of the code this section is about -- a plant that broke broadcastVoice
-         * went green because nothing ever reached it. Give the panel a clip, and drive
-         * the wire call directly as well. */
-        try {
-          const probe = new OfflineAudioContext(1, 2400, 24000);
-          window.voiceBuffer = probe.createBuffer(1, 2400, 24000);
-          sendVoice();
-          broadcastVoice('data:audio/webm;base64,AAAA');
-        } catch (e) { threw = String((e && e.message) || e); }
-        try { playVoice(); } catch (e) { threw = threw || String((e && e.message) || e); }
-        const after = window.__voice.state();
         closeVoice();
-        return { open: st.open, channel: st.channel, threw, stillOpen: after.open };
+        openVoice();
+        const opened = window.__voice.state();
+        const b = document.getElementById('voiceRecBtn');
+        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 900));
+        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 900));
+        const recorded = window.__voice.state();
+        let threw = null;
+        try { playVoice(); } catch (e) { threw = String((e && e.message) || e); }
+        await new Promise((r) => setTimeout(r, 200));
+        const playing = window.__voice.state().nodes > 0;
+        const controls = Array.from(document.querySelectorAll('#voiceOverlay button')).map((el) => el.id || el.className).sort();
+        closeVoice();
+        return { opened: opened.open, stage: recorded.stage, playing, controls, threw };
       } finally { window.getSupabaseClient = realGet; window.isSupabaseConfigured = realCfg; }
-    });
-    if (!degraded.open) bad('the panel does not open at all with Supabase unconfigured');
-    else if (degraded.channel) bad('a channel was created with no client');
-    else if (degraded.threw) bad('sending with Supabase unconfigured throws', degraded.threw);
-    else ok('with Supabase unconfigured the panel opens, no channel is created, and send is a silent no-op — exactly as the camera degrades');
+    }, unconfigured);
+
+    const on = await scenario(false);
+    const off = await scenario(true);
+    if (!on.opened || !off.opened) bad(`the panel did not open (configured ${on.opened}, unconfigured ${off.opened})`);
+    else if (on.stage !== 'ready' || off.stage !== 'ready')
+      bad(`recording did not complete in both configurations (configured ${on.stage}, unconfigured ${off.stage})`,
+        'this section proved nothing');
+    else if (on.threw || off.threw) bad('playback threw', on.threw || off.threw);
+    else if (JSON.stringify(on) !== JSON.stringify(off))
+      bad('the voice panel BEHAVES DIFFERENTLY with Supabase unconfigured',
+        `configured ${JSON.stringify(on)} vs unconfigured ${JSON.stringify(off)} — the whole point of removing the transport is that this difference cannot exist`);
+    else ok(`the voice panel is INDISTINGUISHABLE configured and unconfigured — same controls (${on.controls.join(', ')}), records, plays back`);
   }
 
   /* ---- §9. INVARIANT 1 — four glyphs a non-reader can tell apart -------- */
@@ -605,101 +628,6 @@ try {
       await page.evaluate(() => closeVoice());
     }
   }
-  /* ---- §11. ACCEPTANCE 4 — A SENT CLIP ARRIVES ON A SECOND DEVICE ------
-   *
-   * TWO PAGES, AND NEITHER SIDE IS SIMULATED WHERE IT MATTERS. Page A records through a
-   * fake microphone and calls the real sendVoice, which renders the chosen effect and
-   * produces the bytes it would broadcast. Page B stands a fake CLIENT in front of
-   * joinVoiceChannel — so the app registers ITS OWN inbound handler on it — and that
-   * captured handler is then invoked with page A's actual payload.
-   *
-   * What is stubbed is Supabase's delivery. What is exercised is everything this work
-   * order is responsible for: render, encode, gate, decode, play. Feeding a payload to a
-   * function the check chose would prove nothing about which function the app listens
-   * with; this drives the callback the app itself installed.
-   *
-   * AND THE NEGATIVE CONTROL RUNS THROUGH THE SAME DOOR. A hostile payload delivered to
-   * that same handler must produce nothing. An arrival test with no refusal test cannot
-   * tell "it works" from "it accepts anything". */
-  if (run(11)) {
-    const sent = await page.evaluate(async () => {
-      if (!document.getElementById('voiceOverlay')) openVoice();
-      let captured = null;
-      const realGet = window.getSupabaseClient;
-      window.getSupabaseClient = () => ({
-        channel: () => ({ on() { return this; }, subscribe() { return this; },
-                          send(m) { captured = m && m.payload && m.payload.dataUrl; } }),
-        removeChannel() {},
-      });
-      try {
-        window.voiceChannel = null;
-        joinVoiceChannel();
-        document.getElementById('voiceRecBtn').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-        document.getElementById('voiceRecBtn').dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-        await new Promise((r) => setTimeout(r, 700));
-        stopVoiceRecording();
-        await new Promise((r) => setTimeout(r, 700));
-        if (!window.__voice.state().stage || window.__voice.state().stage !== 'ready') return { noClip: true };
-        sendVoice();
-        await new Promise((r) => setTimeout(r, 2500));
-        closeVoice();
-        return { url: captured, len: captured ? captured.length : 0,
-                 passesOwnGate: !!(captured && safeMediaUrl(captured, 'audio')) };
-      } finally { window.getSupabaseClient = realGet; }
-    });
-
-    if (sent.noClip) bad('page A never produced a clip to send', 'this section proved nothing');
-    else if (!sent.url) bad('sendVoice broadcast nothing at all',
-      'it rendered, encoded, and then refused its own payload — check the media type against the gate');
-    else if (!sent.passesOwnGate)
-      /* ASKED OF THE SHIPPING GATE, NOT OF A REGEX WRITTEN HERE. The first version of
-       * this line carried its own looser pattern and would have passed the very payload
-       * safeMediaUrl was rejecting — a check disagreeing with the code it checks, in the
-       * direction that hides the defect. */
-      bad('the payload this device SENDS is refused by the gate this device RUNS',
-        `type ${JSON.stringify(sent.url.slice(0, 48))} — every clip is refused on the sending side and nothing ever crosses`);
-    else {
-      ok(`page A rendered and broadcast a ${Math.round(sent.len / 1024)} KiB data:audio payload`);
-
-      const page2 = await ctx.newPage();
-      try {
-        await page2.goto(ORIGIN + '/index.html', { waitUntil: 'domcontentloaded' });
-        await page2.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
-        const got = await page2.evaluate(async (url) => {
-          let handler = null;
-          const realGet = window.getSupabaseClient;
-          window.getSupabaseClient = () => ({
-            channel: () => ({ on(_t, _f, cb) { handler = cb; return this; }, subscribe() { return this; }, send() {} }),
-            removeChannel() {},
-          });
-          try {
-            window.voiceChannel = null;
-            joinVoiceChannel();
-            if (!handler) return { noHandler: true };
-            const count = () => document.querySelectorAll('body > div').length;
-            /* The negative control FIRST, so a popup that was already there cannot be
-             * mistaken for the real arrival. */
-            const base = count();
-            handler({ payload: { dataUrl: 'https://example.invalid/evil.mp3' } });
-            handler({ payload: { dataUrl: 'data:image/png;base64,iVBORw0KGgo=' } });
-            await new Promise((r) => setTimeout(r, 500));
-            const afterHostile = count();
-            handler({ payload: { dataUrl: url } });
-            await new Promise((r) => setTimeout(r, 1200));
-            return { base, afterHostile, afterReal: count() };
-          } finally { window.getSupabaseClient = realGet; }
-        }, sent.url);
-
-        if (got.noHandler) bad('the second device registered no inbound handler', 'joinVoiceChannel never called .on()');
-        else if (got.afterHostile > got.base) bad('a hostile payload produced a reaction on the second device',
-          'a remote URL and an image offered as audio must both be refused at the gate');
-        else if (got.afterReal <= got.afterHostile) bad('the real clip produced NOTHING on the second device',
-          'it was sent, it passed the gate, and nothing played — acceptance item 4 is not met');
-        else ok('the clip arrives on a second device and plays, while a remote URL and an image-as-audio are both refused at the same door');
-      } finally { await page2.close(); }
-    }
-  }
-
   /* ---- §12. THE ORPHANED MICROPHONE -------------------------------------
    *
    * THE STATE REPORTER CANNOT SEE THIS AND NEITHER COULD §4 OR §5. `state().liveTracks`
@@ -744,151 +672,6 @@ try {
         `${r.granted} stream(s) were granted and the panel's own reporter says ${r.reported} — an orphan is a stream no variable points at, so nothing in the app can ever stop it`);
       else ok(`${label}: ${r.granted} grant(s), 0 tracks live after teardown — no orphan`);
     }
-  }
-
-  /* ---- §13. THE SEND MUST SURVIVE THE CHILD, AND NOT SURVIVE THE EXIT ----
-   *
-   * Two opposite failures with one cause: the render graph sharing a node list with
-   * playback, and its stop timer sharing a list with everything teardown clears. */
-  if (run(13)) {
-    const trunc = await page.evaluate(async () => {
-      let captured = null;
-      const realGet = window.getSupabaseClient;
-      window.getSupabaseClient = () => ({
-        channel: () => ({ on() { return this; }, subscribe() { return this; },
-                          send(m) { captured = m && m.payload && m.payload.dataUrl; } }),
-        removeChannel() {},
-      });
-      try {
-        closeVoice(); openVoice(); window.voiceChannel = null; joinVoiceChannel();
-        const b = document.getElementById('voiceRecBtn');
-        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-        await new Promise((r) => setTimeout(r, 1400));
-        stopVoiceRecording();
-        await new Promise((r) => setTimeout(r, 800));
-        if (window.__voice.state().stage !== 'ready') return { noClip: true };
-        const dur = window.voiceBuffer.duration;
-        sendVoice();
-        /* The child taps PLAY to hear it again while it is still going out. */
-        await new Promise((r) => setTimeout(r, 350));
-        playVoice();
-        await new Promise((r) => setTimeout(r, 3000));
-        closeVoice();
-        return { dur, len: captured ? captured.length : 0 };
-      } finally { window.getSupabaseClient = realGet; }
-    });
-    if (trunc.noClip) bad('no clip was produced', 'this section proved nothing');
-    else {
-      /* Compared against the clip's OWN duration, not a hard-coded byte count: a
-       * threshold in bytes would be a number only correct at one bitrate. */
-      const floor = Math.round(trunc.dur * 4000);
-      if (trunc.len < floor) bad(`tapping PLAY during a send truncated the clip on the wire`,
-        `${trunc.len} base64 chars for a ${trunc.dur.toFixed(2)}s clip — playback and the render shared a node list, so a playback control stopped the render's source mid-flight`);
-      else ok(`a playback control pressed during a send does not truncate it (${trunc.len} chars for ${trunc.dur.toFixed(2)}s)`);
-    }
-
-    const orphanRec = await page.evaluate(async () => {
-      closeVoice(); openVoice();
-      const b = document.getElementById('voiceRecBtn');
-      b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-      b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 1200));
-      stopVoiceRecording();
-      await new Promise((r) => setTimeout(r, 800));
-      if (window.__voice.state().stage !== 'ready') return { noClip: true };
-      sendVoice();
-      await new Promise((r) => setTimeout(r, 200));
-      const during = window.__voice.state().sendRecorder;
-      closeVoice();
-      await new Promise((r) => setTimeout(r, 2000));
-      const st = window.__voice.state();
-      return { during, after: st.sendRecorder, sendNodes: st.sendNodes };
-    });
-    if (orphanRec.noClip) bad('no clip was produced for the exit-during-send probe');
-    else if (orphanRec.during !== 'recording') bad('the render was not running when the exit was pressed', 'this probe proved nothing');
-    else if (orphanRec.after !== 'none') bad(`the render's recorder is STILL ${orphanRec.after} after teardown`,
-      'its only stop trigger was a timer in the list closeVoice clears, so it encodes silence on the shared context forever — once per send-then-exit');
-    else ok(`the render's recorder was running, and teardown stopped it (${orphanRec.sendNodes} send nodes left)`);
-  }
-
-  /* ---- §14. A REMOTE CLIP IS AUDIO THE CHILD DID NOT START -------------- */
-  if (run(14)) {
-    const inb = await page.evaluate(async () => {
-      closeVoice(); openVoice();
-      const ctx = getAudioCtx();
-      /* TWO INSTRUMENTS THAT DO NOT DEPEND ON THE APP'S OWN BOOKKEEPING.
-       *
-       * The first version of this section used `state().inbound` both as the witness that
-       * a clip had STARTED and as the test of whether the exit could REACH it — the same
-       * variable for the subject and the instrument. Untracking the source therefore made
-       * the section report "nothing ever played", not "nothing could stop it". So every
-       * started BufferSource is recorded here, independently, and `onended` tells us which
-       * are still sounding.
-       *
-       * The second instrument counts decodeAudioData calls, because the byte cap's whole
-       * job is to prevent the ALLOCATION — and a payload the decoder rejects looks exactly
-       * like a payload the cap refused if you only watch what plays. */
-      const started = [];
-      const realStart = AudioBufferSourceNode.prototype.start;
-      AudioBufferSourceNode.prototype.start = function (...a) {
-        const rec = { node: this, ended: false };
-        started.push(rec);
-        this.addEventListener('ended', () => { rec.ended = true; });
-        return realStart.apply(this, a);
-      };
-      let decodes = 0;
-      const realDecode = ctx.decodeAudioData.bind(ctx);
-      ctx.decodeAudioData = function (...a) { decodes++; return realDecode(...a); };
-      /* A real, long, legitimate clip, encoded the way the app encodes. */
-      const secs = 6;
-      const off = new OfflineAudioContext(1, 48000 * secs, 48000);
-      const buf = off.createBuffer(1, 48000 * secs, 48000);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < d.length; i++) d[i] = 0.3 * Math.sin(2 * Math.PI * 300 * (i / 48000));
-      const dest = ctx.createMediaStreamDestination();
-      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(dest); src.start();
-      const rec = new MediaRecorder(dest.stream);
-      const chunks = [];
-      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      const url = await new Promise((res) => {
-        rec.onstop = () => {
-          const fr = new FileReader();
-          fr.onload = () => res(fr.result);
-          fr.readAsDataURL(new Blob(chunks, { type: (chunks[0].type || 'audio/webm').split(';')[0] }));
-        };
-        rec.start(); setTimeout(() => rec.stop(), 2200);
-      });
-      try { src.stop(); src.disconnect(); } catch (e) {}
-
-      const beforeStart = started.length;
-      playRemoteVoice(url);
-      await new Promise((r) => setTimeout(r, 900));
-      const mine = started.slice(beforeStart);
-      const playing = mine.filter((r) => !r.ended).length;
-      closeVoice();
-      await new Promise((r) => setTimeout(r, 400));
-      const stillPlaying = mine.filter((r) => !r.ended).length;
-      const after = window.__voice.state();
-
-      /* The cap's job is to stop the ALLOCATION, so the evidence is that the decoder was
-       * never reached — not that nothing played, which a corrupt payload also achieves. */
-      const decodesBefore = decodes;
-      playRemoteVoice('data:audio/webm;base64,' + 'A'.repeat(2 * 1024 * 1024));
-      await new Promise((r) => setTimeout(r, 200));
-      const refusedBeforeDecoding = decodes === decodesBefore;
-
-      AudioBufferSourceNode.prototype.start = realStart;
-      ctx.decodeAudioData = realDecode;
-      return { playing, stillPlaying, popups: after.popups, overLong: refusedBeforeDecoding };
-    });
-    if (!inb.playing) bad('an inbound clip never started playing', 'this section proved nothing');
-    else if (inb.stillPlaying > 0) bad(`${inb.stillPlaying} remote clip(s) STILL PLAYING after the exit`,
-      'the child pressed the one control this app promises from every state and a stranger’s audio kept playing over the console with nothing able to stop it');
-    else if (inb.popups > 0) bad(`${inb.popups} INCOMING popup(s) outlived the panel`);
-    else if (!inb.overLong) bad('an oversized inbound audio payload was accepted for decoding',
-      'decodeAudioData was reached — the byte cap bounds the STRING, and the decoder allocates the full PCM, which low-bitrate Opus expands by hundreds of times');
-    else ok(`a remote clip plays, the exit stops it, no popup outlives the panel, and an oversized audio payload is refused before decoding`);
   }
 
   /* ---- §15. A DEAD PANEL'S GRANT MUST NOT UNLOCK A LIVE PANEL'S GUARD ---
@@ -943,75 +726,6 @@ try {
     else if (r.live > 0) bad(`${r.live} microphone track(s) LIVE after a grant crossed a teardown`,
       `${r.granted} grants were issued; a stale continuation cleared voicePending before checking its generation, so a dead panel's grant unlocked the live panel's guard`);
     else ok(`a grant that crosses a teardown leaves no live track (${r.granted} grants staged)`);
-  }
-
-  /* ---- §16. THE CAP MUST BOUND ALLOCATIONS, NOT JUST VOICES ------------- */
-  if (run(16)) {
-    const flood = await page.evaluate(async () => {
-      closeVoice(); openVoice();
-      const ctx = getAudioCtx();
-      let peak = 0, live = 0;
-      const realDecode = ctx.decodeAudioData.bind(ctx);
-      /* Count decodes IN FLIGHT. `decodeAudioData` is what allocates the PCM, so the
-       * question is how many can be allocating at the same instant -- not how many end up
-       * audible, which is all `voiceInbound.length` could ever have measured. */
-      ctx.decodeAudioData = function (buf, ok2, err) {
-        live++; if (live > peak) peak = live;
-        const done = () => { live--; };
-        return realDecode(buf, (b) => { done(); if (ok2) ok2(b); }, (e) => { done(); if (err) err(e); });
-      };
-      try {
-        const url = 'data:audio/webm;base64,' + 'A'.repeat(2048);
-        for (let i = 0; i < 40; i++) playRemoteVoice(url);
-        await new Promise((r) => setTimeout(r, 700));
-        return { peak, max: window.VOICE_MAX_INBOUND };
-      } finally { ctx.decodeAudioData = realDecode; closeVoice(); }
-    });
-    /* AND THE COUNTER MUST SURVIVE A TEARDOWN, WHICH THIS SECTION'S OWN SETUP WAS HIDING.
-     *
-     * §16 opened with `closeVoice(); openVoice();` — and that closeVoice is exactly what
-     * resets voiceDecoding. So the flood above always ran from a freshly zeroed counter,
-     * which is not the state the app is in after the child has used it. A decode in flight
-     * at teardown used to decrement a counter closeVoice had already zeroed, leaving it
-     * NEGATIVE for the life of the page and the cap permanently loosened.
-     *
-     * The probe is the ordinary gesture: a clip arrives, the child taps back while it is
-     * still decoding. Then the counter is read directly. */
-    const drift = await page.evaluate(async () => {
-      closeVoice(); openVoice();
-      const url = 'data:audio/webm;base64,' + 'A'.repeat(4096);
-      for (let cycle = 0; cycle < 3; cycle++) {
-        openVoice();
-        for (let i = 0; i < 3; i++) playRemoteVoice(url);
-        /* Back, WHILE the decodes are in flight — no await before this. */
-        closeVoice();
-        await new Promise((r) => setTimeout(r, 400));
-      }
-      const after = window.__voice.state().decoding;
-      openVoice();
-      let peak = 0, live = 0;
-      const ctx = getAudioCtx();
-      const realDecode = ctx.decodeAudioData.bind(ctx);
-      ctx.decodeAudioData = function (b, ok2, err) {
-        live++; if (live > peak) peak = live;
-        const done = () => { live--; };
-        return realDecode(b, (x) => { done(); if (ok2) ok2(x); }, (e) => { done(); if (err) err(e); });
-      };
-      try {
-        for (let i = 0; i < 20; i++) playRemoteVoice(url);
-        await new Promise((r) => setTimeout(r, 600));
-        return { counter: after, peak, max: window.VOICE_MAX_INBOUND };
-      } finally { ctx.decodeAudioData = realDecode; closeVoice(); }
-    });
-    if (drift.counter !== 0) bad(`the concurrent-decode counter drifted to ${drift.counter} across three teardowns`,
-      'closeVoice zeroes it for the whole generation, so a decode still in flight decrements a counter that no longer owes it anything — and the cap loosens permanently');
-    else if (drift.peak > drift.max) bad(`after teardowns, ${drift.peak} decodes ran at once against a cap of ${drift.max}`);
-    else ok(`the decode counter returns to 0 across teardowns and the cap still holds (${drift.peak} concurrent, cap ${drift.max})`);
-
-    if (flood.peak === 0) bad('no decode was ever started', 'this section proved nothing');
-    else if (flood.peak > flood.max) bad(`${flood.peak} decodes ran at once against a cap of ${flood.max}`,
-      'the guard counted clips that were SOUNDING, and nothing joins that list until a decode SUCCEEDS — so a burst all read zero, all passed, and all allocated. The multiplier is the message rate, which nothing bounds');
-    else ok(`a 40-message burst never exceeds ${flood.peak} concurrent decode(s) against a cap of ${flood.max}`);
   }
 
   /* ---- §17. AN OPEN MICROPHONE LOCKS OUT PLAYBACK ----------------------- */
@@ -1113,40 +827,6 @@ try {
     else ok(`a clip whose recording was abandoned does not appear in the next panel (stage ${carry.stage})`);
   }
 
-  /* ---- §19. THE DECODED-DURATION CAP, WHICH NOTHING ASSERTED ------------ */
-  if (run(19)) {
-    const dur = await page.evaluate(async () => {
-      closeVoice(); openVoice();
-      const cap = window.MAX_INBOUND_SECONDS;
-      const ctx = getAudioCtx();
-      let started = 0;
-      const realStart = AudioBufferSourceNode.prototype.start;
-      AudioBufferSourceNode.prototype.start = function (...a) { started++; return realStart.apply(this, a); };
-      const realDecode = ctx.decodeAudioData.bind(ctx);
-      /* The cap must hold WHATEVER the codec's expansion ratio turns out to be, so the
-       * decoder is made to return an over-long buffer directly — which is the only way to
-       * test the property without depending on a particular encoder's bitrate. */
-      ctx.decodeAudioData = function (_b, ok2) {
-        const long = ctx.createBuffer(1, Math.ceil(8000 * (cap + 5)), 8000);
-        if (ok2) ok2(long);
-        return Promise.resolve(long);
-      };
-      try {
-        const before = started;
-        playRemoteVoice('data:audio/webm;base64,' + 'A'.repeat(2048));
-        await new Promise((r) => setTimeout(r, 400));
-        return { cap, played: started - before };
-      } finally {
-        ctx.decodeAudioData = realDecode;
-        AudioBufferSourceNode.prototype.start = realStart;
-        closeVoice();
-      }
-    });
-    if (dur.played > 0) bad(`a clip longer than MAX_INBOUND_SECONDS (${dur.cap}s) was PLAYED`,
-      'the duration cap is the half of the inbound bound that stays true whatever the next codec expands by — and deleting the line left the whole suite green');
-    else ok(`a decoded clip longer than ${dur.cap}s is refused before it sounds`);
-  }
-
   /* ---- §20. TWO GUARDS NOTHING ASSERTED -------------------------------- */
   if (run(20)) {
     const re = await page.evaluate(() => {
@@ -1228,65 +908,165 @@ try {
     else ok(`a rejected grant belonging to a torn-down panel leaves no live track (${r.requests} requests, ${r.granted} granted)`);
   }
 
-  /* ---- §22. A CLIP MUST NOT BE SENT BY THE PANEL THAT REPLACED ITS OWNER - */
-  if (run(22)) {
-    /* §13 asserts the render's recorder is stopped; §18 covers the RECORD decode chain.
-     * Nothing asserted the send's own late continuation, and deleting that one guard
-     * broadcast a dead panel's clip on the new panel's channel while the suite stayed
-     * green. This is the child's recorded voice leaving the device after he has left. */
-    const sent = await page.evaluate(async () => {
-      const sends = [];
-      const realGet = window.getSupabaseClient;
-      window.getSupabaseClient = () => ({
-        channel: () => ({ on() { return this; }, subscribe() { return this; },
-                          send(m) { sends.push(m && m.payload && m.payload.dataUrl); } }),
-        removeChannel() {},
+  /* ---- §23. NO VOICE TRAFFIC EXISTS — ASSERTED AT THE NETWORK ----------
+   *
+   * PUP-WO-0702 acceptance 2. THE ASSERTION IS THE NETWORK, NOT THE SOURCE. A grep for a
+   * deleted symbol goes green the moment the NAME changes rather than when the BEHAVIOUR
+   * does — the `String(closeCamera)` defect in a new costume, and this project has
+   * already paid for that once.
+   *
+   * Three independent witnesses, none of them the app's own bookkeeping: every HTTP
+   * request the browser makes, every WebSocket it opens, and every `.channel()` the app
+   * asks a Supabase client for. The panel is then driven end to end with a finger. */
+  if (run(23)) {
+    const requests = [];
+    const sockets = [];
+    const onReq = (r) => requests.push(r.url());
+    const onWs = (w) => sockets.push(w.url());
+    page.on('request', onReq);
+    page.on('websocket', onWs);
+    try {
+      /* A REAL client that records, rather than a null one. A null client makes "no
+       * channel was created" true for the wrong reason — the app never had one to ask.
+       * This one would hand over a channel if anything asked. */
+      await page.evaluate(() => {
+        window.__chanAsks = [];
+        window.getSupabaseClient = () => ({
+          channel: (name) => { window.__chanAsks.push(name);
+            return { on() { return this; }, subscribe() { return this; }, send() {} }; },
+          removeChannel() {},
+        });
+        window.isSupabaseConfigured = () => true;
       });
-      /* Hold the FileReader open so the teardown lands inside the read — the window the
-       * guard exists for, made deterministic rather than raced for. */
-      const realRead = FileReader.prototype.readAsDataURL;
-      /* HELD UNTIL EXPLICITLY RELEASED, not for a guessed number of milliseconds. The
-       * first version delayed the read by 700ms and closed the panel at 2200ms — so the
-       * read finished FIRST and the section flagged an ordinary, correct send. A timing
-       * probe that races the thing it is timing measures nothing. */
-      let release = null;
-      FileReader.prototype.readAsDataURL = function (blob) {
-        if (release) return realRead.call(this, blob);
-        release = () => realRead.call(this, blob);
-        return undefined;
-      };
-      try {
-        closeVoice(); openVoice(); window.voiceChannel = null; joinVoiceChannel();
-        const b = document.getElementById('voiceRecBtn');
-        b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-        b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-        await new Promise((r) => setTimeout(r, 1300));
-        stopVoiceRecording();
-        await new Promise((r) => setTimeout(r, 800));
-        if (window.__voice.state().stage !== 'ready') return { noClip: true };
-        sendVoice();
-        /* Wait until the render's bytes are actually sitting in the reader. */
-        for (let i = 0; i < 60 && !release; i++) await new Promise((r) => setTimeout(r, 100));
-        if (!release) return { neverRead: true };
-        const sentBeforeLeaving = sends.length;
-        closeVoice();                                     /* the child leaves */
-        openVoice(); window.voiceChannel = null; joinVoiceChannel();
-        release();                                        /* only now does the read finish */
-        await new Promise((r) => setTimeout(r, 800));
-        const out = { sends: sends.length, sentBeforeLeaving };
-        closeVoice();
-        return out;
-      } finally {
-        window.getSupabaseClient = realGet;
-        FileReader.prototype.readAsDataURL = realRead;
-      }
-    });
-    if (sent.noClip) bad('no clip was produced', 'this section proved nothing');
-    else if (sent.neverRead) bad('the render never reached the FileReader', 'this section proved nothing');
-    else if (sent.sentBeforeLeaving > 0) bad('the clip was already broadcast before the teardown', 'the probe raced the thing it was timing and proved nothing');
-    else if (sent.sends > 0) bad(`a clip was BROADCAST by the panel that replaced the one that recorded it (${sent.sends} send(s))`,
-      'the child left, and his voice went out anyway — against "the clip dies with the panel", on the only identifying data this app handles');
-    else ok('a clip whose owner was torn down mid-send is never broadcast by the panel that replaced it');
+      const before = requests.length;
+      await page.evaluate(() => { closeVoice(); });
+      await finger('.pad-btn[data-id="0"]');
+      await page.waitForTimeout(250);
+      await finger('#voiceRecBtn');
+      await page.waitForTimeout(900);
+      await finger('#voiceRecBtn');
+      await page.waitForTimeout(900);
+      await finger('#voicePlayBtn');
+      await page.waitForTimeout(400);
+      const st = await page.evaluate(() => window.__voice.state());
+      const asks = await page.evaluate(() => window.__chanAsks.slice());
+      await page.evaluate(() => closeVoice());
+
+      const outbound = requests.slice(before).filter((u) => !u.startsWith(ORIGIN));
+      if (st.stage !== 'ready') bad(`the panel did not record (stage ${st.stage})`, 'this section proved nothing — the drive must reach the code that would have sent');
+      else if (asks.length) bad(`the voice panel asked for ${asks.length} Supabase channel(s)`, asks.join(', '));
+      else if (outbound.length) bad(`${outbound.length} outbound request(s) during a voice session`, outbound.slice(0, 4).join(' | '));
+      else if (sockets.length) bad(`${sockets.length} WebSocket(s) opened during a voice session`, sockets.slice(0, 4).join(' | '));
+      else ok(`record → play → exit asks for ZERO channels, makes ZERO outbound requests and opens ZERO sockets — with a client standing by that would have given one`);
+
+      /* AND THE INSTRUMENT MUST SHOW IT CAN SEE. A witness that has never fired is not a
+       * witness: the camera DOES take a channel, on the same recorder, in the same page. */
+      const camAsks = await page.evaluate(() => {
+        window.__chanAsks = [];
+        window.cameraChannel = null;
+        try { joinCameraChannel(); } catch (e) {}
+        const n = window.__chanAsks.slice();
+        window.cameraChannel = null;
+        return n;
+      });
+      if (!camAsks.length) bad('the channel recorder never fired for a path that DOES take a channel',
+        'it cannot be trusted to report zero for voice — an instrument must demonstrate it would have seen the thing');
+      else ok(`the channel recorder does fire when a channel is taken (camera asked for ${camAsks.join(', ')}) — the zero above is a measurement, not a silence`);
+    } finally {
+      page.off('request', onReq);
+      page.off('websocket', onWs);
+    }
+  }
+
+  /* ---- §24. THE MAP KNOWS WHERE IT IS AND TELLS NOBODY ------------------
+   *
+   * PUP-WO-0702 acceptance 3, and §1.2's leak: stamps and strokes carried REAL WGS84
+   * coordinates — Leaflet's own lat/lng — beside a stable device id, on an unscoped
+   * global channel, from a map re-centred on getCurrentPosition at zoom 16.
+   *
+   * LEAFLET IS A CDN SCRIPT AND IS UNREACHABLE IN CI, so it is stubbed. THAT IS
+   * LEGITIMATE AND THE BOUNDARY MATTERS: Leaflet is the DEPENDENCY, not the subject.
+   * Nothing below asserts anything about Leaflet. What is driven is the app's own
+   * pointer handlers and its own clear button, and what is asserted is that no channel is
+   * taken and nothing leaves the browser. A stub that returned wrong geometry would still
+   * exercise the same send paths, because the send paths do not depend on the geometry
+   * being right — they depend on existing. */
+  if (run(24)) {
+    const requests = [];
+    const onReq = (r) => requests.push(r.url());
+    page.on('request', onReq);
+    try {
+      const res = await page.evaluate(async () => {
+        const asks = [];
+        const realGet = window.getSupabaseClient, realCfg = window.isSupabaseConfigured;
+        window.getSupabaseClient = () => ({
+          channel: (n) => { asks.push(n); return { on() { return this; }, subscribe() { return this; }, send() {} }; },
+          removeChannel() {},
+        });
+        window.isSupabaseConfigured = () => true;
+        /* The stub. Only what index.html actually calls. */
+        const pt = (x, y) => ({ x: x, y: y });
+        const ll = (a, b) => (typeof a === 'object' ? { lat: a.lat, lng: a.lng } : { lat: a, lng: b });
+        const off = { enable() {}, disable() {} };
+        const mapObj = {
+          setView() { return this; }, on() { return this; }, remove() {},
+          latLngToContainerPoint: (l) => pt((l.lng + 180) * 10, (90 - l.lat) * 10),
+          containerPointToLatLng: (p) => ll(90 - p.y / 10, p.x / 10 - 180),
+          dragging: off, touchZoom: off, doubleClickZoom: off, scrollWheelZoom: off,
+        };
+        const realL = window.L;
+        window.L = {
+          map: () => mapObj,
+          tileLayer: () => ({ addTo() { return this; } }),
+          divIcon: () => ({}),
+          marker: (a) => ({ _ll: ll(a[0], a[1]), addTo() { return this; },
+                            setLatLng(v) { this._ll = ll(v[0], v[1]); return this; },
+                            getLatLng() { return this._ll; } }),
+          latLng: ll, point: pt,
+        };
+        /* A geolocation that resolves, so the marker path actually runs. */
+        const realGeo = navigator.geolocation;
+        const fix = { coords: { latitude: 35.7796, longitude: -78.6382 } };
+        Object.defineProperty(navigator, 'geolocation', { configurable: true, value: {
+          getCurrentPosition: (ok) => setTimeout(() => ok(fix), 0),
+          watchPosition: (ok) => { setTimeout(() => ok(fix), 0); return 7; },
+          clearWatch() {},
+        }});
+        try {
+          openTreasureMap();
+          await new Promise((r) => setTimeout(r, 300));
+          const opened = !!document.getElementById('mapOverlay');
+          const tracked = !!window.mapLocationMarker;
+          /* Draw, stamp and clear through the app's OWN handlers. */
+          const cv = document.getElementById('mapDrawCanvas') || document.querySelector('#mapOverlay canvas');
+          let drew = 0;
+          if (cv) {
+            window.mapIsDrawMode = true;
+            const ev = (t, x, y) => cv.dispatchEvent(new PointerEvent(t, { bubbles: true, clientX: x, clientY: y, pointerId: 1 }));
+            ev('pointerdown', 120, 120); ev('pointermove', 160, 150); ev('pointerup', 160, 150);
+            drew = (window.mapStrokes || []).length + (window.mapStamps || []).length;
+          }
+          const clearBtn = document.getElementById('mapClearBtn');
+          if (clearBtn) clearBtn.click();
+          closeTreasureMap();
+          return { opened, tracked, drew, asks, canvas: !!cv };
+        } finally {
+          window.L = realL;
+          Object.defineProperty(navigator, 'geolocation', { configurable: true, value: realGeo });
+          window.getSupabaseClient = realGet; window.isSupabaseConfigured = realCfg;
+        }
+      });
+
+      const outbound = requests.filter((u) => !u.startsWith(ORIGIN));
+      if (!res.opened) bad('the map did not open under the stub', 'this section proved nothing');
+      else if (!res.tracked) bad('mapLocationMarker did not track the fix',
+        'geolocation must STAY — the map knows where it is; it just stops telling anyone');
+      else if (!res.canvas) bad('the drawing canvas was not found', 'the draw and stamp paths were never driven — this section proved nothing');
+      else if (!res.drew) bad('drawing produced no stroke or stamp', 'the send paths were never reached — this section proved nothing');
+      else if (res.asks.length) bad(`the map asked for ${res.asks.length} Supabase channel(s)`, res.asks.join(', '));
+      else if (outbound.length) bad(`${outbound.length} outbound request(s) while drawing on the map`, outbound.slice(0, 4).join(' | '));
+      else ok(`the map opens, tracks a real fix, draws ${res.drew} mark(s) and clears — ZERO channels, ZERO outbound. It knows where it is and tells nobody`);
+    } finally { page.off('request', onReq); }
   }
 
 } finally { await browser.close(); server.close(); }
@@ -1297,4 +1077,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4, four presets are spectrally distinct through the shipping graph builder (null result first), every value is clamped, no microphone survives teardown from any state including a grant that arrives after the panel closed, one finger tap leaves from idle, mid-record and mid-playback, the recorder stops on its own timer, Supabase-unconfigured degrades silently, the four preset glyphs are distinct code points (whether they render distinctly is UNRESOLVED wherever the pad's own glyphs do not), nothing clips or goes silent across 36 preset/slider positions, no orphaned microphone survives repeated taps, a send survives a playback tap and does not survive the exit, a remote clip is stopped by the exit, the slider's knob lands under the finger, a rendered clip arrives and plays on a second device while a hostile payload at the same door is refused, a grant crossing a teardown leaves no live track, a 40-message burst cannot exceed the concurrent-decode cap, an open microphone locks out playback, an abandoned clip does not appear in the next panel, an over-long decoded clip is refused before it sounds, a second openVoice is a no-op, a client without removeChannel still falls back to unsubscribe, the decode counter survives teardowns, a REJECTED grant crossing a teardown leaves no live track, and a clip is never broadcast by the panel that replaced its owner.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4; four presets are spectrally distinct through the shipping graph builder, null result first; every value is clamped and nothing clips or goes silent across 36 preset/slider positions; NO MICROPHONE SURVIVES TEARDOWN from any state, including repeated taps during a pending grant and a grant \u2014 or a REJECTION \u2014 that crosses a teardown; one finger tap leaves from idle, mid-record and mid-playback; the recorder stops on its own timer; an open microphone locks out playback; an abandoned clip does not appear in the next panel; a second openVoice is a no-op and a client without removeChannel still falls back to unsubscribe; the slider's knob lands under the finger; the four preset glyphs are distinct code points, with rendered distinctness UNRESOLVED wherever the pad's own glyphs do not render; the panel is INDISTINGUISHABLE configured and unconfigured; A FULL VOICE SESSION ASKS FOR ZERO CHANNELS, MAKES ZERO OUTBOUND REQUESTS AND OPENS ZERO SOCKETS with a client standing by that would have given one; and THE MAP OPENS, TRACKS A REAL FIX, DRAWS AND CLEARS while asking for no channel and sending nothing.`);

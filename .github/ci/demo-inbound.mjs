@@ -9,7 +9,7 @@
  * script running at all.
  *
  * THE ASSERTION IS THE NETWORK, NOT THE REGEX. A check that fed strings to
- * `safeMediaUrl` and compared return values would be grading the validator against
+ * the gate and compared return values would be grading the validator against
  * itself. This one routes a hostile payload through the REAL receive path and asserts
  * THE BROWSER MADE NO REQUEST — the property the invariant is about.
  */
@@ -59,8 +59,8 @@ try {
   await page.waitForSelector('.pad-btn[data-id="7"]', { timeout: 15000 });
   await page.waitForTimeout(200);
 
-  const present = await page.evaluate(() => typeof window.safeMediaUrl === 'function' || typeof safeMediaUrl === 'function');
-  if (!present) { bad('there is no inbound gate at all', 'safeMediaUrl is not defined'); }
+  const present = await page.evaluate(() => typeof window.safeImageUrl === 'function');
+  if (!present) { bad('there is no inbound gate at all', 'safeImageUrl is not defined'); }
   else {
     /* 1. THE BEACON. A hostile payload driven through the real sink. */
     if (run(1)) {
@@ -68,7 +68,7 @@ try {
     const beacon = `${ORIGIN}/__beacon?id=1`;
     /* THROUGH THE APP'S OWN REGISTERED HANDLER, NOT A RE-IMPLEMENTATION OF IT.
      *
-     * This used to call `safeMediaUrl` itself and only invoke the sink if the gate passed
+     * This used to call the gate itself and only invoke the sink if it passed
      * — so it demonstrated that the VALIDATOR refuses a URL, which was never in doubt, and
      * said nothing about whether the SINK IS GATED. Deleting the gate from
      * joinCameraChannel's handler left this section green: the check was performing the
@@ -101,23 +101,31 @@ try {
 
     /* 2. AND THE GATE MUST STILL PASS REAL MEDIA, or it is a feature that was removed. */
     if (run(2)) {
+    /* THE AUDIO HALF IS GONE WITH THE VOICE TRANSPORT -- PUP-WO-0702 §1.1a. The `kind`
+     * parameter had one caller left and the function is now `safeImageUrl(raw)`. So this
+     * asserts the narrowing rather than quietly dropping the audio case: a gate that
+     * still accepted audio would be a limb with no body, and a check that simply stopped
+     * asking would pass because ITS SUBJECT IS GONE rather than because a property holds. */
     const good = await page.evaluate(() => {
       const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
       const wav = 'data:audio/wav;base64,UklGRiQAAABXQVZF';
-      return { img: safeMediaUrl(png, 'image') === png, aud: safeMediaUrl(wav, 'audio') === wav,
-        crossed: safeMediaUrl(png, 'audio') === '' };
+      return { img: safeImageUrl(png) === png, audRefused: safeImageUrl(wav) === '',
+               arity: safeImageUrl.length, oldName: typeof window.safeMediaUrl };
     });
-    if (!good.img || !good.aud) bad('the gate rejects legitimate media — the feature is disabled, not secured',
-      `image ${good.img}, audio ${good.aud}`);
-    else if (!good.crossed) bad('the gate accepts an image where audio is expected — the kind is not enforced');
-    else ok('a real data:image and data:audio pass, and an image offered as audio is refused');
+    if (!good.img) bad('the gate rejects a legitimate image — the feature is disabled, not secured');
+    else if (!good.audRefused) bad('the gate still accepts audio after the voice transport was removed',
+      'a branch with no caller is a limb a future reader treats as live');
+    else if (good.oldName !== 'undefined') bad('safeMediaUrl still exists alongside safeImageUrl',
+      'two names for one gate is the next drift');
+    else if (good.arity !== 1) bad(`the gate still takes ${good.arity} parameters`, 'the `kind` argument has no caller');
+    else ok('the gate is safeImageUrl(raw): a real data:image passes, audio is refused, and the old name and its `kind` argument are gone');
     }
 
     /* 3. THE RECEIVING HALF OF THE BOUND. */
     if (run(3)) {
     const capped = await page.evaluate(() => {
       const huge = 'data:image/png;base64,' + 'A'.repeat(4 * 1024 * 1024);
-      return safeMediaUrl(huge, 'image') === '';
+      return safeImageUrl(huge) === '';
     });
     if (!capped) bad('an oversized inbound payload is accepted', 'the designed bound is recorder-side only — it bounds what this device SENDS, not what it ACCEPTS');
     else ok('an oversized inbound payload is refused — the bound has its receiving half');
@@ -155,10 +163,28 @@ try {
    * ALL THREE, because closeCamera's own comment says three channels were subscribed and
    * zero released, part 1 released one, and PUP-WO-0701 §S2.2 released the other two.
    * Asserting only camera is asserting the panel that was never the problem. */
+  /* THE MAP IS NO LONGER IN THIS TABLE, AND ITS ABSENCE IS ASSERTED RATHER THAN ASSUMED.
+   * PUP-WO-0702 removed the map transport outright, so "closeTreasureMap releases its
+   * channel" has no subject — and silently dropping the row would be a check passing
+   * because the thing it asserted is GONE rather than because a property holds, which is
+   * the exact failure that work order names. The row below replaces it with the stronger
+   * claim: there is no handle to release. */
+  const noChannel = await page.evaluate(() => ({
+    handle: typeof window.mapChannel,
+    join: typeof window.joinMapChannel,
+    sends: ['broadcastMapStroke', 'broadcastMapStamp', 'broadcastMapClear'].filter((f) => typeof window[f] === 'function'),
+    geo: typeof navigator.geolocation.watchPosition === 'function',
+  }));
+  if (noChannel.handle !== 'undefined' || noChannel.join !== 'undefined' || noChannel.sends.length)
+    bad('the map transport still exists',
+      `mapChannel=${noChannel.handle}, joinMapChannel=${noChannel.join}, senders=[${noChannel.sends.join(', ')}] — it carried REAL WGS84 coordinates beside a stable device id on an unscoped global channel`);
+  else if (!noChannel.geo) bad('navigator.geolocation is gone too',
+    'the map is meant to keep knowing where it is and stop telling anyone — local FUNCTION, not local ignorance');
+  else ok('the map has no channel, no join and no senders — and still has geolocation');
+
   const panels = [
     { name: 'camera', close: 'closeCamera', handle: 'cameraChannel', overlay: 'cameraOverlay' },
     { name: 'canvas', close: 'closeCanvas', handle: 'canvasChannel', overlay: 'canvasOverlay' },
-    { name: 'map',    close: 'closeTreasureMap', handle: 'mapChannel', overlay: 'mapOverlay' },
   ];
   for (const p of (run(5) ? panels : [])) {
     const r = await page.evaluate(({ close, handle }) => {
@@ -197,4 +223,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 24 PASSED at ${COMMIT.slice(0, 12)} — a payload naming a remote origin causes no network request, real media of the expected kind still passes, an oversized payload is refused, the gallery is bounded and evicts the oldest, and all three panels release their own channel and clear the handle.`);
+console.log(`\nCHECK 24 PASSED at ${COMMIT.slice(0, 12)} — a payload naming a remote origin causes no network request, a real image still passes and audio is now refused, an oversized payload is refused, the gallery is bounded and evicts the oldest, the map has no transport at all while keeping geolocation, and both remaining channel panels release their own channel and clear the handle.`);
