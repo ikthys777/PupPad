@@ -488,8 +488,8 @@ jobs:
         run: node .github/ci/demo-blockpop.mjs .
 
       - name: "Check 21 controls — every section of check 21, shown red"
-        # PUP-WO-0400 §3 item 9: "A check never seen red is not a check." Eight
-        # scenarios, one planted defect each, each asserting the check goes red AND says
+        # PUP-WO-0400 §3 item 9: "A check never seen red is not a check." One planted
+        # defect per scenario, each asserting the check goes red AND says
         # the thing it was supposed to say — a check that fails for an unrelated reason
         # has not been shown to catch anything.
         #

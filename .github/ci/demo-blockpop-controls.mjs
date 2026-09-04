@@ -16,6 +16,7 @@ import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSy
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { cpus } from 'node:os';
 
 const REPO = resolve(process.argv[2] || join(import.meta.dirname, '..', '..'));
@@ -96,7 +97,14 @@ async function scenario(section, label, { mutate, expectText }) {
 /* Collected first, run in lanes, reported in declaration order so the output is stable
  * whatever order they finish in. */
 const QUEUE = [];
-const plan = (section, label, spec) => QUEUE.push({ section, label, spec });
+/* --only=N,M plants only those sections' defects. The check file has had this since it
+ * was written and this one did not, which meant proving one new plant cost a full run of
+ * every other. It changes nothing about a CI run, which passes no argument. */
+const ONLY = (() => {
+  const a = process.argv.find((x) => x.startsWith('--only='));
+  return a ? new Set(a.slice(7).split(',').map(Number)) : null;
+})();
+const plan = (section, label, spec) => { if (!ONLY || ONLY.has(section)) QUEUE.push({ section, label, spec }); };
 
 /* 1 — the exit's column. PUP-WO-0301's worst defect was #gameBack swallowing a control;
  * this is the same defect in the same place, and section 1 is the converse question. */
@@ -666,12 +674,103 @@ plan(19, 'reduced motion removes the win instead of stilling it', {
   expectText: 'the win disappears',
 });
 
+/* ---- PUP-WO-0704: THE WIN ITSELF ------------------------------------------ *
+ * §20 IS THE CHECK A COMMENT HAD BEEN STANDING IN FOR. blockpop.js claimed "with it
+ * covered, the win is still a screenful of fireworks ... Acceptance §1 measures that
+ * with every painted word masked", and no check anywhere photographed a celebration
+ * with words masked. So these five plants are the first evidence that section can catch
+ * anything, and they are chosen to hit ONE CLAUSE EACH — the win has two carriers now,
+ * and two carriers is exactly the arrangement in which a one-at-a-time plant passes. */
+
+/* THE DEFECT §0 ACTUALLY MEASURED, PUT BACK. The light is real, it is built with the
+ * right peak, and it is painted into a layer that the celebration's own z-index-12 scrim
+ * covers — which delivered 13 of 765 to the glass in both motion worlds. Nothing about
+ * the element is wrong; only where it hangs. */
+plan(20, "the win's light is painted under the celebration's own scrim again", {
+  mutate: (s) => sub(s, '    celebEl.appendChild(burst);', '    boardWrap.appendChild(burst);'),
+  expectText: "the win's light is not inside the celebration",
+});
+
+/* THE HALF-BUILD. The layer is assembled and never attached, so `celebrate()` reads as
+ * if it paints and paints nothing — AND THE 48 SPARKS FROM THE LINE CLEAR THAT WON THE
+ * GAME ARE STILL FLYING while this frame is taken. That is the trap PUP-WO-0704 §5 names
+ * by name: a words-covered assertion that passes on leftover sparks rather than on the
+ * celebration's own effects. If §20 were built the naive way — photograph the win, check
+ * it differs from the idle board — this plant would be GREEN. */
+plan(20, 'the celebration builds its whole light layer and never attaches it', {
+  mutate: (s) => sub(s, '    celebEl.appendChild(burst);\n', ''),
+  expectText: 'the win painted no light layer at all',
+});
+
+/* THE LIGHT GOES OUT AND THE BLOOMS STAY. Peak 0 is a live possibility rather than an
+ * invention: it is what a refactor that stopped resolving FLASH_PEAK_BASE would produce.
+ * The blooms alone still repaint ~10-18% of the screen, so this is the plant that proves
+ * the per-carrier clause is doing work the headline cannot do. */
+plan(20, "the win's light is built at zero brightness", {
+  mutate: (s) => sub(s, "    wash.style.setProperty('--bp-peak', String(Math.round((FLASH_PEAK_BASE + FLASH_PEAK_STEP * (COMBO_TOP - 1)) * 1000) / 1000));",
+    "    wash.style.setProperty('--bp-peak', '0');"),
+  expectText: "the win's light on its own repaints",
+});
+
+/* AND THE CONVERSE, WHICH IS THE ONE THE HEADLINE CANNOT SEE AT ALL. Sixteen blooms are
+ * built, sized, inside the celebration and completely transparent. Every structural
+ * clause in §20 passes, the headline stays at 99% because the light is still up, and the
+ * only thing standing between this and a green check is the number measured for the
+ * blooms on their own. Redundant signals make a one-at-a-time plant green; this is that
+ * shape, planted deliberately. */
+plan(20, 'the blooms are built, sized, and paint nothing', {
+  mutate: (s) => sub(s, "    'rgb(255 255 255 / .92) 0%,var(--bp-c) 44%,rgb(255 255 255 / 0) 74%);',",
+    "    'rgb(255 255 255 / 0) 0%,rgb(255 255 255 / 0) 44%,rgb(255 255 255 / 0) 74%);',"),
+  expectText: 'putting no ink on the glass',
+});
+
+/* AND A BLOOM WITH NO SIZE, WHICH IS WHAT A GEOMETRY REFACTOR PRODUCES. `--bp-sz` feeds
+ * the width, the height AND the two negative margins that centre the disc on its point;
+ * a zero there leaves sixteen elements in the DOM, inside the celebration, with the
+ * right colour and the right animation, occupying nothing. A rect comes from style, not
+ * from ink — and here even the rect is honest, which is why the clause that catches this
+ * is a rect clause rather than a pixel one. */
+plan(20, 'every bloom is built at zero size', {
+  mutate: (s) => sub(s, "        Math.round((34 + ((bi * 23) % 5) * 11) * (reduced ? BLOOM_CALM_SCALE : 1)) + 'px');",
+    "        '0px');"),
+  expectText: 'in the DOM with no size',
+});
+
+/* §21 — REDUCED MOTION. Both halves of acceptance §4, and each has its own plant,
+ * because "it is there" and "it is still" are satisfied by opposite defects. */
+
+/* THE DEFECT THAT SHIPPED, IN THE NEW EFFECT'S CLOTHES. `burstAt` returned 0 when
+ * `reduced` was set and the calm world got a scrim and a word; this is the same decision
+ * made one function along. It is also why §20 runs in both worlds — if §21 were the only
+ * reduced-motion section, this plant would need to be caught by a count alone. */
+plan(21, 'the reduced-motion win builds no blooms, exactly as burstAt built no sparks', {
+  mutate: (s) => sub(s, '    for (var bi = 0; bi < BLOOM_N; bi++) {', '    for (var bi = 0; bi < (reduced ? 0 : BLOOM_N); bi++) {'),
+  expectText: 'the win paints no blooms at all',
+});
+
+/* AND THE OPPOSITE MISTAKE, WHICH IS THE EASIER ONE TO MAKE. "Reduced motion still gets
+ * a celebration" is satisfied by handing the calm world the travelling animation, and
+ * that is a worse outcome than stillness — the preference exists to prevent exactly that
+ * motion. Deleting the calm rule is how it would happen: the selector goes, the base
+ * `.bp-bloom` animation applies to both worlds, every count §21 takes is unchanged, and
+ * only the rect comparison notices. */
+plan(21, 'the calm world is handed the travelling bloom', {
+  mutate: (s) => sub(s, "    '.bp-celeb-calm .bp-bloom{animation:bp-bloom-calm var(--bp-dur) ease-in-out var(--bp-del) both}',\n", ''),
+  expectText: 'changed rect between',
+});
+
 /* RUN ALONE, AFTER THE REST. 6 and 13 land inside a 280ms window and sample a 620ms
  * sweep; 16 counts particles and measures screenshot luminance; 17 compares whole frames
  * for byte equality; 19 waits out a 3.4s self-return and a 350ms settle window. All of
  * them are wall-clock assertions, and CI's runners are 2-core: three separate CI failures
  * were bought learning that a browser-bound lane count is not a CPU count. */
-const TIMED = new Set([6, 13, 16, 17, 19]);
+/* 20 and 21 join them: each runs a perfect clear in BOTH motion worlds, and §20 takes
+ * six full-viewport screenshots per world and decodes them in-page. Nothing in either is
+ * a wall-clock ASSERTION — both freeze the animations and drop the game's pending timers
+ * first, so the numbers are the same on a fast box and a slow one — but they are the two
+ * heaviest sections in the file, and putting them in a lane with three others is how a
+ * heavy section starves a timed one next door. */
+const TIMED = new Set([6, 13, 16, 17, 19, 20, 21]);
 
 /* THE BANNER MOVED, AND IT WAS WRONG WHERE IT WAS. It printed `QUEUE.length` from a
  * position PART WAY DOWN THE LIST OF plan() CALLS, so it reported the number of defects
@@ -681,6 +780,47 @@ const TIMED = new Set([6, 13, 16, 17, 19]);
  * authoritative and rots without anyone touching it. Printed here, after the last
  * plan(), where QUEUE is complete. */
 console.log(`  ${QUEUE.length} planted defects, ${LANES} at a time (the timing-sensitive ones alone, afterwards).\n`);
+  /* ---- PRE-FLIGHT: VALIDATE THE PLANT LIST BEFORE SPENDING TEN MINUTES ON IT -------
+   * Three ways a plant can be worthless, all of them silent, all of them findable in
+   * under a second — and every one of them has actually shipped in this repo's sibling
+   * control file:
+   *
+   *   STALE   its anchor no longer matches, or matches twice. `sub` already throws on
+   *           that, but only when its lane gets there — which is after four browsers
+   *           have booted and, for a TIMED section, after everything else has finished.
+   *   NO-OP   it applies and changes nothing. The scenario runner catches this too, and
+   *           equally late.
+   *   TWIN    two plants that produce a byte-identical mutated file. Nothing catches
+   *           this at all: the pair runs, both go red, and the report claims two
+   *           independent defects were demonstrated when one defect was demonstrated
+   *           twice and some other clause has no coverage. THIS IS THE ONE THE RUNNER
+   *           CANNOT SEE, and it is why this block exists rather than being left to the
+   *           two guards that were already here.
+   *
+   * `--dry` stops after this, which is the whole point: the list can be validated in a
+   * second before anyone pays for the browsers. */
+  {
+    const src = readFileSync(join(REPO, MODULE), 'utf8');
+    const seen = new Map();
+    const problems = [];
+    for (const { section, label, spec } of QUEUE) {
+      let out;
+      try { out = spec.mutate(src, REPO); }
+      catch (e) { problems.push(`§${section} ${label} — anchor: ${String(e && e.message ? e.message : e)}`); continue; }
+      if (out === src) { problems.push(`§${section} ${label} — applies and changes nothing`); continue; }
+      const h = createHash('sha256').update(out).digest('hex');
+      if (seen.has(h)) problems.push(`§${section} ${label} — produces a file byte-identical to ${seen.get(h)}, so one of the two is proving nothing`);
+      else seen.set(h, `§${section} ${label}`);
+    }
+    if (problems.length) {
+      console.error(`\n::error::CHECK 21 CONTROLS — ${problems.length} plant(s) are invalid before a single browser was started.`);
+      for (const m of problems) console.error(`  ${m}`);
+      process.exit(1);
+    }
+    console.log(`  pre-flight: ${QUEUE.length} plants, every one applying to a distinct file.\n`);
+    if (process.argv.includes('--dry')) process.exit(0);
+  }
+
   const parallel = QUEUE.map((q, i) => ({ q, i })).filter((x) => !TIMED.has(x.q.section));
   const serial = QUEUE.map((q, i) => ({ q, i })).filter((x) => TIMED.has(x.q.section));
   const ordered = new Array(QUEUE.length);
