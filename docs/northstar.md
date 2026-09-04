@@ -58,7 +58,7 @@ Numbered because work orders cite them by number. Defined here and nowhere else.
 |---|---|---|
 | **1** | Every control is operable by a non-reader. Text may label a control; it may never be the only way to know what the control does. *This invariant is the project.* | Cover all text on any surface. Find a control whose function cannot be inferred from its icon, colour, or immediate effect |
 | **2** | From inside PupPad, no sequence of taps reaches another application, the device's settings, or an adult's data. | Starting at the console, reach any OS surface or non-PupPad content by tapping alone |
-| **3** | Every core surface works with no network. Network may add capability; its absence may never remove a surface. | Cold-start from the home screen in airplane mode; find any surface that fails to open or renders unusable |
+| **3** | Every core surface works with no network. Network may add capability; its absence may never remove a surface. **ONE NAMED EXCEPTION, owner-approved 2026-09-04: the Map panel's OpenStreetMap basemap.** The invariant holds in full for the app shell, the games, and every other surface. | Cold-start from the home screen in airplane mode; find any surface **other than the Map panel's basemap** that fails to open or renders unusable. **A test that reds on the basemap is testing the exception, not a defect** |
 | **4** | The copy Buddy uses advances only when a human promotes it. Automated processes may publish for testing; they may never publish to him. | Land any commit through the automated path; observe the promoted copy change without a human action |
 | **5** | No game can reach a state that ends play without a one-tap way back into it. | Play any game to any terminal state; find one where continuing requires an adult, a menu, or closing the app |
 | **6** | Adding a game is a data change, not surgery. A new game touches its own module, one registry entry, and the asset manifest — nothing else. | Add a trivial game; count files changed outside those three |
@@ -75,9 +75,15 @@ Each carries its reason, because the reason is what stops it being re-proposed.
   fail state, which invariant 5 forbids. This is the tempting-but-wrong version:
   progression is what makes a game feel finished to an adult designer, and what
   makes a three-year-old hand the tablet back upset.
-- **Advertising, analytics, or any third-party network call.** Not a preference. A
-  third-party call from a child's app is a category of thing this project will not
-  contain.
+- **Advertising, analytics, or any third-party network call — with ONE named,
+  owner-approved exception.** Not a preference. A third-party call from a child's app is
+  a category of thing this project will not contain. **The exception is the Map panel's
+  OpenStreetMap tiles, approved 2026-09-04 (see invariant 3 and §7).** *It is written
+  here as well as at invariant 3 deliberately: this non-goal and that invariant are two
+  expressions of one rule, and amending one while leaving the other contradicted would
+  reproduce exactly the decay the amendment exists to stop.* **No second exception is
+  implied. Anything else third-party is still refused, and the CDN loads of Leaflet and
+  supabase-js remain unresolved rather than approved** — see `docs/architecture.md` §10.
 - **Becoming a general kids-app platform.** PupPad is one child's console. The
   moment it is designed for other children it acquires configurability, and
   configurability is how invariant 1 dies.
@@ -107,6 +113,7 @@ Each is plausible, not catastrophic — that is the point.
 | Date | Change | Reason |
 |---|---|---|
 | 2026-08-31 | Document created. | Repo existed and shipped with no steering documents; first dual-CC pilot requires them as authority. |
+| 2026-09-04 | **Invariant 3 and the third-party non-goal each gain ONE named exception: the Map panel's OpenStreetMap basemap.** | **Scotty's ruling, made knowingly against three costed alternatives** (no basemap; bundle ~218 tiles to z16; lower `maxZoom`) rather than by default. His words: *it does not hurt anything to keep it and continue — it may technically violate an invariant but he can make that call.* **The amendment is the non-optional half, and the reason is that a knowingly-violated invariant is worse than a weaker one honestly stated.** Two costs this project has already paid: **a faithful check enforcing invariant 3 would go RED on approved behaviour, and a red that is not a defect is how a suite gets ignored**; and worse, **a future builder reads the invariant, sees the map contradicting it, and FIXES THE MAP** — removing a feature the owner deliberately kept, citing the northstar as justification. That is a rule decaying into damage. **WHAT THE EXCEPTION COSTS, stated so nobody rediscovers it:** (a) on a cold device with no network **there is no basemap** — tiles are only ever runtime-cached opportunistically, and a `CACHE_VERSION` bump has already been measured taking the map from 24 of 24 tiles offline to 0 of 24; (b) **every tile request discloses a coordinate to a third party with an IP attached** — a tile path is `/{z}/{x}/{y}`, so ~59 m at today's `maxZoom: 19` and ~468 m at the opening zoom, and nothing about it is ephemeral on their side. **The mechanism half is OWED, not done:** `PUP-WO-0705` carries the exception into a check as an allowlist of exactly one origin, so a SECOND third-party call still goes red. Until it merges, this exception lives only in prose. |
 
 ## 8. Provenance
 

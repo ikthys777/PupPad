@@ -481,7 +481,8 @@ Promotion is Scotty's alone.**
 |---|---|---|---|
 | 1 | **`PUP-WO-0703` — voice slots + the sine-wave feedback** | **DISPATCHED 2026-09-04.** Three slots, more sliders, and **an invariant-1 fix**: nothing tells a non-reader that recording is happening | in flight |
 | 2 | **`PUP-WO-0704` — Block Pop's celebration** | authored. **§0 is a measurement first**: the flash and spark volleys already exist in `celebrate()`, so find what suppresses them before adding | nobody |
-| 3 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
+| 3 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
+| 4 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
 | 4 | `PUP-WO-0112` — the CI job split | scoped, no file | nobody |
 | 5 | `PUP-WO-0113` — check 11 fires on English prose | scoped in §4a, no file | nobody |
@@ -513,48 +514,17 @@ Promotion is Scotty's alone.**
   nothing, because the joy is the playback.** **`PUP-WO-0702` does NOT extend to the
   camera.**
 
-- **THE MAP TILES ARE STILL OPEN, AND THE CAMERA RULING DOES NOT REACH THEM.** Stated
-  plainly because proximity would otherwise close it by accident: **Scotty's reasoning
-  covers OUR backend, OUR key, OUR family. A tile request goes to a THIRD PARTY.**
-  OpenStreetMap's servers are not our backend, "the URL and anon key are family only" says
-  nothing about them, **every tile fetch tells an external operator roughly where the
-  device is with an IP attached, and nothing about it is ephemeral on their side.**
-
-  **Measured 2026-09-04 so the ruling is not made blind.** Tile paths are `/{z}/{x}/{y}`,
-  so the requested tile *is* the precision. At 40°N:
-
-  | maxZoom | what a tile request reveals | live tiles? |
-  |---|---|---|
-  | 19 *(today)* | **~59 m** | yes |
-  | 16 *(today's opening zoom)* | ~468 m | yes |
-  | 14 | ~1.9 km | yes |
-  | 12 | ~7.5 km | yes |
-
-  **Three alternatives, sized. Real tile bytes measured from OSM, not assumed:** z16
-  **26.9 KB**, z14 **24.4 KB**, z19 **3.9 KB** (deep zooms are sparse).
-
-  1. **NO BASEMAP — free, and the strongest.** Zero bytes, zero third-party egress. The
-     panel keeps the paw marker, drawing, stamps and the exit; it loses the streets. **For
-     a pretend treasure map for a three-year-old this may cost nothing he values** — worth
-     asking, because it is the only option with no downside to trade.
-  2. **BUNDLE THE TILES — and it closes a SECOND open item.** A 5 km box needs **218 tiles
-     to z16 (~5.5 MB)**; to z19 it is **10,252 tiles (~57 MB)**, which is not an option.
-     **The reason bundling is better than it looks:** `sw.js` records that Chrome charges
-     **~7–8 MB of quota per OPAQUE cross-origin entry**, and tiles are the bulk of the
-     opaque entries and **"the whole of the quota path"** (architecture §6.5). Bundled
-     tiles are **same-origin**, so they are billed at their real size. **One change would
-     remove the third-party egress AND the opaque-quota problem, and make the Map panel
-     genuinely offline** — which invariant 3 already asks for.
-     **⚠ AND THE TRAP, WHICH MATTERS BECAUSE SCOTTY MAY OPEN-SOURCE THIS AS A PORTFOLIO
-     PROJECT: bundling the neighbourhood tiles PUBLISHES THE NEIGHBOURHOOD.** It moves the
-     exposure from an external operator's logs into the repository, permanently and for
-     everyone. **A private tile bundle is fine; a public one is worse than the status quo.**
-  3. **LOWER `maxZoom` ONLY — one number, one line.** Coarsens the worst case from ~59 m
-     to ~468 m (16) or ~1.9 km (14). **It does not remove the egress; it reduces its
-     resolution**, and OSM still learns roughly where the device is on every open.
-
-  **Scotty's to rule, and it is now a choice between costed options rather than a
-  principle.**
+- **~~THE MAP TILES~~ — RULED BY SCOTTY 2026-09-04: LEAVE IT AS IS.** Keep the live
+  basemap, keep `maxZoom`, do not bundle, do not remove. **He chose against three costed
+  options rather than by default** — no basemap (free, loses only the streets); bundle
+  ~218 tiles to z16 (~5.5 MB, same-origin, would also have removed the opaque-quota
+  problem, **but a public repo would publish the neighbourhood**); or lower `maxZoom`
+  (coarsens the egress without removing it). His words: *it does not hurt anything to keep
+  it and continue — it may technically violate an invariant but he can make that call.*
+  **THE AMENDMENT WAS THE NON-OPTIONAL HALF AND IS DONE:** `docs/northstar.md` invariant 3
+  and the third-party non-goal each carry the exception, dated, with what it costs. **The
+  mechanism half is `PUP-WO-0705` and is NOT done** — until it merges the exception lives
+  only in prose.
 - **Roadmap gate 3 and gate 8** remain open and are not simulable.
 - **A play session with Buddy.** The drag now shows him the piece, the picker fits, tiles
   are the size Scotty asked for, and there is a perfect-clear celebration to win.
