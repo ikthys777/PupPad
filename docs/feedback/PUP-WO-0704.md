@@ -157,7 +157,8 @@ child of `.bp-celeb`. Two consequences worth stating:
 `flash()` itself is untouched and `comboReact` still calls it. A line clear has no
 overlay above it, so **that** flash does reach the glass, and §16 measures its peak in
 pixels across three combos. The deleted call's absence is asserted rather than assumed:
-§20 fails if a `.bp-flash` reappears inside `.bp-celeb`.
+§20 fails if a SECOND `.bp-flash` appears on the glass — the winning line clear leaves
+exactly one.
 
 ## 2. Reduced motion gets the bloom — Gyre's ruling, not a new one
 
@@ -183,10 +184,16 @@ coprime with its modulus), so the field is as varied under check 21's pinned
 
 | | no-preference | reduce |
 |---|---|---|
-| the win with every word covered **and the lozenge removed from the frame** | **99.65%** | **99.64%** |
-| the light alone, against the same frame with the scrim still up | 95.70% | 95.21% |
-| the sixteen blooms alone, same baseline | 9.97% | **18.50%** |
+| what the win ADDS to its own scrim, every word covered **and the lozenge removed from the frame** | **96.40%** | **96.51%** |
+| the light alone, against the same frame with the scrim still up | 96.03% | 95.69% |
+| the sixteen blooms alone, same baseline | 10.96% | **19.79%** |
+| what it is still adding at 90% of the way through the win | 82.62% | 82.62% |
+| the scrim on its own — the celebration §0 measured, for contrast | 53.95% | 53.95% |
+| the whole celebration against no celebration at all | 99.66% | 99.66% |
 | two captures of one unchanged frozen state (the null control) | 0.00% | 0.00% |
+
+*Every figure above is measured after the adversarial pass. Four of them moved during it,
+and the disposition at the end of this document says why.*
 
 **Before this branch the reduced world's answer to the first row was the scrim and a word.**
 
@@ -218,23 +225,29 @@ animations the section has just paused:
 |---|---|
 | **A** | everything visible, every word transparent |
 | **C** | the same, with the "Good Job!" lozenge itself hidden |
+| **S** | the same, with everything the celebration paints hidden — its scrim, and nothing else |
 | **B** | the same, with the whole celebration hidden |
 
-Nothing is restarted between them, so **B still contains every spark the line clear
-threw, at the same phase**. `C vs B` is therefore the celebration's own paint with its
-only word removed, and not one changed pixel in it can have come from the burst that
-triggered the win.
+Nothing is restarted between them, so **B and S still contain every spark the line clear
+threw, at the same phase**. The measured contamination is nil: the scrim's own share comes
+out at 53.95% with 38 sparks in frame and 53.95% with none.
 
-- **`A vs B` is the positive control, not the subject.** The lozenge is a large opaque
-  element that indisputably paints; if that comparison comes out empty, the camera
-  returns a constant or `visibility` did nothing, and every verdict is void.
+**`C vs S` is the headline** — the celebration's own NEW paint, with its only word
+removed, against the dimming that was already there. **Not `C vs B`**, which was the first
+version and which counted the scrim toward the win. §0 named that scrim as the problem;
+measured, it repaints 53.95% on its own, so the old 30% floor was cleared 1.8× by the very
+state the clause exists to reject. The adversarial pass computed it.
+
+- **`A vs C` is the positive control, not the subject.** The lozenge is a large opaque
+  element that indisputably paints; if hiding it changes nothing, the camera returns a
+  constant or `visibility` did nothing, and every verdict is void.
 - **The null control comes first** — two captures of one unchanged frozen state.
 - **It compares a thresholded fraction of visibly changed pixels, not bytes.** Byte
   identity of a screenshot is a property of the renderer; PR #67 was made to learn that
   in CI rather than here.
 
 **Each carrier is also measured alone, and that clause is not decoration.** The light
-clears the headline floor by a factor of three on its own, so a change that silently
+clears the headline floor on its own, so a change that silently
 killed every bloom would leave the headline at 99% and the section green — redundant
 signals make a one-at-a-time plant pass. Each carrier is compared against a frame
 identical except for it (the celebration up, its scrim showing, everything else hidden),
@@ -247,8 +260,13 @@ file lands on it, and it is kept because it is the only clause stated in the acc
 criterion's own terms and the only one that still says something if the per-carrier
 decomposition is ever refactored away.
 
-**It runs in both motion worlds, and reads back which one the page actually reports**
+**It runs in both motion worlds, and reads back which one the MODULE saw** — from
+`.bp-celeb-calm`, which is the module's own expression of the snapshot it took at mount —
 before trusting the context option it asked for.
+
+**And it samples twice, not once.** Every bloom is finished by 1240ms and the lozenge by
+1500ms against a 3400ms unreduced window, so a section that only photographs 700ms grades
+the first third and calls it the win.
 
 ## §21 — stillness, with its own positive control
 
@@ -267,7 +285,7 @@ It reports 16 of 16 travelling there and 0 of 16 travelling in the calm world.
 ## One hazard found while building the instrument, not after
 
 `freezeAnimations` pauses the compositor; **it does not pause `setTimeout`**, and the
-reduced celebration removes itself after 1600ms. §20 takes six full-viewport screenshots
+reduced celebration removes itself after 1600ms. §20 takes nine full-viewport screenshots
 per world and decodes them in-page — comfortably inside that here, and **not comfortably
 inside it on a loaded two-core runner**. The failure would not have been a red check: the
 later frames would simply have been photographs of a game with no celebration in them,
@@ -284,12 +302,18 @@ gate that is red at random is one people learn to ignore.**
 
 # §1 — RED-PROOF
 
-**Seven planted defects in `.github/ci/demo-blockpop-controls.mjs`, one per clause.**
+**Ten planted defects in `.github/ci/demo-blockpop-controls.mjs`** — seven before the
+adversarial pass, three added by it. They do not cover every clause: §20 has fifteen guards
+and §21 has eight, and the unplanted ones are instrument preconditions plus the documented
+subsumed headline.
 
 | § | planted defect | the clause it can only be caught by |
 |---|---|---|
-| 20 | the win's light is painted under the celebration's own scrim again (§0's defect, restored) | the light is not inside the celebration |
-| 20 | the whole light layer is built and never attached | no light layer at all — **and the 48 line-clear sparks are still in frame** |
+| 20 | the light layer is hung on `boardWrap`, under the celebration's own scrim | the light is not inside the celebration |
+| 20 | **the light is painted with `flash()` again — §0's defect restored exactly** | **a second `.bp-flash` is on the glass** |
+| 20 | the whole light layer is built and never attached | no light layer at all — **and the line clear's own sparks are still in frame** |
+| 20 | **the module never believes it is in the reduced-motion world** | **the MODULE thinks it is in the unreduced world** |
+| 21 | the same, aimed at §21 | not wearing `.bp-celeb-calm` |
 | 20 | the light is built at zero brightness | the light **on its own** repaints too little |
 | 20 | the blooms are built, sized, inside the celebration, and paint nothing | the blooms **on their own** put no ink on the glass |
 | 20 | every bloom is built at zero size | in the DOM with no size |
@@ -308,7 +332,130 @@ only when that scenario's lane reached them, which for a `TIMED` section is afte
 everything else has finished. **Neither catches the third failure: two plants that
 produce a byte-identical file.** That pair runs, both go red, and the report claims two
 independent defects were demonstrated when one was demonstrated twice and some other
-clause has no coverage at all. A pre-flight now applies all 77 mutations and hashes them
-in under a second, with `--dry` to stop there. **77 plants, every one applying to a
+clause has no coverage at all. A pre-flight now applies every mutation and hashes it
+in under a second, with `--dry` to stop there. **80 plants, every one applying to a
 distinct file.** `--only=N` was also added, which the check file has always had and this
 one did not — proving one new plant used to cost a full run of every other.
+
+---
+
+# §5 — THE ADVERSARIAL PASS, AND ITS DISPOSITION
+
+Fresh subagent, `git archive` freeze of `67e31ea`, every correction held until it returned.
+It ran all six probes the work order names and found **five confirmed defects — three of
+them inside the instrument I had just written to prove the other two.** Every finding below
+was re-verified at source before being acted on.
+
+## The one that matters most: I wrote a described guarantee into the fix for a described guarantee
+
+**§20's `flashInsideCeleb` clause could not fire for any build that could ever exist.** It
+read `celebEl.querySelectorAll('.bp-flash')`, and `flash()` appends into `.bp-fx` inside
+`boardWrap` — which is a **sibling** of `.bp-celeb`, never a descendant. The count was
+structurally zero.
+
+The pass planted the removed `flash()` call back into `celebrate()` — **§0's defect,
+restored exactly** — and §20 printed 99.65% and passed.
+
+Three separate comments claimed that clause was standing guard: one in `games/blockpop.js`,
+one in the check, and one in this document. **This work order exists because a comment
+claimed a check that was never written. I reproduced that defect inside the repair for
+it.** The clause now counts `.bp-flash` where they actually live and fails on a second
+one, and the restored call is a plant.
+
+## The reduced-motion half of §20 was grading the unreduced build
+
+`sawReduce` called `matchMedia`. **Its own comment said why that was not enough** — *"a
+context option is a request to the browser, and `reduced` is a snapshot the module took at
+mount"* — and then it asked the browser. With `var reduced = false` planted, both worlds
+printed byte-identical unreduced numbers, **38 travelling sparks in the run labelled
+"reduce"**, and §20 declared itself green *"in the reduced-motion world as well as the
+other one."* It now reads `.bp-celeb-calm`, which is the module's own expression of that
+snapshot. Two plants added.
+
+## The headline floor was below the thing it exists to reject
+
+`WIN_FLOOR` was 0.30 measured against a frame with **no celebration in it**, so the
+celebration's own navy scrim counted toward it. **The scrim alone repaints 53.95%** —
+1.8× the floor. A build with no light and no blooms, which is precisely what §0 measured on
+the device, would have passed. The headline is now measured against the celebration **with
+its scrim already up**, so the scrim is in both frames and contributes nothing, and the
+floor is 0.60 against a measured 96.40%.
+
+## The sixteen blooms were eight overlapping pairs, and a comment said they were not
+
+I wrote *"37, 61, 23 and 8 are coprime with their moduli, so sixteen discs walk the whole
+range … **without two of them landing on each other**."* The pass computed them. `bi →
+(bi·a) mod 100` is **linear**, so discs `bi` and `bi+8` sit at a *constant* offset — 54px —
+and because `BLOOM_N` was exactly twice `BLOOM_SPREAD`, each pair also shared an identical
+delay. **Measured worst overlap −43.9px with motion reduced.** Sixteen blooms were eight
+two-lobed blobs arriving in eight steps.
+
+Recomputed rather than re-argued: **29, 53 and a spread of 7** clear by **+10.0px** on the
+worst fleet viewport in the calm world and +35.3px unreduced, with no disc reaching the
+layer's edge in either world at any of the three phones. `BLOOM_N` is no longer a multiple
+of `BLOOM_SPREAD`. The blooms' own measured share rose from 9.96% to 10.96% unreduced and
+18.50% to 19.79% calm — the overlap had been costing ink.
+
+## And the new late sample immediately found something in the product
+
+The pass noted that **nothing sampled past 700ms**, of a 3400ms window in which the blooms
+end at 1240ms and the lozenge at 1500ms. I added a second sample at 90% of the celebration's
+own length — read from the light's `--bp-fade` rather than pasted, since `CELEB_MS` is not
+mine — and it came back **0.00%**.
+
+The cause was mine and not a tuning matter: **a CSS timing function applies to every
+keyframe interval, not to the animation as a whole**, so `ease-out` front-loaded the decay
+inside the wash's final segment. The authored 0.205 was painting about 0.04. **Over a third
+of the unreduced celebration was a dark screen with a word already gone from it.** An
+opacity envelope should mean what its percentages say; the easing belongs on things that
+move. Linear now, with the hold running to 78%. The late sample reads **82.62%**.
+
+## Corrections without a defect
+
+- **`A vs B` was named as "the lozenge control" and hid the whole celebration** — different
+  subjects by a factor of six. The control is `A vs C` now, which hides the lozenge.
+- **`hidBloom !== built.blooms` could not fire** — both sides were the same live query
+  against a frozen DOM. Removed.
+- **§21's three calm clauses were ordered symptom-first.** `moved` dominated the two below
+  it, so a module that never believes it is in the reduced world arrived as *"the calm
+  keyframes must set no transform"* — a true measurement with a false diagnosis. Cause
+  first now: did the module think it was calm, did it still throw travelling particles, and
+  only then, given both, did its still discs hold their rects.
+- **`celebrate()`'s volley comment was wrong by half** and this branch had re-typed it
+  without checking: *"three volleys of eight, so at most ~16 sparks overlap"* — `per` is 10,
+  and with `SPARK_MS` at 620 against a 260ms stagger all three volleys overlap between 520
+  and 620ms. **Thirty, not sixteen.** It is a budget claim about a real phone.
+- **"nothing this file paints can get in front of it"** is contradicted fifty lines later by
+  the lozenge's `z-index:1`, which is deliberate. Reworded.
+- **"Inset from the rim so a disc is never half-clipped"** was a percentage inset promising
+  something about a pixel radius. It is true of these strides at these sizes on all three
+  412px-tall fleet viewports — measured, 1.8px of clearance at the tightest — and the
+  comment now says that rather than claiming a mechanism it does not have.
+- **A hardcoded `8` and `70` in the bloom budget arithmetic**, a **"48 sparks" printed in a
+  world that has none**, **"six frames" when there are nine**, a **"factor of three" and a
+  "factor of nearly five" for one measured quantity in one file**, and a **9.97% that was
+  9.96%.** All were mine, all are gone. *No derived counts in prose.*
+
+## Weaknesses recorded and NOT fixed, so a reviewer can weigh them
+
+- **The per-carrier floors detect deletion, not degradation.** `BLOOM_FLOOR` is 0.015
+  against a measured 10.96%; killing half the blooms still passes. `WASH_FLOOR` is 0.20
+  against 96.03%. Raising them toward the measured values would be tuning to pass and would
+  buy flakiness; they are honest as "this carrier is really putting ink on the glass."
+- **§20 and §21 run at `FLEET[0]` only.** All three fleet phones are 412px tall and
+  869/883/915 wide, and the bloom geometry was recomputed at all three — but the pixel
+  fractions are measured at one.
+- **Whether sixteen blooms and a gold wash read as "explosive or popping" to a
+  three-year-old across the room is not a thing any of this measures.** That is Scotty's,
+  on the S10+, and it is the only judgement here that matters.
+
+## Probes that were run and did not break it
+
+Exit mid-celebration (every new node is a descendant of `celebEl`; `celebrate()` arms no
+new timers; §19.6's leak sweep names the new classes anyway) · a perfect clear immediately
+after another · reduced motion · a perfect clear that is also terminal (`place()`'s
+ordering is untouched) · **every one of the original seven plants genuinely removes the
+behaviour its clause asserts, with no plant pre-empted by an earlier clause** · and **the
+§5 trap itself**: the words-covered assertion cannot pass on the winning clear's leftover
+sparks, confirmed structurally and measured at 53.95% with 38 sparks in frame and 53.95%
+with none.

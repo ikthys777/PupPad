@@ -274,17 +274,33 @@ export default function mount(host, api) {
    *
    * INDEX ARITHMETIC, NOT `Math.random`, for the same reason `burstAt` uses it: check
    * 21 pins Math.random to a constant, so a random field would collapse to one point
-   * under the instrument and look nothing like what ships. 37, 61, 23 and 8 are coprime
-   * with their moduli, so sixteen discs walk the whole range in x, in y, in size and in
-   * delay without two of them landing on each other. */
+   * under the instrument and look nothing like what ships.
+   *
+   * AND THE FIRST VERSION OF THESE NUMBERS WAS 37, 61 AND A SPREAD OF 8, WITH A COMMENT
+   * SAYING NO TWO DISCS LAND ON EACH OTHER. THE ADVERSARIAL PASS COMPUTED THEM AND THEY
+   * DID. `bi -> (bi * a) mod 100` is linear, so discs `bi` and `bi + k` are separated by
+   * a CONSTANT offset for every `bi` — and with BLOOM_N exactly twice BLOOM_SPREAD, the
+   * pair `bi` / `bi + 8` also shared an identical delay. Sixteen discs were eight
+   * two-lobed blobs 54px apart arriving in eight steps: measured worst overlap **-43.9px**
+   * with motion reduced, where the discs are 1.35x larger. Everything the comment claimed
+   * was false, and nothing in the check could see it because a bloom's rect is honest.
+   *
+   * SO THE SEPARATION IS MEASURED RATHER THAN ARGUED FROM COPRIMALITY. With 29, 53 and a
+   * spread of 7 the closest pair on the WORST fleet viewport clears by **+10.0px** with
+   * motion reduced and +35.3px without, and no disc reaches the layer's edge in either
+   * world (1.8px of clearance at the tightest). BLOOM_N is no longer a multiple of
+   * BLOOM_SPREAD, so no two discs share both a position offset and a delay. */
   var BLOOM_N = 16;
   var BLOOM_MS = 820;
   var BLOOM_STAGGER = 70;
   /* The last disc must finish inside the SHORTER of the two windows, or the reduced
    * celebration ends with a bloom still on the glass and the layer is torn out from
-   * under it. (BLOOM_N - 1) % 8 * 70 + 820 = 1310 against CELEB_MS_REDUCED's 1600.
+   * under it: (BLOOM_SPREAD - 1) * BLOOM_STAGGER + BLOOM_MS = 1240 against
+   * CELEB_MS_REDUCED's 1600. Written from the names because the first version pasted 8
+   * and 70 into the arithmetic, which is a second expression of two constants and would
+   * have gone stale silently the moment either moved.
    * `CELEB_MS` and `CELEB_MS_REDUCED` are Scotty's to change, not this file's. */
-  var BLOOM_SPREAD = 8;
+  var BLOOM_SPREAD = 7;
   /* Still, so it may be bigger: what the disc loses in travel it takes back in area. */
   var BLOOM_CALM_SCALE = 1.35;
 
@@ -798,7 +814,9 @@ export default function mount(host, api) {
      * UNDER the celebration's own dimming, and §0 measured what that costs: a peak of
      * 0.44 arrived as a maximum summed-RGB delta of 13 out of 765, in BOTH worlds. A
      * child cannot see 13. So the win's light is a CHILD OF `.bp-celeb` — above the
-     * scrim, and nothing this file paints can get in front of it.
+     * scrim, and above every layer the board owns. The ONE thing that paints in front of
+     * it is the lozenge, deliberately and by one line of z-index fifty lines below; that
+     * is the point of putting the gradient's hole where the lozenge stands.
      *
      * THE GRADIENT IS INVERTED FROM `.bp-flash`'S, AND THAT IS THE SECOND MEASUREMENT.
      * `.bp-flash` puts its only full-strength stop at the centre, and the centre is
@@ -818,8 +836,17 @@ export default function mount(host, api) {
     'background:radial-gradient(circle at 50% 46%,',
     'rgb(255 236 176 / 0) 0%,rgb(255 209 92 / var(--bp-peak)) 46%,',
     'rgb(255 128 44 / var(--bp-peak)) 100%);',
-    'animation:bp-wash var(--bp-fade) ease-out both}',
-    '@keyframes bp-wash{0%{opacity:0}9%{opacity:1}58%{opacity:.86}100%{opacity:0}}',
+    /* LINEAR, AND THE FIRST VERSION WAS `ease-out`, WHICH IS WHY THE LIGHT WAS GONE
+     * BEFORE THE WIN WAS. A timing function applies to EVERY keyframe interval, not to
+     * the animation as a whole, so `ease-out` front-loaded the decay inside the last
+     * segment: at 90% of the window the authored 0.205 was painting about 0.04, and
+     * check 21 §20's late sample measured the celebration adding 0.00% of the screen to
+     * its own scrim with a third of its duration still to run. An opacity ENVELOPE
+     * should mean what its percentages say; the easing belongs on things that move.
+     * The hold also runs to 78% now rather than 58%, so what the child sees for most of
+     * the win is the light rather than the dimming underneath it. */
+    'animation:bp-wash var(--bp-fade) linear both}',
+    '@keyframes bp-wash{0%{opacity:0}7%{opacity:1}78%{opacity:.9}100%{opacity:0}}',
 
     /* THE BLOOM — A SPARK WITH THE TRAVEL TAKEN OUT. Gyre's ruling, which the work order
      * named as the reference: reduced motion SCALES a parameter, it does not zero one.
@@ -1612,11 +1639,14 @@ export default function mount(host, api) {
     for (var bi = 0; bi < BLOOM_N; bi++) {
       var dot = document.createElement('span');
       dot.className = 'bp-bloom';
-      /* Inset from the rim so a disc is never half-clipped into a shape that is not a
-       * disc. 37 and 61 are coprime with 100 and with each other's stride, so x and y
-       * do not walk the same line. */
-      dot.style.left = (4 + ((bi * 37) % 100) * 0.92) + '%';
-      dot.style.top = (6 + ((bi * 61) % 100) * 0.88) + '%';
+      /* Inset from the rim, and the inset is a PERCENTAGE while the radius it has to
+       * clear is in PIXELS — so "no disc is clipped" is not something this line can
+       * promise on its own, and the first version's comment promised it anyway. It is
+       * true of these strides at these sizes on all three fleet viewports, measured:
+       * the tightest disc clears the layer's edge by 1.8px with motion reduced, where
+       * the discs are largest. A shorter root would clip; the fleet is 412 tall. */
+      dot.style.left = (4 + ((bi * 29) % 100) * 0.92) + '%';
+      dot.style.top = (6 + ((bi * 53) % 100) * 0.88) + '%';
       dot.style.setProperty('--bp-sz',
         Math.round((34 + ((bi * 23) % 5) * 11) * (reduced ? BLOOM_CALM_SCALE : 1)) + 'px');
       dot.style.setProperty('--bp-c', CANDY[bi % CANDY.length].light);
@@ -1656,8 +1686,13 @@ export default function mount(host, api) {
     fxAfter(180, function () { cue(CUE.cheer); });
 
     /* THE TRAVELLING FIREWORKS, WHICH ARE THE ONE PART OF THIS THE PREFERENCE REMOVES.
-     * Staggered, so the S10+ never animates all of them at once: three volleys of eight
-     * land 260ms apart, so at most ~16 sparks overlap. Under reduced motion `burstAt`
+     * Staggered so the S10+ does not start all of them on one frame: three volleys of
+     * `per` land 260ms apart. THE OLD COMMENT SAID "volleys of eight, so at most ~16
+     * overlap" AND BOTH NUMBERS WERE WRONG — `per` is 10, and with SPARK_MS at 620 a
+     * volley is still alive when the one after next begins, so all three overlap between
+     * 520 and 620ms: THIRTY, not sixteen. The stagger buys a spread START, not a smaller
+     * peak. Recorded rather than quietly corrected because it is a budget claim about a
+     * real phone and it was overstated by half. Under reduced motion `burstAt`
      * returns 0 without building anything — and that is now the ONLY thing reduced
      * motion takes, because the wash and the sixteen blooms above are built in both
      * worlds. Before PUP-WO-0704 this branch was the whole visual celebration, so the

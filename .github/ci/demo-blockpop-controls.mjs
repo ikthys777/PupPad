@@ -736,6 +736,41 @@ plan(20, 'every bloom is built at zero size', {
   expectText: 'in the DOM with no size',
 });
 
+/* THE DEFECT §0 MEASURED, RESTORED EXACTLY — AND THE FIRST VERSION OF §20 STAYED GREEN
+ * AGAINST IT. The clause meant to catch this read `celebEl.querySelectorAll('.bp-flash')`,
+ * and `flash()` appends into `.bp-fx` inside `boardWrap`, which is a SIBLING of
+ * `.bp-celeb`. The count was structurally zero for every build that could ever exist, and
+ * three comments claimed it was standing guard. The adversarial pass planted this line and
+ * §20 printed 99.65% and passed. It is the highest-value plant in this file, because the
+ * thing it caught was a described guarantee written INTO the fix for a described
+ * guarantee. */
+plan(20, "the win's light is painted with flash() again, under the celebration's own scrim", {
+  mutate: (s) => sub(s, '    var per = SPARKS_PER_CELL_BASE + SPARKS_PER_CELL_STEP * (COMBO_TOP - 1) + 3;',
+    '    var per = SPARKS_PER_CELL_BASE + SPARKS_PER_CELL_STEP * (COMBO_TOP - 1) + 3;\n'
+    + '    flash(FLASH_PEAK_BASE + FLASH_PEAK_STEP * (COMBO_TOP - 1), FLASH_MS * 2);'),
+  expectText: '.bp-flash elements are on the glass',
+});
+
+/* THE MODULE STOPS BELIEVING IN THE REDUCED WORLD, WHICH IS A ONE-WORD MISTAKE AND
+ * INVISIBLE TO A CHECK THAT ASKS THE BROWSER. §20's world clause used to call
+ * `matchMedia`, so with this planted BOTH of its worlds printed byte-identical unreduced
+ * numbers — 38 travelling sparks in the run labelled "reduce" — and it passed, declaring
+ * itself green "in the reduced-motion world as well as the other one". §21 caught it, but
+ * reported it as a transform defect. Both are fixed and both are proved by this one line:
+ * §20 now reads `.bp-celeb-calm`, which is the module's own expression of the snapshot,
+ * and §21 asks the cause before the symptom. */
+plan(20, 'the module never believes it is in the reduced-motion world', {
+  mutate: (s) => sub(s, '  var reduced = !!api.prefersReducedMotion;', '  var reduced = false;'),
+  expectText: 'the MODULE thinks it is in the unreduced world',
+});
+
+/* AND THE SAME PLANT AIMED AT §21, which must now name the CAUSE rather than the rect it
+ * happens to notice first. */
+plan(21, 'the module never believes it is in the reduced-motion world', {
+  mutate: (s) => sub(s, '  var reduced = !!api.prefersReducedMotion;', '  var reduced = 0 === 1;'),
+  expectText: 'not wearing .bp-celeb-calm',
+});
+
 /* §21 — REDUCED MOTION. Both halves of acceptance §4, and each has its own plant,
  * because "it is there" and "it is still" are satisfied by opposite defects. */
 
