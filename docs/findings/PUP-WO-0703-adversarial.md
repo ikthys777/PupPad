@@ -57,3 +57,52 @@ unambiguous. Layout identical at all three fleet widths with no target under 44 
 Whether a real child's recorded clip peaks above 0.81 in practice — the pass measured the
 graph's gain, not a capture. **F4 says the ceiling was 0.81 and is now 1.0**, not that it
 was routinely crossed.
+
+---
+
+## After the fixes — two more plant rounds, and what they cost to get right
+
+**The freeze protocol held for the pass itself** (`index.html` unchanged, hash verified both
+ways by the pass). **The corrections then took two further rounds of the 51 plants**, and
+the failures were worth more than the fixes.
+
+**Eleven failed on the first re-run, then four on the second — and almost none were typos.**
+
+**Most were my own fixes making the old plants insufficient, and green was the correct
+answer every time.** Removing `stopPropagation` no longer reproduced the delete-bubbles
+defect, because the per-slot settle window added for the *double-tap* case also swallows
+that tap. Removing the tile handler's guard no longer reproduced, because the painting now
+sets `pointer-events:none`. Removing the reduced-motion border difference no longer
+reproduced, because the wave amplitude still separates the states. **Each plant had removed
+one half of a property now held twice.**
+
+**§25 took three attempts and taught the general lesson.** Its plants removed one painted
+difference at a time — amplitude, then border width, then colour — and **each time the row
+still told the states apart by a signal I had not thought of.** That is the design working:
+the row deliberately carries four signals so no single one is load-bearing on a dim screen.
+**Chasing them one at a time was the wrong SHAPE of plant.** Collapsing the state itself —
+`var live = false` — collapses everything derived from it in one substitution, which is
+what the claim actually means.
+
+**And two arrangements made their own assertions unreachable.**
+
+- **§17 recorded into the first EMPTY slot**, which becomes the target — and `playVoice()`
+  plays the target, which is empty while being recorded into. So *"a preset tapped
+  mid-record STARTED PLAYBACK"* **could not fire however unguarded the tiles were.** It now
+  fills all three and records **over** one, leaving the old clip in place: the state that
+  makes the hazard real, and the ordinary gesture once the panel has been used.
+- **§3's clamp probe selected its node by a value filter** (`> 0 && < 0.5`), so an
+  **unclamped** value of 99 fell outside the filter, was never read, and the probe reported
+  clean. **A filter that hides the defect it is hunting** is the same shape as a check that
+  recomputes the formula it is checking. Read by position now.
+
+**Final state: 51 of 51 plants red for their own stated reason; check 26 green at 46
+assertions; the full 21-check regression sweep green; the fence diffs to empty.**
+
+## A process note that is mine, not the pass's
+
+**I was polling for these runs by hand rather than arming a completion trigger**, which is
+why progress reports landed when I happened to look rather than when a run finished. Fixed
+mid-work: the waiters are harness-tracked now, **and they fire on a crash as well as on
+success** — a watcher that only matches the success marker stays silent through a hang, and
+silence is indistinguishable from still-running.
