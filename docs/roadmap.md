@@ -479,9 +479,10 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0704` — Block Pop's celebration** | **PR #68 OPEN.** §0's measurement found the real defect: the flash is `z-index:3` under the celebration's own `z-index:12` scrim, so **on the device a perfect clear was "the screen goes dark and a word appears"** — in BOTH motion worlds. Reduced motion separately zeroes every spark | in review |
-| 2 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
-| 3 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
+| 1 | **`PUP-WO-0113` — check 11 must scan code, not English** | **PR #69 OPEN, in review.** **BLOCKS #68.** The regex lexer is retired: enforcement now reads `vm.SourceTextModule`'s `dependencySpecifiers` — V8's own parse — after seven false greens across two adversarial passes proved refinement could not converge |
+| 2 | **`PUP-WO-0704` — Block Pop's celebration** | **PR #68 OPEN, blocked by check 11's false positive.** §0 found the real defect: the flash sits under the celebration's own scrim, so a perfect clear was "the screen goes dark and a word appears" |
+| 3 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
+| 4 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
 | 4 | `PUP-WO-0112` — the CI job split | scoped, no file | nobody |
 | 5 | `PUP-WO-0113` — check 11 fires on English prose | scoped in §4a, no file | nobody |

@@ -85,6 +85,28 @@ ships — was travelling by the one channel we already knew does not survive.**
 
 > **A review is an artifact. If it exists only in a context window, it does not exist.**
 
+### 9c. CHECK THE FENCE WITH THREE DOTS, NOT TWO
+
+*Added 2026-09-04, after the builder found and disclosed that every fence check they had run
+used the wrong comparison.*
+
+**`git diff origin/main..branch` compares two MOVING TIPS.** While a branch is open, `main`
+advances — and the two-dot diff then reports **the reviewer's own commits as the builder's
+deletions.** It was harmless the first two times only because `main` happened not to have
+moved yet.
+
+```
+git diff --stat origin/main...branch -- <fenced paths>     # three dots: from the MERGE BASE
+```
+
+**It fails in the direction that matters:** a fence violation can be masked by an unrelated
+change on `main` touching the same file, and a clean branch can be accused of deleting work
+it never saw. **The co-architect skill already says two questions need two refs — *what is in
+this PR* against the live base, *what did the builder touch* against `git merge-base`. This
+is that rule, as a command.**
+
+*Disclosed by the builder unprompted, having found it while re-verifying something else.*
+
 ### 9b. THE DISPATCH IS AN ARTIFACT TOO
 
 *Added 2026-09-04, after a dispatch was delivered to a live session that was not the one
