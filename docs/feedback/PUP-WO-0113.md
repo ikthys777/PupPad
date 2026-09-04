@@ -169,3 +169,109 @@ import is on the next line.
   is one lower than an editor shows. The finding is correct and located; the line numbering
   is consistent with the rest of the file, and changing it would move every tier finding's
   line number too.
+
+---
+
+# ROUND TWO — THREE MORE FALSE GREENS, AND THE ANSWER TO THE MECHANISM QUESTION
+
+**CC-A's review of `85adbe8` found three more, each with a working fixture, and asked the
+question that decides the round:**
+
+> *"Name what class of input the heuristic is allowed to be wrong about, and prove that
+> class fails LOUD. If the honest answer is that a regex/division heuristic cannot be made
+> safe by refinement, say so and we take a different mechanism."*
+
+**The honest answer is that it cannot, and I am saying so.**
+
+## Why refinement was never going to converge
+
+Whether `/` opens a regex or divides is a **grammar** question, not a lexical one.
+`a = b\n/re/.test(c)` and `a = b / c / d` differ only in what the parser decided `b` was,
+and **ASI can insert the boundary that changes the answer.** No amount of lookbehind
+settles it. Two adversarial passes found seven inputs; four were closed by refining the
+lexer, and the next pass found three more. **Each refinement bought one input and cost
+another.**
+
+**And the worst of it was that I was arguing from a property the code did not have.** The
+header claimed being wrong in the `if (x) /re/.test(y)` direction *"leaves a regex
+unblanked — a false RED, which is loud."* **That is backwards.** An unblanked regex has
+its **body lexed as code**, so a `/*` inside it opens a block comment that closes at the
+next one anywhere later in the file — and every real module is full of them. A remote CDN
+import went green through exactly that, **with no finding and no note.** *Third comment in
+a week asserting a safety property its code did not have, and this one was the safety
+argument of the gate itself.*
+
+## The authority was already in the file, two lines above
+
+`scanModule` constructs a `vm.SourceTextModule` **to prove the module parses** — and then
+threw it away, while a regular expression tried to work out from text what that object
+already knew exactly. **`dependencySpecifiers` is V8's own list of every static specifier**,
+produced by the same parser the browser will use. It cannot be fooled by a regex literal, a
+template, a comment or a piece of prose, because it is not reading text.
+
+**What that closed, without a single regex refinement:**
+
+| | |
+|---|---|
+| **FG-A** — a regex read as division opens a comment that closes later and swallows an import | gone: V8 parsed it |
+| **FG-B** — `import.meta` forces the lazy branch and `lastIndex` skips a whole side-effect `import '…';` | gone: **the gap did not need bounding OR keeping** |
+| the unbounded `[\s\S]*?` | **gone from the enforcement path entirely** |
+| the escaped specifier | **judged rather than refused** — V8 returns it decoded, so `"./a/../../evil.js"` resolves out of `games/` like any other escaping path |
+| the off-by-one, `import{x}from'y'`, next-line specifiers | not applicable — three tokens to a parser |
+
+**FG-C was a genuine lexer bug and is fixed as one:** a nested `{}` inside a `${}`
+substitution popped the stack early, blanking the rest of the substitution as template
+text. `substDepth` counts braces now. **And FG-A's root cause was a one-line bug** —
+whitespace cleared `word`, so `REGEX_KEYWORDS.has('')` was always false and the keyword set
+was **dead in all real code**: `return/re/` worked, `return /re/` did not.
+
+## The residual class, named and proved loud
+
+**The tier scans still read the stripper's output**, so a mis-lex can still hide a
+`fetch(`. `.broke` catches a mis-lex that runs off the end of the file; it cannot catch one
+that **closes tidily**, which is the shape FG-A used.
+
+So the parse became an **oracle for the lexer**. V8 knows every static specifier;
+`strip()` is char-for-char and keeps a string's own quotes while blanking a comment
+entirely. **At the offset of a specifier's opening quote, an intact module still shows that
+quote in the stripped text and a swallowed one shows a space.** One `indexOf` per import,
+and the whole class becomes a refusal — for the tier scans too, since they read the same
+text.
+
+**Proved, not asserted:** `if (s) /re/` is the case the heuristic is *documented* as
+getting wrong. It mis-lexes, and check 12 pins it **refusing**. The heuristic is still
+wrong about that input, and that is allowed. **Being wrong quietly is not.**
+
+**What remains silent, stated so nobody has to find it:** a mis-lex that swallows a tier
+token **and no import at all**. Closing that needs this file to scan a parse rather than a
+string for tier tokens too — which is a different work order, and a bigger one.
+
+## Two notes retired, both replaced by gates
+
+- the **regex-literal** note (*"read this module by eye"*) — its premise was closed by
+  tracking regex literals;
+- the **raw-versus-stripped** note — the oracle cross-check answers the same question and
+  **refuses** instead of asking a person to notice something.
+
+*A gate replaced a request, twice. Both absences are asserted.*
+
+## SCOPE COLLISION, FLAGGED NOT BURIED
+
+**`dependencySpecifiers` includes `export … from` re-exports** — the construct CC-A has
+just taken for its own work order, and which the old text scan could not see at all.
+**There is no way to tell a re-export from an import out of a parse without going back to
+text.** So they are reported.
+
+**I am not willing to write code whose only purpose is to not report
+`export * from 'https://evil'` in a gate built to stop remote code.** If that collides with
+the new work order, the collision is that **its subject is already closed** — CC-A's call
+whether to keep it, redirect it, or have me split it out.
+
+## Line numbers
+
+V8 gives the specifier, not its position, so the line comes from locating the quoted
+literal — **which is a search for a string already known, not a scan that must recognise
+syntax.** For every import written on one line the anchor is unchanged. For a split
+`import z from\n  '…';` it now points at the **specifier's** line rather than the keyword's,
+and a specifier written with escapes does not appear verbatim and is reported without a
+line rather than with a guessed one. Both are pinned in check 12.
