@@ -503,10 +503,59 @@ Promotion is Scotty's alone.**
   both.** *Tracing the location half found what the question had not: `broadcastMapStamp`
   sends real `{lat,lng}` with a stable device id, on a map centred on the child's GPS at
   zoom 16 — live since the Map panel shipped.*
-- **THE CAMERA IS THE SAME QUESTION, UNASKED, AND IT IS SCOTTY'S.** Photographs of the
-  child go out on the same unscoped global channel to anyone holding the anon key. **His
-  stated reason for making voice local applies to a photograph at least as strongly.**
-  Raised in `PUP-WO-0702` §6 as decision-needed; **not folded in, not assumed.**
+- **~~THE CAMERA~~ — RULED BY SCOTTY 2026-09-04: PHOTOS STAY ON THE WIRE, UNCHANGED.**
+  **The reasoning, not just the verdict, because the verdict alone would look inconsistent
+  with the voice ruling:** image sharing is ephemeral, and **the audience is not "anyone
+  with the URL" in practice — the URL and the anon key are HOUSEHOLD CREDENTIALS.** A
+  second household running PupPad would stand up its own backend and its own key, so it
+  would not be on this channel at all. *That is a different fact from the one that decided
+  voice.* **Voice went local for a reason that still stands and is not reopened:** a voice
+  is identifying in a way a photograph the parents took is not, **and local-only cost Buddy
+  nothing, because the joy is the playback.** **`PUP-WO-0702` does NOT extend to the
+  camera.**
+
+- **THE MAP TILES ARE STILL OPEN, AND THE CAMERA RULING DOES NOT REACH THEM.** Stated
+  plainly because proximity would otherwise close it by accident: **Scotty's reasoning
+  covers OUR backend, OUR key, OUR family. A tile request goes to a THIRD PARTY.**
+  OpenStreetMap's servers are not our backend, "the URL and anon key are family only" says
+  nothing about them, **every tile fetch tells an external operator roughly where the
+  device is with an IP attached, and nothing about it is ephemeral on their side.**
+
+  **Measured 2026-09-04 so the ruling is not made blind.** Tile paths are `/{z}/{x}/{y}`,
+  so the requested tile *is* the precision. At 40°N:
+
+  | maxZoom | what a tile request reveals | live tiles? |
+  |---|---|---|
+  | 19 *(today)* | **~59 m** | yes |
+  | 16 *(today's opening zoom)* | ~468 m | yes |
+  | 14 | ~1.9 km | yes |
+  | 12 | ~7.5 km | yes |
+
+  **Three alternatives, sized. Real tile bytes measured from OSM, not assumed:** z16
+  **26.9 KB**, z14 **24.4 KB**, z19 **3.9 KB** (deep zooms are sparse).
+
+  1. **NO BASEMAP — free, and the strongest.** Zero bytes, zero third-party egress. The
+     panel keeps the paw marker, drawing, stamps and the exit; it loses the streets. **For
+     a pretend treasure map for a three-year-old this may cost nothing he values** — worth
+     asking, because it is the only option with no downside to trade.
+  2. **BUNDLE THE TILES — and it closes a SECOND open item.** A 5 km box needs **218 tiles
+     to z16 (~5.5 MB)**; to z19 it is **10,252 tiles (~57 MB)**, which is not an option.
+     **The reason bundling is better than it looks:** `sw.js` records that Chrome charges
+     **~7–8 MB of quota per OPAQUE cross-origin entry**, and tiles are the bulk of the
+     opaque entries and **"the whole of the quota path"** (architecture §6.5). Bundled
+     tiles are **same-origin**, so they are billed at their real size. **One change would
+     remove the third-party egress AND the opaque-quota problem, and make the Map panel
+     genuinely offline** — which invariant 3 already asks for.
+     **⚠ AND THE TRAP, WHICH MATTERS BECAUSE SCOTTY MAY OPEN-SOURCE THIS AS A PORTFOLIO
+     PROJECT: bundling the neighbourhood tiles PUBLISHES THE NEIGHBOURHOOD.** It moves the
+     exposure from an external operator's logs into the repository, permanently and for
+     everyone. **A private tile bundle is fine; a public one is worse than the status quo.**
+  3. **LOWER `maxZoom` ONLY — one number, one line.** Coarsens the worst case from ~59 m
+     to ~468 m (16) or ~1.9 km (14). **It does not remove the egress; it reduces its
+     resolution**, and OSM still learns roughly where the device is on every open.
+
+  **Scotty's to rule, and it is now a choice between costed options rather than a
+  principle.**
 - **Roadmap gate 3 and gate 8** remain open and are not simulable.
 - **A play session with Buddy.** The drag now shows him the piece, the picker fits, tiles
   are the size Scotty asked for, and there is a perfect-clear celebration to win.
