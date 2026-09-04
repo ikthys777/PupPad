@@ -1774,6 +1774,25 @@ function clampNum(v, lo, hi) {
  * second axes ARE genuine second parameters of their own mechanisms (depth of the ring
  * modulation; how much of the delay line is heard). */
 var TONE_HZ_MIN = 700, TONE_HZ_MAX = 8000;
+/* Butterworth. See the lowpass branch: the DEFAULT Q is +1.96 dB of resonance. */
+var TONE_Q_DB = -3.0103;
+
+/* === THE COUNTDOWN RING WAS PAINTED ENTIRELY UNDERNEATH THE RECORD BUTTON ===========
+ *
+ * Its comment says "a ring that empties, so the child can SEE the end coming" -- and it
+ * was invisible. The wrapper's SVG scaled a 92-unit viewBox into 80px, putting the ring's
+ * outer edge at 28.3px while the opaque record button's radius is 32: `elementFromPoint`
+ * returned the button at every angle around the ring's path. It animated correctly the
+ * whole time and nobody could see it. Pre-existing -- at 92px the visible band was 0.5px,
+ * already nothing -- and PUP-WO-0703's shrink to 80 took it to -3.7.
+ *
+ * FIXED BY GEOMETRY THAT IS DERIVED RATHER THAN DRAWN BY EYE: the viewBox is now 1:1 with
+ * the wrapper so there is no scale factor to reason about, the radius clears the button,
+ * and the circumference comes from the SAME radius rather than being written out three
+ * times as a rounded literal -- which is what let the ring and its dash length drift apart
+ * in the first place. */
+var RING_BOX = 80, RING_R = 35, RING_STROKE = 5;
+var RING_CIRC = 2 * Math.PI * RING_R;
 var RING_DEPTH_MIN = 0.25, RING_DEPTH_MAX = 1.0;
 var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.45;   /* MAX is the headroom bound -- see the cave branch. */
 
@@ -1822,11 +1841,23 @@ function buildVoiceGraph(ctx, buffer, presetId, value, valueB) {
   if (presetId === 'up' || presetId === 'down') {
     /* Resampling: pitch and tempo move together. That IS the chipmunk/monster effect --
      * and it has exactly one parameter, which is why the second axis is a SECOND
-     * MECHANISM rather than a second knob on this one. A lowpass never boosts (no
-     * resonance is set), so it cannot cost headroom; it only takes brightness away. */
+     * MECHANISM rather than a second knob on this one.
+     *
+     * `Q` IS SET EXPLICITLY, AND THE COMMENT THAT USED TO STAND HERE WAS WRONG. It said
+     * "a lowpass never boosts (no resonance is set), so it cannot cost headroom" -- and
+     * NOT SETTING Q IS NOT THE ABSENCE OF RESONANCE. BiquadFilterNode.Q DEFAULTS TO 1,
+     * and for a lowpass Web Audio reads Q in DECIBELS, so the default is a +1.96 dB
+     * resonant peak: measured gain 1.2533 at 2327 Hz for fc = 3000. That made up and down
+     * -- not cave -- the binding headroom constraint, and the sweep only passed because
+     * its synthetic source peaks at 0.70.
+     *
+     * -3.0103 dB is Q = 1/sqrt(2), Butterworth: maximally flat, PEAK GAIN EXACTLY 1.0,
+     * measured. A default is not a decision, and the one place this file assumed a default
+     * was benign is the one place it was not. */
     src.playbackRate.value = clampNum(value, VOICE_RATE_MIN, VOICE_RATE_MAX);
     var tone = ctx.createBiquadFilter();
     tone.type = 'lowpass';
+    tone.Q.value = TONE_Q_DB;
     tone.frequency.value = clampNum(valueB, TONE_HZ_MIN, TONE_HZ_MAX);
     src.connect(tone); tone.connect(out);
     nodes.push(tone);
@@ -1923,6 +1954,7 @@ function stopNodes(list) {
  * clip truncated to 0.48 s. PUP-WO-0702 removed the send, so the second list went with
  * it. Recorded because the separation looked like over-engineering and was not.) */
 function stopVoicePlayback() {
+  voicePlayToken++;
   if (voiceRaf) { cancelAnimationFrame(voiceRaf); voiceRaf = 0; }
   voiceNodes = stopNodes(voiceNodes);
 }
@@ -2026,6 +2058,10 @@ function voiceWaveTick() {
   if (voiceReducedMotion()) { paintVoiceSlots(); return; }
   function frame() {
     if (voiceLiveSlot < 0 || !document.getElementById('voiceOverlay')) { voiceWaveRaf = 0; return; }
+    /* RE-CHECKED EVERY FRAME, because the preference can change mid-recording -- and it
+     * did: the loop kept rescheduling ~62 times a second writing an unchanged path for the
+     * rest of the clip, which is the battery cost this loop exists to avoid. */
+    if (voiceReducedMotion()) { voiceWaveRaf = 0; paintVoiceSlots(); return; }
     voiceWavePhase += WAVE_SPEED;
     paintVoiceSlots();
     voiceWaveRaf = requestAnimationFrame(frame);
@@ -2055,7 +2091,7 @@ function voiceSetStage(stage) {
    * clip stopped early does not leave 90% of a pink arc painted until the next one. */
   if (stage !== 'recording') {
     var ring = document.getElementById('voiceRing');
-    if (ring) ring.style.strokeDashoffset = String(2 * Math.PI * 30);
+    if (ring) ring.style.strokeDashoffset = String(RING_CIRC);
   }
   /* Dimmed, never removed: a control that appears and disappears is a control a child
    * has to re-find. `pointer-events` is what actually disables it -- opacity alone would
@@ -2068,8 +2104,14 @@ function voiceSetStage(stage) {
       tiles[ti].style.opacity = live ? '1' : '0.35';
       tiles[ti].style.pointerEvents = live ? 'auto' : 'none';
     }
-    var sl = document.getElementById('voiceSlider');
-    if (sl) { sl.style.opacity = live ? '1' : '0.35'; sl.style.pointerEvents = live ? 'auto' : 'none'; }
+    /* BOTH sliders. Only the first was looked up by id, so during a recording slider A
+     * dimmed and slider B stayed fully lit and draggable -- two identical-looking controls
+     * contradicting each other and the "dimmed means unavailable" contract the whole panel
+     * rests on. Derived from the axis list rather than named one at a time. */
+    ['voiceSlider', 'voiceSliderB'].forEach(function(id) {
+      var sl = document.getElementById(id);
+      if (sl) { sl.style.opacity = live ? '1' : '0.35'; sl.style.pointerEvents = live ? 'auto' : 'none'; }
+    });
   }
   [[playBtn, ready && live]].forEach(function(pair) {
     if (!pair[0]) return;
@@ -2085,7 +2127,7 @@ function voiceSetStage(stage) {
 function voiceRingTick(startedAt) {
   var ring = document.getElementById('voiceRing');
   if (!ring) return;
-  var circ = 2 * Math.PI * 30;
+  var circ = RING_CIRC;
   function frame() {
     var el = document.getElementById('voiceRing');
     if (!el) { voiceRaf = 0; return; }
@@ -2201,6 +2243,9 @@ function startVoiceRecording(slot) {
         if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;
         /* Into the slot this recording was FOR. `voiceBuffer` stays as the last-recorded
          * clip so the transport's play button has an obvious subject. */
+        /* The child deleted this slot while it was recording. The bytes belong to a clip
+         * that no longer exists; writing them would undo a delete they watched happen. */
+        if (voiceDeletedDuringRecord[slotFor] === gen) { delete voiceDeletedDuringRecord[slotFor]; return; }
         voiceSlots[slotFor] = buf;
         voiceBuffer = buf;
         voiceTargetSlot = slotFor;
@@ -2254,12 +2299,21 @@ function playVoice(i) {
   g.out.connect(ctx.destination);
   g.nodes.forEach(voiceTrack);
   voiceTrack(g.out);
-  /* GENERATION-SCOPED, like every other async continuation in this panel. Teardown stops
-   * the source, which fires `onended` LATER -- and a stale one was reaching into the NEXT
-   * panel and clearing its live slot, so a slot that was recording silently stopped
-   * waving. Found by check 26 §28, which read the resulting state change as animation. */
+  /* GENERATION-SCOPED **AND** TOKEN-SCOPED, and the second half is not redundant.
+   *
+   * The generation guard closes the cross-panel case. It does NOT close the SAME-panel,
+   * SAME-SLOT one: playing slot i sets it as the target, so a record-over goes to slot i
+   * too, and startVoiceRecording's stopVoicePlayback stops this source. If the microphone
+   * grant lands before the queued `onended` -- which it did in 5 of 10 measured runs --
+   * the recording sets the live slot and this handler immediately clears it. THE
+   * MICROPHONE IS THEN OPEN FOR FIFTEEN SECONDS WITH NO WAVE ON ANY SLOT, which is the
+   * exact defect this work order exists to fix, reintroduced by its own teardown path.
+   *
+   * The token says "this playback is still the current one". A superseded playback's
+   * ending is not news about the panel. */
+  var token = ++voicePlayToken;
   g.source.onended = function() {
-    if (gen !== voiceGen) return;
+    if (gen !== voiceGen || token !== voicePlayToken) return;
     if (voiceLiveSlot === idx) setVoiceLiveSlot(-1);
   };
   g.source.start();
@@ -2280,11 +2334,44 @@ function nextVoiceSlot() {
   return voiceTargetSlot;
 }
 
+/* Slots whose clip the child deleted while it was still being recorded. `rec.onstop`
+ * checks this before writing, so a delete can never be silently undone by the decode that
+ * was already in flight. */
+var voiceDeletedDuringRecord = {};
+var voiceDeletedAt = 0;
+/* Bumped by anything that ends a playback. An `onended` whose token is stale belongs to a
+ * playback that has already been superseded and must not touch the live slot. */
+var voicePlayToken = 0;
+var SLOT_ARM_MS = 400;
+
 function deleteVoiceSlot(i) {
-  if (!voiceSlots[i]) return;
+  if (!voiceSlots[i] && !(voiceRecorder && voiceLiveSlot === i)) return;
+  /* DELETING THE SLOT THE MICROPHONE IS FILLING MUST STOP THE MICROPHONE.
+   *
+   * A record-over target is FILLED and LIVE at the same time, so the delete control was
+   * painted on the slot being recorded into -- and this function ran a PLAYBACK-shaped
+   * teardown against a RECORDING. It stopped nodes, cleared the live slot and never
+   * touched `voiceRecorder`: the microphone stayed open for the rest of the 15 seconds
+   * with the wave gone, the record button repainted idle and the ring reset, and then the
+   * decode wrote the new clip into the slot the child had just emptied. THE DELETE WAS
+   * SILENTLY UNDONE, and the panel showed nothing at all while it happened. */
+  if (voiceRecorder && voiceLiveSlot === i) {
+    voiceDeletedDuringRecord[i] = voiceGen;
+    stopVoiceRecording();
+  }
   if (voiceLiveSlot === i) { stopVoicePlayback(); setVoiceLiveSlot(-1); }
   voiceSlots[i] = null;
+  /* AND THE TARGET MUST NOT POINT AT AN EMPTY SLOT. It did, so after deleting the
+   * last-used clip the play button stayed fully lit and did nothing at all -- an
+   * undimmed control that is dead is worse than a dimmed one, because it teaches that
+   * pressing things does not work. */
+  if (voiceTargetSlot === i) {
+    var next = -1;
+    for (var k = 0; k < VOICE_SLOT_COUNT; k++) if (voiceSlots[k]) { next = k; break; }
+    voiceTargetSlot = next === -1 ? 0 : next;
+  }
   voiceBuffer = voiceSlots[voiceTargetSlot] || null;
+  voiceDeletedAt = Date.now();
   paintVoiceSlots();
   voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
   doSound('blip');
@@ -2508,6 +2595,15 @@ function openVoice() {
       slot.appendChild(del);
 
       wireTap(slot, function() {
+        /* A CONTROL THAT DISAPPEARS MID-GESTURE IS THE MIRROR OF ONE THAT APPEARS.
+         *
+         * The delete control sits INSIDE the slot's rect. The instant the first tap empties
+         * the slot it becomes display:none -- so a SECOND tap at the same point, which is
+         * exactly what a three-year-old does to confirm a button worked, lands on the slot
+         * underneath and OPENS THE MICROPHONE. A settle window on the slot after a delete
+         * closes it, the same shape PUP-WO-0404 used for the celebration a gesture
+         * destroyed. The delete itself is unaffected; only the slot's own action waits. */
+        if (Date.now() - voiceDeletedAt < SLOT_ARM_MS) return;
         /* THE SLOT THAT IS LIVE IS ALSO THE STOP BUTTON, because that is what a child
          * does: tap it to start, tap it again to stop. A probe caught this -- the second
          * tap was swallowed by the capturing guard and the only way to stop was to find
@@ -2561,17 +2657,20 @@ function openVoice() {
   wireTap(playBtn, function() { playVoice(voiceTargetSlot); }, { repeat: true });
 
   var recWrap = document.createElement('div');
-  recWrap.style.cssText = 'position:relative;width:80px;height:80px;flex-shrink:0';
+  recWrap.style.cssText = 'position:relative;width:' + RING_BOX + 'px;height:' + RING_BOX + 'px;flex-shrink:0';
   /* The countdown ring: an SVG stroke that empties. No text, no number, no word. */
-  recWrap.innerHTML = '<svg width="80" height="80" viewBox="0 0 92 92" '
+  recWrap.innerHTML = '<svg width="' + RING_BOX + '" height="' + RING_BOX + '" viewBox="0 0 ' + RING_BOX + ' ' + RING_BOX + '" '
     + 'style="position:absolute;top:0;left:0;pointer-events:none;transform:rotate(-90deg)">'
-    + '<circle cx="46" cy="46" r="30" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="5"></circle>'
-    + '<circle id="voiceRing" cx="46" cy="46" r="30" fill="none" stroke="#F472B6" stroke-width="5" '
-    + 'stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5"></circle></svg>';
+    + '<circle cx="' + (RING_BOX / 2) + '" cy="' + (RING_BOX / 2) + '" r="' + RING_R + '" fill="none" '
+    + 'stroke="rgba(255,255,255,0.10)" stroke-width="' + RING_STROKE + '"></circle>'
+    + '<circle id="voiceRing" cx="' + (RING_BOX / 2) + '" cy="' + (RING_BOX / 2) + '" r="' + RING_R + '" fill="none" '
+    + 'stroke="#F472B6" stroke-width="' + RING_STROKE + '" stroke-linecap="round" '
+    + 'stroke-dasharray="' + RING_CIRC + '" stroke-dashoffset="' + RING_CIRC + '"></circle></svg>';
   var recBtn = document.createElement('button');
   recBtn.id = 'voiceRecBtn';
   recBtn.setAttribute('aria-label', 'Record');
-  recBtn.style.cssText = 'position:absolute;top:8px;left:8px;width:64px;height:64px;'
+  recBtn.style.cssText = 'position:absolute;top:' + ((RING_BOX - 56) / 2) + 'px;left:' + ((RING_BOX - 56) / 2) + 'px;'
+    + 'width:56px;height:56px;'
     + 'border-radius:50%;border:0;cursor:pointer;padding:0;font-size:30px;line-height:1;'
     + 'background:radial-gradient(circle,#F472B6,#EC4899);box-shadow:0 4px 12px rgba(0,0,0,0.5);'
     + 'display:flex;align-items:center;justify-content:center';

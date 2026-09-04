@@ -1254,7 +1254,20 @@ try {
    * text on screen. Byte-comparing the images is the whole assertion: if two states
    * photograph identically with words covered, a child cannot tell them apart. */
   if (run(25)) {
-    const shot = async () => (await page.locator('#voiceSlot0').locator('xpath=..').screenshot()).toString('base64');
+    /* THE WHOLE PANEL, NOT THE SLOT ROW.
+     *
+     * This framed only the slot row -- and the panel's one painted word ("PAW TALK") is
+     * the absolutely-positioned title, OUTSIDE that frame. So the mask changed nothing in
+     * the compared image: measured, the row hashed identically before and after masking,
+     * while the guard `if (!hidden.length)` passed on a word that was never in shot. The
+     * check reported "with 1 painted word(s) hidden" about a picture the hiding could not
+     * touch.
+     *
+     * And the row alone CANNOT carry the recording/playing distinction, because the design
+     * is deliberately one animation for both -- "this slot is the live one". What separates
+     * them is the countdown ring, which lives in the transport row. Framing the row was
+     * therefore asking the wrong rectangle a question only the panel can answer. */
+    const shot = async () => (await page.locator('#voiceOverlay').screenshot()).toString('base64');
     const maskWords = () => page.evaluate(() => {
       /* Hide every TEXT node's paint, leaving glyphs, shapes and strokes. Emoji are
        * pictographs and stay — a non-reader can use those; a word is what they cannot. */
@@ -1271,8 +1284,10 @@ try {
 
     await page.evaluate(() => { closeVoice(); openVoice(); });
     await page.waitForTimeout(200);
+    const preMask = await shot();
     const hidden = await maskWords();
     const empty = await shot();
+    const maskChanged = preMask !== empty;
 
     await finger('#voiceSlot1');
     await page.waitForTimeout(700);
@@ -1301,6 +1316,10 @@ try {
     if (!hidden.length) bad('no painted words were found to hide', 'the mask did nothing, so this proved nothing');
     else if (liveDuring !== 1) bad(`recording did not mark slot 1 live (liveSlot ${liveDuring})`, 'this section proved nothing');
     else if (livePlay !== 1) bad(`playback did not mark slot 1 live (liveSlot ${livePlay})`);
+    /* AND THE MASK MUST BE PROVEN TO CHANGE THE PICTURE. A no-op mask makes every
+     * comparison below a comparison of unmasked images. */
+    if (maskChanged === false) bad('hiding the words did not change the photograph',
+      'the masked element is outside the frame being compared, so this section is comparing unmasked pictures');
     else if (pairs.length) bad(`${pairs.length} state pair(s) are PHOTOGRAPHICALLY IDENTICAL with words covered`,
       `${pairs.join(', ')} — a child cannot read the label, so if the picture is the same the state is invisible`);
     else ok(`with ${hidden.length} painted word(s) hidden, empty / recording / holding / playing all photograph DIFFERENTLY, and the live slot is identified (slot ${liveDuring})`);
@@ -1363,6 +1382,7 @@ try {
       const d = () => document.querySelector('#voiceSlot0 .voice-wave').getAttribute('d');
       const sample = async () => { const a = d(); await new Promise((r) => setTimeout(r, 220)); return [a, d()]; };
       const idle = await sample();
+      const idleRaf = !!window.__voice.state().waveRaf;
       const b = document.getElementById('voiceSlot0');
       b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
       b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
@@ -1377,7 +1397,7 @@ try {
       const play = await sample();
       const playLive = window.__voice.state().liveSlot;
       closeVoice();
-      return { idle, rec, held, play, recLive, playLive };
+      return { idle, rec, held, play, recLive, playLive, idleRaf };
     });
     const moving = (pair) => pair[0] !== pair[1];
     if (move.recLive !== 0) bad(`recording did not go into slot 0 (liveSlot ${move.recLive})`, 'this section proved nothing');
@@ -1385,8 +1405,13 @@ try {
       'a static wave is a decoration; a moving one is a state, and this is the only signal a non-reader has');
     else if (move.playLive !== 0) bad(`playback did not go from slot 0 (liveSlot ${move.playLive})`);
     else if (!moving(move.play)) bad('the wave is NOT MOVING while playing');
-    else if (moving(move.idle)) bad('the wave moves on an EMPTY slot too',
-      'then movement does not mean "this slot is the live one" and the signal carries nothing');
+    /* THE EMPTY-SLOT HALF USED TO BE UNFALSIFIABLE: WAVE_AMP_EMPTY is 0 and wavePath(0, p)
+     * is phase-invariant, so an empty slot's path could not change no matter what the loop
+     * did -- measured, one distinct path across six phases. The real property is that the
+     * LOOP IS NOT RUNNING when nothing is live, which a battery on a tablet cares about
+     * and which a plant can actually break. */
+    else if (move.idleRaf) bad('the wave loop is running with no live slot',
+      'a rAF that runs on an idle panel is a battery cost, and movement that is not tied to LIVE carries no information');
     else if (moving(move.held)) bad('the wave moves on a merely FILLED slot',
       'movement must mean live, or it means nothing');
     else ok('the wave moves while recording AND while playing, and is still on an empty or merely filled slot — movement means LIVE');
@@ -1435,7 +1460,15 @@ try {
       ok('three slots each recorded into with a finger');
       /* RECORD OVER: with every slot full the microphone replaces the last one used, and
        * the wave runs on THAT slot so the child sees which is being replaced. */
-      const before = await page.evaluate(() => window.__voice.state().target);
+      /* AFTER A PLAY, and against the slot that was PLAYED rather than against `target`
+       * read back from the app. The old version read `before = state().target` and then
+       * asserted `liveSlot === before` -- and `nextVoiceSlot()` RETURNS `voiceTargetSlot`
+       * when full, so both sides were the same variable. It bound nothing, and it never
+       * exercised the record-over-from-playing gesture at all, which is where a race was
+       * later found. */
+      await finger('#voiceSlot0');
+      await page.waitForTimeout(250);
+      const before = 0;
       await finger('#voiceRecBtn');
       await page.waitForTimeout(500);
       const over = await page.evaluate(() => window.__voice.state());
@@ -1463,6 +1496,181 @@ try {
     await page.evaluate(() => closeVoice());
   }
 
+  /* ---- §30. DELETING THE SLOT THE MICROPHONE IS FILLING ----------------
+   * A record-over target is FILLED and LIVE at once, so the delete control is painted on
+   * the slot being recorded into — and the delete used to run a PLAYBACK-shaped teardown
+   * against a RECORDING. §29 taps delete only from the `ready` stage and cannot see it. */
+  if (run(30)) {
+    const r = await page.evaluate(async () => {
+      const streams = [];
+      const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = (c) => real(c).then((st) => { streams.push(st); return st; });
+      try {
+        closeVoice(); openVoice();
+        const tap = (el) => { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+                              el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); };
+        for (let i = 0; i < 3; i++) {
+          const el = document.getElementById('voiceSlot' + i);
+          tap(el); await new Promise((r2) => setTimeout(r2, 650));
+          tap(el); await new Promise((r2) => setTimeout(r2, 900));
+        }
+        if (!window.__voice.state().slots.every(Boolean)) return { notFull: true };
+        tap(document.getElementById('voiceRecBtn'));
+        await new Promise((r2) => setTimeout(r2, 600));
+        const live = window.__voice.state().liveSlot;
+        if (live < 0) return { noRecord: true };
+        const del = document.querySelector('#voiceSlot' + live + ' .voice-slot-del');
+        if (getComputedStyle(del).display === 'none') return { noDel: true, live };
+        tap(del);
+        await new Promise((r2) => setTimeout(r2, 500));
+        const after = window.__voice.state();
+        await new Promise((r2) => setTimeout(r2, 2000));
+        const later = window.__voice.state();
+        const liveTracks = streams.reduce((n, st) => n + st.getTracks().filter((t) => t.readyState === 'live').length, 0);
+        closeVoice();
+        return { live, recorderAfter: after.recorder, slotsLater: later.slots, liveTracks };
+      } finally { navigator.mediaDevices.getUserMedia = real; }
+    });
+    if (r.notFull || r.noRecord) bad('the record-over state could not be staged', 'this section proved nothing');
+    else if (r.noDel) bad(`the delete control is not shown on the slot being recorded over (slot ${r.live})`, 'this section proved nothing');
+    else if (r.recorderAfter || r.liveTracks > 0)
+      bad(`deleting the slot being recorded into left the microphone STILL RUNNING (recorder ${r.recorderAfter}, ${r.liveTracks} live track(s))`,
+        'the wave is gone, the button is repainted idle and the ring is reset, so nothing on screen says the microphone is open');
+    else if (r.slotsLater[r.live])
+      bad(`the delete was UNDONE — the in-flight decode wrote a clip back into slot ${r.live}`,
+        'the child watched it empty and it filled itself again');
+    else ok(`deleting the slot being recorded over stops the microphone and the delete STAYS (slots ${JSON.stringify(r.slotsLater)})`);
+  }
+
+  /* ---- §31. RECORD-OVER FROM A PLAYING SLOT ---------------------------- */
+  if (run(31)) {
+    /* Playing slot i makes it the target, so a record-over goes to i and the teardown stops
+     * that playback — whose `onended` then fires and clears the live slot the RECORDING had
+     * just set. 5 of 10 measured runs recorded with no wave anywhere. Six runs at spread
+     * gaps, because a race asserted once is a coin. */
+    let bad_ = 0, tried = 0;
+    for (let k = 0; k < 6; k++) {
+      const r = await page.evaluate(async (gap) => {
+        closeVoice(); openVoice();
+        const tap = (el) => { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+                              el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); };
+        for (let i = 0; i < 3; i++) {
+          const el = document.getElementById('voiceSlot' + i);
+          tap(el); await new Promise((r2) => setTimeout(r2, 620));
+          tap(el); await new Promise((r2) => setTimeout(r2, 850));
+        }
+        if (!window.__voice.state().slots.every(Boolean)) return { notFull: true };
+        tap(document.getElementById('voiceSlot1'));
+        await new Promise((r2) => setTimeout(r2, gap));
+        tap(document.getElementById('voiceRecBtn'));
+        await new Promise((r2) => setTimeout(r2, 800));
+        const d = () => [0, 1, 2].map((i) => document.querySelector('#voiceSlot' + i + ' .voice-wave').getAttribute('d'));
+        const a = d();
+        await new Promise((r2) => setTimeout(r2, 220));
+        const b = d();
+        const st = window.__voice.state();
+        closeVoice();
+        return { recorder: st.recorder, live: st.liveSlot, moving: a.some((p, i) => p !== b[i]) };
+      }, 60 + k * 45);
+      if (r.notFull) continue;
+      tried++;
+      if (!r.recorder) continue;
+      if (r.live < 0 || !r.moving) bad_++;
+    }
+    if (tried < 4) bad(`only ${tried} run(s) reached the record-over state`, 'this section proved nothing');
+    else if (bad_) bad(`${bad_} of ${tried} record-overs from a PLAYING slot recorded with no wave on any slot`,
+      "the superseded playback's onended cleared the live slot the recording had just set — the microphone is open for 15s and the one signal this work order added is absent");
+    else ok(`${tried} record-overs from a playing slot all kept a moving wave on the recording slot`);
+  }
+
+  /* ---- §32. THE COUNTDOWN RING MUST BE VISIBLE ------------------------- */
+  if (run(32)) {
+    /* Its own comment says the child can SEE the end coming. It was painted entirely
+     * underneath the opaque record button — animating correctly, and invisible.
+     * ASKED BY HIT TEST, not by reading the geometry back out of the code. */
+    const ring = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const el = document.getElementById('voiceSlot0');
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 800));
+      const r0 = document.getElementById('voiceRing');
+      if (!r0) return { missing: true };
+      const svg = r0.ownerSVGElement, wrap = svg.parentElement;
+      const wr = wrap.getBoundingClientRect();
+      const cx = wr.left + wr.width / 2, cy = wr.top + wr.height / 2;
+      const rr = parseFloat(r0.getAttribute('r')) * (wr.width / parseFloat(svg.getAttribute('width')));
+      let covered = 0;
+      for (let a = 0; a < 12; a++) {
+        const t = a * Math.PI / 6;
+        const hit = document.elementFromPoint(cx + rr * Math.cos(t), cy + rr * Math.sin(t));
+        if (hit && hit.id === 'voiceRecBtn') covered++;
+      }
+      const o1 = r0.style.strokeDashoffset;
+      await new Promise((r) => setTimeout(r, 700));
+      const o2 = r0.style.strokeDashoffset;
+      const btn = document.getElementById('voiceRecBtn').getBoundingClientRect();
+      stopVoiceRecording();
+      await new Promise((r) => setTimeout(r, 900));
+      closeVoice();
+      return { covered, band: Math.round((rr - btn.width / 2) * 10) / 10, advancing: o1 !== o2 };
+    });
+    if (ring.missing) bad('there is no countdown ring');
+    else if (ring.covered) bad(`the ring is hidden underneath the record button at ${ring.covered} of 12 points`,
+      `visible band ${ring.band}px — it animates correctly and nobody can see it, which is the one signal that says how long is left`);
+    else if (!ring.advancing) bad('the ring is visible but not advancing');
+    else ok(`the countdown ring clears the record button by ${ring.band}px at all 12 points and is advancing`);
+  }
+
+  /* ---- §33. NO PRESET MAY BOOST — measured, not reasoned --------------- */
+  if (run(33)) {
+    /* The lowpass's Q was never set, and NOT SETTING Q IS NOT THE ABSENCE OF RESONANCE:
+     * the default is 1, read in dB for a lowpass, a +1.96dB peak. Asked of the filter's own
+     * frequency response rather than of the source comment, which asserted the opposite. */
+    const g = await page.evaluate(() => {
+      const off = new OfflineAudioContext(1, 128, 48000);
+      const buf = off.createBuffer(1, 64, 48000);
+      const out = [];
+      for (const id of ['up', 'down', 'robot', 'cave']) {
+        const gr = window.__voice.buildGraph(off, buf, id, window.__voice.presets.find((p) => p.id === id).a.def,
+                                             window.__voice.presets.find((p) => p.id === id).b.def);
+        const f = gr.nodes.find((n) => n.getFrequencyResponse);
+        if (!f) { out.push({ id, peak: 1 }); continue; }
+        const hz = new Float32Array(512), mag = new Float32Array(512), ph = new Float32Array(512);
+        for (let i = 0; i < 512; i++) hz[i] = 20 * Math.pow(1000, i / 511);
+        f.getFrequencyResponse(hz, mag, ph);
+        out.push({ id, peak: Math.max(...mag), q: f.Q.value });
+      }
+      return out;
+    });
+    const boosting = g.filter((x) => x.peak > 1.001);
+    if (boosting.length) bad(`${boosting.length} preset filter(s) BOOST`,
+      boosting.map((x) => `${x.id} peak ${x.peak.toFixed(4)} at Q=${x.q}`).join(' | ') + ' — a filter that boosts costs headroom the sweep was not budgeting for');
+    else ok(`no preset filter boosts (max response ${Math.max(...g.map((x) => x.peak)).toFixed(4)})`);
+  }
+
+  /* ---- §34. BOTH SLIDERS GO INERT WHILE THE MICROPHONE IS OPEN --------- */
+  if (run(34)) {
+    const sl = await page.evaluate(async () => {
+      closeVoice(); openVoice();
+      const el = document.getElementById('voiceSlot0');
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 700));
+      const read = (id) => { const e = document.getElementById(id); const c = getComputedStyle(e);
+        return { id, pe: c.pointerEvents, op: c.opacity }; };
+      const out = [read('voiceSlider'), read('voiceSliderB')];
+      stopVoiceRecording();
+      await new Promise((r) => setTimeout(r, 900));
+      closeVoice();
+      return out;
+    });
+    const live = sl.filter((x) => x.pe !== 'none');
+    if (live.length) bad(`${live.length} slider(s) are not inert during a recording`,
+      live.map((x) => `${x.id} pointer-events ${x.pe}, opacity ${x.op}`).join(' | ') + ' — two identical-looking controls contradicting each other and the "dimmed means unavailable" contract');
+    else ok(`both sliders are inert while the microphone is open (${sl.map((x) => x.id + ' ' + x.op).join(', ')})`);
+  }
+
 } finally { await browser.close(); server.close(); }
 
 if (failures.length) {
@@ -1471,4 +1679,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} \u2014 button 0 opens the panel to a real finger with the pad still 4+4; four presets are spectrally distinct through the shipping graph builder, null result first; every value on BOTH axes is clamped and nothing clips or goes silent across the full 144-position preset x slider grid; NO MICROPHONE SURVIVES TEARDOWN from any state, including repeated taps during a pending grant and a grant \u2014 or a REJECTION \u2014 that crosses a teardown; one finger tap leaves from idle, mid-record and mid-playback; the recorder stops on its own timer; an open microphone locks out playback; an abandoned clip does not appear in the next panel; the panel is INDISTINGUISHABLE configured and unconfigured; a full voice session asks for ZERO channels and makes ZERO outbound requests; the map opens, tracks a real fix, draws and clears while telling no other device where the child is; AND \u2014 PUP-WO-0703 \u2014 WITH EVERY PAINTED WORD HIDDEN, empty / recording / holding / playing all photograph DIFFERENTLY and the live slot is identified; the three slot states differ WITHOUT relying on colour; the wave MOVES while recording and while playing and is still otherwise; reduced motion stills it without making it ambiguous; and three slots record, record over and delete under a finger.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} \u2014 button 0 opens the panel to a real finger with the pad still 4+4; four presets are spectrally distinct through the shipping graph builder, null result first; every value on BOTH axes is clamped and nothing clips or goes silent across the full 144-position preset x slider grid; NO MICROPHONE SURVIVES TEARDOWN from any state, including repeated taps during a pending grant and a grant \u2014 or a REJECTION \u2014 that crosses a teardown; one finger tap leaves from idle, mid-record and mid-playback; the recorder stops on its own timer; an open microphone locks out playback; an abandoned clip does not appear in the next panel; the panel is INDISTINGUISHABLE configured and unconfigured; a full voice session asks for ZERO channels and makes ZERO outbound requests; the map opens, tracks a real fix, draws and clears while telling no other device where the child is; AND \u2014 PUP-WO-0703 \u2014 WITH EVERY PAINTED WORD HIDDEN, empty / recording / holding / playing all photograph DIFFERENTLY and the live slot is identified; the three slot states differ WITHOUT relying on colour; the wave MOVES while recording and while playing and is still otherwise; reduced motion stills it without making it ambiguous; three slots record, record over and delete under a finger; deleting the slot the microphone is filling STOPS it and the delete stays; a record-over from a PLAYING slot keeps its wave across six runs; the countdown ring clears the record button and advances; no preset filter boosts; and both sliders go inert while the microphone is open.`);

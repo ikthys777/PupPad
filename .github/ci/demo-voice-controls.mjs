@@ -71,8 +71,8 @@ plan(1, "button 0 keeps the old decorative glyph", {
 /* §2 — THE MEASUREMENT. Two presets made to do the SAME THING must be caught, or
  * acceptance item 3's spectra can come out the same by accident and nobody hears it. */
 plan(2, 'two presets are given the same mechanism', {
-  mutate: (s) => sub(s, "  { id:'robot', icon:'\\uD83E\\uDD16', label:'Robot voice',   color:'#A78BFA',\n    min:RING_HZ_MIN, max:RING_HZ_MAX, def:70 },",
-                        "  { id:'up', icon:'\\uD83E\\uDD16', label:'Robot voice',   color:'#A78BFA',\n    min:1.25, max:VOICE_RATE_MAX, def:1.70 },"),
+  mutate: (s) => sub(s, "  { id:'robot', icon:'\\uD83E\\uDD16', label:'Robot voice',   color:'#A78BFA',",
+                        "  { id:'up', icon:'\\uD83E\\uDD16', label:'Robot voice',   color:'#A78BFA',"),
   expectText: 'NOT audibly distinct',
 });
 
@@ -80,8 +80,7 @@ plan(2, 'two presets are given the same mechanism', {
  * -- which the NULL RESULT cannot catch, because identical is what it asserts. This is
  * the section that proves the pairwise half is doing work. */
 plan(2, 'the graph builder ignores the preset entirely', {
-  mutate: (s) => sub(s, "  if (presetId === 'up' || presetId === 'down') {\n    /* Resampling: pitch and tempo move together. That IS the chipmunk/monster effect. */",
-                        "  if (false) {\n    /* PLANT: every preset falls through to dry. */"),
+  mutate: (s) => sub(s, "  if (presetId === 'up' || presetId === 'down') {", "  if (false) {"),
   expectText: 'NOT audibly distinct',
 });
 
@@ -205,7 +204,8 @@ plan(17, 'the preset tiles stop asking whether the microphone is open', {
  * standing in for a generation check, with nothing above it. */
 plan(18, "the record path checks the overlay instead of the generation", {
   mutate: (s) => sub(sub(s,
-      "      if (gen !== voiceGen) return;\n      if (voiceRecorder === rec) voiceRecorder = null;", "      voiceRecorder = null;"),
+      "      if (gen !== voiceGen) return;\n      if (voiceRecorder === rec) voiceRecorder = null;\n      if (voiceStream === stream) voiceStream = null;",
+      "      voiceRecorder = null;\n      if (voiceStream === stream) voiceStream = null;"),
       "        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;",
       "        if (!document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;"),
   expectText: "PREVIOUS session's clip was installed",
@@ -289,8 +289,8 @@ plan(21, 'a rejected grant stops checking its generation', {
  * catch already asked `voiceBuffer ? 'ready' : 'empty'`; these two transitions did not,
  * and a stage of 'empty' with a live buffer leaves the tiles able to play it. */
 plan(17, 'a failed decode paints empty over a surviving clip', {
-  mutate: (s) => sub(s, "        voiceSetStage(voiceBuffer ? 'ready' : 'empty'); doSound('error');",
-                        "        voiceSetStage('empty'); doSound('error');"),
+  mutate: (s) => sub(s, "        setVoiceLiveSlot(-1); voiceSetStage(anySlotFilled() ? 'ready' : 'empty'); doSound('error');",
+                        "        setVoiceLiveSlot(-1); voiceSetStage('empty'); doSound('error');"),
   expectText: 'says EMPTY',
 });
 
@@ -316,8 +316,8 @@ plan(8, 'a control appears only when Supabase is configured', {
  * a DIFFERENT function name from the one that was deleted, so a source grep for
  * `joinVoiceChannel` would sail past it. */
 plan(23, 'the voice panel takes a channel again, under a new name', {
-  mutate: (s) => sub(s, "  voicePreset = 'up';\n  voiceBuffer = null;\n  doSound('ping');",
-    "  voicePreset = 'up';\n  voiceBuffer = null;\n  try { var c = getSupabaseClient(); if (c) c.channel('puppad-voice-v2').subscribe(function(){}); } catch (e) {}\n  doSound('ping');"),
+  mutate: (s) => sub(s, "  voiceWavePhase = 0;\n  doSound('ping');",
+    "  voiceWavePhase = 0;\n  try { var c = getSupabaseClient(); if (c) c.channel('puppad-voice-v2').subscribe(function(){}); } catch (e) {}\n  doSound('ping');"),
   expectText: 'asked for 1 Supabase channel',
 });
 
@@ -469,6 +469,49 @@ plan(3, "cave's wet mix is taken straight from the slider", {
 plan(3, 'the cave wet ceiling is raised past its headroom derivation', {
   mutate: (s) => sub(s, "var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.45;", "var CAVE_WET_MIN = 0.05, CAVE_WET_MAX = 0.95;"),
   expectText: 'CLIP (peak > 1)',
+});
+
+/* §30 — DELETING THE SLOT THE MICROPHONE IS FILLING. The record-over target is FILLED and
+ * LIVE at once, so the delete control sits on it -- and the delete ran a PLAYBACK-shaped
+ * teardown against a RECORDING, leaving the microphone open for the rest of the 15 seconds
+ * with no wave, no ring and an idle-looking button, and then writing the clip back into
+ * the slot the child had just emptied. */
+plan(30, 'deleting a slot mid-record leaves the microphone running', {
+  mutate: (s) => sub(s, "  if (voiceRecorder && voiceLiveSlot === i) {\n    voiceDeletedDuringRecord[i] = voiceGen;\n    stopVoiceRecording();\n  }\n", ""),
+  expectText: 'the microphone is STILL RUNNING',
+});
+
+plan(30, 'the in-flight decode writes back into the deleted slot', {
+  mutate: (s) => sub(s, "        if (voiceDeletedDuringRecord[slotFor] === gen) { delete voiceDeletedDuringRecord[slotFor]; return; }\n", ""),
+  expectText: 'the delete was UNDONE',
+});
+
+/* §31 — RECORD-OVER FROM A PLAYING SLOT. The superseded playback's `onended` cleared the
+ * live slot the new recording had just set: microphone open for 15s with no wave on any
+ * slot, in 5 of 10 measured runs. */
+plan(31, "a superseded playback's onended clears the new recording's slot", {
+  mutate: (s) => sub(s, "    if (gen !== voiceGen || token !== voicePlayToken) return;", "    if (gen !== voiceGen) return;"),
+  expectText: 'no wave on any slot',
+});
+
+/* §32 — THE RING. Its own comment says the child can SEE the end coming; it was painted
+ * entirely underneath the opaque record button. */
+plan(32, 'the countdown ring shrinks back under the record button', {
+  mutate: (s) => sub(s, "var RING_BOX = 80, RING_R = 35, RING_STROKE = 5;", "var RING_BOX = 80, RING_R = 26, RING_STROKE = 5;"),
+  expectText: 'hidden underneath the record button',
+});
+
+/* §33 — THE LOWPASS DEFAULT. Not setting Q is not the absence of resonance: the default
+ * is +1.96dB, measured gain 1.2533. */
+plan(33, 'the lowpass Q is left at its default', {
+  mutate: (s) => sub(s, "    tone.Q.value = TONE_Q_DB;\n", ""),
+  expectText: 'BOOSTS',
+});
+
+/* §34 — the second slider left live while the microphone is open. */
+plan(34, 'slider B is not dimmed with slider A', {
+  mutate: (s) => sub(s, "    ['voiceSlider', 'voiceSliderB'].forEach(function(id) {", "    ['voiceSlider'].forEach(function(id) {"),
+  expectText: 'not inert during a recording',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);
