@@ -2338,7 +2338,11 @@ function nextVoiceSlot() {
  * checks this before writing, so a delete can never be silently undone by the decode that
  * was already in flight. */
 var voiceDeletedDuringRecord = {};
-var voiceDeletedAt = 0;
+/* PER SLOT, not one clock for the whole row. A single timestamp made a delete on slot 0
+ * swallow a tap on slot 2 for 400ms -- and the hazard is only ever the SAME coordinates,
+ * because it is the second tap of a double-tap landing where the control just vanished. A
+ * guard wider than its hazard is a control that ignores a child for no reason. */
+var voiceDeletedAt = [0, 0, 0];
 /* Bumped by anything that ends a playback. An `onended` whose token is stale belongs to a
  * playback that has already been superseded and must not touch the live slot. */
 var voicePlayToken = 0;
@@ -2371,7 +2375,7 @@ function deleteVoiceSlot(i) {
     voiceTargetSlot = next === -1 ? 0 : next;
   }
   voiceBuffer = voiceSlots[voiceTargetSlot] || null;
-  voiceDeletedAt = Date.now();
+  voiceDeletedAt[i] = Date.now();
   paintVoiceSlots();
   voiceSetStage(anySlotFilled() ? 'ready' : 'empty');
   doSound('blip');
@@ -2486,6 +2490,8 @@ function openVoice() {
   voiceLiveSlot = -1;
   voiceTargetSlot = 0;
   voiceWavePhase = 0;
+  voiceDeletedAt = [0, 0, 0];
+  voiceDeletedDuringRecord = {};
   doSound('ping');
 
   var overlay = document.createElement('div');
@@ -2603,7 +2609,7 @@ function openVoice() {
          * underneath and OPENS THE MICROPHONE. A settle window on the slot after a delete
          * closes it, the same shape PUP-WO-0404 used for the celebration a gesture
          * destroyed. The delete itself is unaffected; only the slot's own action waits. */
-        if (Date.now() - voiceDeletedAt < SLOT_ARM_MS) return;
+        if (Date.now() - voiceDeletedAt[i] < SLOT_ARM_MS) return;
         /* THE SLOT THAT IS LIVE IS ALSO THE STOP BUTTON, because that is what a child
          * does: tap it to start, tap it again to stop. A probe caught this -- the second
          * tap was swallowed by the capturing guard and the only way to stop was to find

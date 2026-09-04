@@ -227,9 +227,14 @@ try {
         { id: 'up', v: 1.5, b: 1e9, read: (g) => g.nodes.find((n) => n.type === 'lowpass').frequency.value, lo: 700, hi: 8000 },
         { id: 'down', v: 0.8, b: -5, read: (g) => g.nodes.find((n) => n.type === 'lowpass').frequency.value, lo: 700, hi: 8000 },
         { id: 'robot', v: 1e9, b: 0.5, read: (g) => g.nodes.find((n) => n.frequency).frequency.value, lo: 20, hi: 220 },
-        { id: 'robot', v: 70, b: 1e6, read: (g) => Math.max(...g.nodes.filter((n) => n.gain && n.gain.value > 0 && n.gain.value <= 1).map((n) => n.gain.value)), lo: 0.25, hi: 1.0 },
+        /* READ BY POSITION, NOT BY A VALUE FILTER. These used to select the node with a
+         * heuristic on its own gain -- `> 0 && < 0.5` for cave's wet -- so AN UNCLAMPED
+         * VALUE FELL OUTSIDE THE FILTER AND WAS NEVER READ. The probe skipped the very
+         * node the plant had broken and reported clean. A filter that hides the defect it
+         * is looking for is the same shape as a check that recomputes the formula. */
+        { id: 'robot', v: 70, b: 1e6, read: (g) => g.nodes[g.nodes.length - 2].gain.value, lo: 0.25, hi: 1.0 },
         { id: 'cave', v: 99, b: 0.3, read: (g) => g.nodes.find((n) => n.delayTime).delayTime.value, lo: 0.06, hi: 0.40 },
-        { id: 'cave', v: 0.2, b: 99, read: (g) => Math.max(...g.nodes.filter((n) => n.gain && n.gain.value > 0 && n.gain.value < 0.5).map((n) => n.gain.value)), lo: 0.05, hi: 0.50 },
+        { id: 'cave', v: 0.2, b: 99, read: (g) => g.nodes[g.nodes.length - 1].gain.value, lo: 0.05, hi: 0.50 },
       ];
       const out = [];
       for (const p of probes) {
@@ -1268,6 +1273,14 @@ try {
      * them is the countdown ring, which lives in the transport row. Framing the row was
      * therefore asking the wrong rectangle a question only the panel can answer. */
     const shot = async () => (await page.locator('#voiceOverlay').screenshot()).toString('base64');
+    /* TWO RECTANGLES, TWO QUESTIONS, because one answer cannot serve both.
+     *
+     * The PANEL must distinguish all four states -- that is the work order's acceptance.
+     * The SLOT ROW must distinguish the three states IT is responsible for (empty,
+     * holding, live), because that is the signal the child looks at. Asserting only the
+     * panel let a plant flatten the slots entirely and still pass, since the ring and the
+     * record button carried the difference on their own. */
+    const rowShot = async () => (await page.locator('#voiceSlot0').locator('xpath=..').screenshot()).toString('base64');
     const maskWords = () => page.evaluate(() => {
       /* Hide every TEXT node's paint, leaving glyphs, shapes and strokes. Emoji are
        * pictographs and stay — a non-reader can use those; a word is what they cannot. */
@@ -1287,18 +1300,21 @@ try {
     const preMask = await shot();
     const hidden = await maskWords();
     const empty = await shot();
+    const emptyRow = await rowShot();
     const maskChanged = preMask !== empty;
 
     await finger('#voiceSlot1');
     await page.waitForTimeout(700);
     await maskWords();
     const recording = await shot();
+    const recordingRow = await rowShot();
     const liveDuring = await page.evaluate(() => window.__voice.state().liveSlot);
 
     await finger('#voiceSlot1');
     await page.waitForTimeout(1100);
     await maskWords();
     const holding = await shot();
+    const holdingRow = await rowShot();
 
     await finger('#voiceSlot1');
     await page.waitForTimeout(250);
@@ -1322,7 +1338,16 @@ try {
       'the masked element is outside the frame being compared, so this section is comparing unmasked pictures');
     else if (pairs.length) bad(`${pairs.length} state pair(s) are PHOTOGRAPHICALLY IDENTICAL with words covered`,
       `${pairs.join(', ')} — a child cannot read the label, so if the picture is the same the state is invisible`);
-    else ok(`with ${hidden.length} painted word(s) hidden, empty / recording / holding / playing all photograph DIFFERENTLY, and the live slot is identified (slot ${liveDuring})`);
+    else {
+      const rows = { empty: emptyRow, live: recordingRow, holding: holdingRow };
+      const rk = Object.keys(rows);
+      const same = [];
+      for (let i = 0; i < rk.length; i++) for (let j = i + 1; j < rk.length; j++)
+        if (rows[rk[i]] === rows[rk[j]]) same.push(`${rk[i]} == ${rk[j]}`);
+      if (same.length) bad(`the SLOT ROW cannot tell ${same.length} of its own state pair(s) apart`,
+        `${same.join(', ')} — the row is the thing the child looks at, and the panel differing elsewhere does not help them find WHICH slot`);
+      else ok(`with ${hidden.length} painted word(s) hidden, empty / recording / holding / playing all photograph DIFFERENTLY, the SLOT ROW distinguishes its own three states, and the live slot is identified (slot ${liveDuring})`);
+    }
   }
 
   /* ---- §26. THE THREE STATES, AND NOT ON COLOUR ALONE ------------------- */
@@ -1388,6 +1413,14 @@ try {
       b.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 700));
       const rec = await sample();
+      /* AND THE OTHER SLOTS MUST BE STILL WHILE ONE IS LIVE. Asserting only "the rAF is
+       * off when idle" left a plant that made EVERY slot wave reporting green, because an
+       * idle panel has no loop running either way. Movement has to mean THIS slot, not
+       * merely that something somewhere is animating. */
+      const others = () => [1, 2].map((i) => document.querySelector('#voiceSlot' + i + ' .voice-wave').getAttribute('d'));
+      const o1 = others();
+      await new Promise((r) => setTimeout(r, 220));
+      const othersMoved = others().some((d2, k) => d2 !== o1[k]);
       const recLive = window.__voice.state().liveSlot;
       stopVoiceRecording();
       await new Promise((r) => setTimeout(r, 1100));
@@ -1397,7 +1430,7 @@ try {
       const play = await sample();
       const playLive = window.__voice.state().liveSlot;
       closeVoice();
-      return { idle, rec, held, play, recLive, playLive, idleRaf };
+      return { idle, rec, held, play, recLive, playLive, idleRaf, othersMoved };
     });
     const moving = (pair) => pair[0] !== pair[1];
     if (move.recLive !== 0) bad(`recording did not go into slot 0 (liveSlot ${move.recLive})`, 'this section proved nothing');
@@ -1410,6 +1443,8 @@ try {
      * did -- measured, one distinct path across six phases. The real property is that the
      * LOOP IS NOT RUNNING when nothing is live, which a battery on a tablet cares about
      * and which a plant can actually break. */
+    else if (move.othersMoved) bad('the slots that are NOT live are waving too',
+      'movement then does not mean "this slot is the live one" and the signal carries nothing — which is the entire design');
     else if (move.idleRaf) bad('the wave loop is running with no live slot',
       'a rAF that runs on an idle panel is a battery cost, and movement that is not tied to LIVE carries no information');
     else if (moving(move.held)) bad('the wave moves on a merely FILLED slot',

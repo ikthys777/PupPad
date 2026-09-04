@@ -192,8 +192,12 @@ plan(15, "a stale grant clears voicePending before checking its generation", {
 });
 
 /* §17 — two expressions of "is this panel busy" that do not agree, restored. */
+/* BOTH HALVES: the handler's own guard AND the pointer-events gating the painting
+ * applies. Either alone keeps the tiles inert, which is defence in depth working. */
 plan(17, 'the preset tiles stop asking whether the microphone is open', {
-  mutate: (s) => sub(s, "      /* The same question the painting asks, asked the same way. */\n      if (voiceCapturing()) return;\n", ""),
+  mutate: (s) => sub(sub(s,
+      "      /* The same question the painting asks, asked the same way. */\n      if (voiceCapturing()) return;\n", ""),
+      "      tiles[ti].style.pointerEvents = live ? 'auto' : 'none';", "      tiles[ti].style.pointerEvents = 'auto';"),
   expectText: 'STARTED PLAYBACK',
 });
 
@@ -204,8 +208,8 @@ plan(17, 'the preset tiles stop asking whether the microphone is open', {
  * standing in for a generation check, with nothing above it. */
 plan(18, "the record path checks the overlay instead of the generation", {
   mutate: (s) => sub(sub(s,
-      "      if (gen !== voiceGen) return;\n      if (voiceRecorder === rec) voiceRecorder = null;\n      if (voiceStream === stream) voiceStream = null;",
-      "      voiceRecorder = null;\n      if (voiceStream === stream) voiceStream = null;"),
+      "      if (gen !== voiceGen) return;\n      if (voiceRecorder === rec) voiceRecorder = null;",
+      "      voiceRecorder = null;"),
       "        if (gen !== voiceGen || !document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;",
       "        if (!document.getElementById('voiceOverlay')) return;\n        voiceBuffer = buf;"),
   expectText: "PREVIOUS session's clip was installed",
@@ -316,8 +320,8 @@ plan(8, 'a control appears only when Supabase is configured', {
  * a DIFFERENT function name from the one that was deleted, so a source grep for
  * `joinVoiceChannel` would sail past it. */
 plan(23, 'the voice panel takes a channel again, under a new name', {
-  mutate: (s) => sub(s, "  voiceWavePhase = 0;\n  doSound('ping');",
-    "  voiceWavePhase = 0;\n  try { var c = getSupabaseClient(); if (c) c.channel('puppad-voice-v2').subscribe(function(){}); } catch (e) {}\n  doSound('ping');"),
+  mutate: (s) => sub(s, "  voiceDeletedDuringRecord = {};\n  doSound('ping');",
+    "  voiceDeletedDuringRecord = {};\n  try { var c = getSupabaseClient(); if (c) c.channel('puppad-voice-v2').subscribe(function(){}); } catch (e) {}\n  doSound('ping');"),
   expectText: 'asked for 1 Supabase channel',
 });
 
@@ -397,15 +401,17 @@ plan(23, 'the voice panel broadcasts on the camera channel instead of its own', 
 plan(25, 'the live slot paints exactly like a filled one', {
   mutate: (s) => sub(s, "    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);",
                         "    var amp = filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY;\n    if (live) { /* PLANT: live looks like filled */ }"),
-  expectText: 'PHOTOGRAPHICALLY IDENTICAL with words covered',
+  expectText: 'SLOT ROW cannot tell',
 });
 
 /* AND THE OTHER HALF: a filled slot that looks empty. Nothing shows a slot holds anything
  * was one of Scotty's three complaints by name. */
 plan(25, 'a filled slot paints exactly like an empty one', {
-  mutate: (s) => sub(s, "    el.style.borderStyle = filled ? 'solid' : 'dashed';",
-                        "    el.style.borderStyle = 'dashed';"),
-  expectText: 'PHOTOGRAPHICALLY IDENTICAL with words covered',
+  mutate: (s) => sub(sub(s,
+      "    el.style.borderStyle = filled ? 'solid' : 'dashed';", "    el.style.borderStyle = 'dashed';"),
+      "    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);",
+      "    var amp = live ? WAVE_AMP_LIVE : WAVE_AMP_EMPTY;"),
+  expectText: 'SLOT ROW cannot tell',
 });
 
 /* §26 — COLOUR ALONE. The states still differ, and ONLY by colour, which is what fails
@@ -432,22 +438,34 @@ plan(27, 'the wave is drawn but never animated', {
 plan(27, 'every slot waves, so movement means nothing', {
   mutate: (s) => sub(s, "      path.setAttribute('d', wavePath(amp, live && !reduced ? voiceWavePhase : 0));",
                         "      path.setAttribute('d', wavePath(amp || WAVE_AMP_HOLD, reduced ? 0 : voiceWavePhase));"),
-  expectText: 'moves on an EMPTY slot too',
+  expectText: 'slots that are NOT live are waving too',
 });
 
 /* §28 — REDUCED MOTION MUST NOT ERASE THE ONLY SIGNAL A NON-READER HAS. Stillness is
  * allowed; ambiguity is not. */
+/* EVERY signal, not one of three. Reduced motion takes the MOTION away; if it also took
+ * the border AND the amplitude the live slot would be genuinely ambiguous -- and a plant
+ * that removes only the border correctly reports green, because the amplitude still tells
+ * them apart. */
 plan(28, 'reduced motion flattens the live slot into a filled one', {
-  mutate: (s) => sub(s, "    el.style.borderWidth = live ? '4px' : '2px';",
-                        "    el.style.borderWidth = (live && !voiceReducedMotion()) ? '4px' : '2px';"),
+  mutate: (s) => sub(sub(s,
+      "    el.style.borderWidth = live ? '4px' : '2px';",
+      "    el.style.borderWidth = (live && !voiceReducedMotion()) ? '4px' : '2px';"),
+      "    var amp = live ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);",
+      "    var amp = (live && !voiceReducedMotion()) ? WAVE_AMP_LIVE : (filled ? WAVE_AMP_HOLD : WAVE_AMP_EMPTY);"),
   expectText: 'indistinguishable from a merely filled one',
 });
 
 /* §29 — THE DELETE TAP REACHING THE SLOT UNDERNEATH IT. This shipped, briefly, and a
  * functional probe caught it: deleting a clip emptied the slot AND started recording into
  * it, because one pointerup ran both handlers. */
+/* BOTH GUARDS. The per-slot settle window added for the double-tap case ALSO swallows the
+ * bubbled tap, so removing stopPropagation alone no longer reproduces -- defence in depth
+ * working, and a plant that removes one half correctly reports green. */
 plan(29, 'the delete tap bubbles to the slot and starts a recording', {
-  mutate: (s) => sub(s, "      ['pointerdown', 'pointerup', 'pointercancel', 'click'].forEach(function(evt) {\n        del.addEventListener(evt, function(e) { e.stopPropagation(); });\n      });\n", ""),
+  mutate: (s) => sub(sub(s,
+      "      ['pointerdown', 'pointerup', 'pointercancel', 'click'].forEach(function(evt) {\n        del.addEventListener(evt, function(e) { e.stopPropagation(); });\n      });\n", ""),
+      "        if (Date.now() - voiceDeletedAt[i] < SLOT_ARM_MS) return;\n", ""),
   expectText: 'deleting a slot STARTED A RECORDING',
 });
 
@@ -478,7 +496,7 @@ plan(3, 'the cave wet ceiling is raised past its headroom derivation', {
  * the slot the child had just emptied. */
 plan(30, 'deleting a slot mid-record leaves the microphone running', {
   mutate: (s) => sub(s, "  if (voiceRecorder && voiceLiveSlot === i) {\n    voiceDeletedDuringRecord[i] = voiceGen;\n    stopVoiceRecording();\n  }\n", ""),
-  expectText: 'the microphone is STILL RUNNING',
+  expectText: 'STILL RUNNING',
 });
 
 plan(30, 'the in-flight decode writes back into the deleted slot', {
@@ -505,7 +523,7 @@ plan(32, 'the countdown ring shrinks back under the record button', {
  * is +1.96dB, measured gain 1.2533. */
 plan(33, 'the lowpass Q is left at its default', {
   mutate: (s) => sub(s, "    tone.Q.value = TONE_Q_DB;\n", ""),
-  expectText: 'BOOSTS',
+  expectText: 'BOOST',
 });
 
 /* §34 — the second slider left live while the microphone is open. */
