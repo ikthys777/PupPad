@@ -270,6 +270,40 @@ empty `send()`, so a broadcast piggybacking on the camera's already-open channel
 for zero new channels and pass. **"No transport was used" and "no transport is possible"
 are different claims, and only the second is what a deletion buys.**
 
+**AN ALARM ROUTED ONLY TO SOMEONE WHO CANNOT ACT ON IT IS A DETECTOR WITH NO ACTOR.**
+*(Ruled 2026-09-04, and it is the SECOND failure of this loop's notification path in two
+days — a different one.)*
+
+PR #67 sat for **nine hours**. The unclaimed-PR watchdog **worked perfectly**: it fired at
+about 04:52, fifteen minutes past its threshold, and wrote its state file. **The alert was
+correct, on time, and useless — because it can only wake Scotty, and Scotty was asleep.**
+CC-A was idle the whole time, holding merge authority, and nothing could reach it.
+
+> **Yesterday's defect was that NOTHING NOTICED. Today's is that something noticed and had
+> NO HANDS.** They are not the same defect and the second is not fixed by the first.
+> **For every detector, ask separately: who is told, and can that party act at the hour it
+> fires?**
+
+**RULED: the watchdog may nudge CC-A as well as Scotty, under three conditions, and the
+conditions are the whole of the ruling.**
+
+1. **It says REVIEW, never MERGE.** The verb is the boundary. A nudge that moves
+   **attention** carries no authority; a nudge that names an **action** on a specific PR is
+   an automated instruction to a session that can perform it. CC-A already holds merge
+   authority — the nudge must not be what decides to use it.
+2. **It is plainly marked as machine-generated.** A `tmux send-keys` line arrives looking
+   exactly like the operator typed it. **An agent must never be unable to tell Scotty from
+   a cron job**, because everything it will do next is weighted by which one it thinks it
+   is answering.
+3. **It fires ONCE PER PR**, keyed on the same state file the alert already uses — not once
+   per tick.
+
+**Why this is safe, stated so the next change to it is judged against the right thing:**
+the blast radius is unchanged because the nudge grants nothing. `/stable/` stays Scotty's
+alone, the review still happens, and a bad nudge costs one wasted look. **The moment such a
+channel carries an action rather than an attention, it stops being a notification and
+becomes a remote control, and that is a ruling for Scotty rather than for CC-A.**
+
 **A REPAIR INHERITS THE DEFECT'S SHAPE. PLANT THE FIX.** *(Ruled 2026-09-04, after it
 happened THREE TIMES IN ONE WORK ORDER.)*
 
