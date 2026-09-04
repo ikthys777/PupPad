@@ -110,8 +110,13 @@ plan(1, 'a NEW third-party script on the cold-load path', {
  * that only measures the cold load reports clean on this, which is why check 27 walks all
  * eight pads instead of loading the page and stopping. */
 plan(1, 'a new origin reached ONLY when the Map panel opens', {
-  mutate: (s) => sub(s, "  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {",
-    "  try { new Image().src = 'https://telemetry.example.net/pin.gif'; } catch (e) {}\n  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {"),
+  /* AT THE TOP OF THE FUNCTION, NOT BESIDE THE TILE LAYER — and the first version was
+   * beside the tile layer and went GREEN. `treasureMap = L.map(...)` runs first, Leaflet
+   * is aborted like every other third party so `L` is undefined, and the function throws
+   * before reaching anything planted below that line. THE PLANT APPLIED AND COULD NOT
+   * REPRODUCE, which is acceptance §4 in one sentence. */
+  mutate: (s) => sub(s, "function openTreasureMap() {",
+    "function openTreasureMap() {\n  try { new Image().src = 'https://telemetry.example.net/pin.gif'; } catch (e) {}"),
   expectText: 'NOT on the allowlist',
 });
 
@@ -128,8 +133,9 @@ plan(1, 'a new origin reached only when the Voice panel opens', {
  * the difference between asserting the predicate is anchored (§3 does that in isolation)
  * and asserting the CHECK rejects a live one. */
 plan(1, 'a look-alike hostname that CONTAINS the approved name', {
-  mutate: (s) => sub(s, "  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {",
-    "  try { new Image().src = 'https://evil-openstreetmap.org.attacker.net/{z}/1/1.png'; } catch (e) {}\n  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {"),
+  /* Same placement lesson as above: above the first `L.` reference, or it never runs. */
+  mutate: (s) => sub(s, "function openTreasureMap() {",
+    "function openTreasureMap() {\n  try { new Image().src = 'https://evil-openstreetmap.org.attacker.net/1/1/1.png'; } catch (e) {}"),
   expectText: 'NOT on the allowlist',
 });
 
@@ -152,7 +158,7 @@ plan(1, 'the shipped app, with the two CDN loads removed, is still GREEN', {
  * is exactly what a clean result looks like. §2 exists so that reports as a failure. */
 plan(2, 'the pads do not respond, so the walk visits nothing', {
   mutate: (s) => sub(s, "      var id = parseInt(el.dataset.id);", "      var id = parseInt(el.dataset.id); if (id >= 0) return;"),
-  expectText: 'fewer than one each',
+  expectText: 'made no sound of their own',
 });
 
 /* AND THE MAP SPECIFICALLY — the one pad whose origin this check exists for. A build where

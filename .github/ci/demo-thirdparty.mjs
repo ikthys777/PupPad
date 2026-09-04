@@ -224,13 +224,19 @@ async function drive(browser) {
   const opened = [];
   for (const [id, label] of PADS) {
     phase = `pad ${id} (${label})`;
+    /* THE DELTA FOR THIS PAD, NOT A RUNNING TOTAL. The first version asserted that the
+     * cumulative cue count reached eight, and the control planted to break every pad
+     * handler still passed it — the console plays cues for other things, so the total
+     * cleared the bar with not one pad handler having run. A count that can be satisfied
+     * by something other than its subject is not a measurement of its subject. */
+    const cuesBefore = await page.evaluate(() => (window.__pad || []).length);
     const tapped = await tap(`.pad-btn[data-id="${id}"]`);
     await page.waitForTimeout(700);
     /* Did anything actually open? "No new origin" is what a pad that never opened
      * reports too, which is the arrange failing silently — §2 asserts on this. */
     const grew = await page.evaluate(() => document.querySelectorAll('[id$="Overlay"], .overlay, #gameHost').length);
     const cues = await page.evaluate(() => (window.__pad || []).length);
-    opened.push({ id, label, tapped, grew, cues });
+    opened.push({ id, label, tapped, grew, cues, delta: cues - cuesBefore });
     await page.evaluate(() => {
       for (const f of ['closeVoice', 'closeCanvas', 'closeCamera', 'closeTreasureMap', 'closeGames', 'closeGamePicker'])
         { try { if (typeof window[f] === 'function') window[f](); } catch (e) {} }
@@ -259,15 +265,16 @@ try {
       else OK(`the recorder sees egress: its own witness to an origin the app never uses was intercepted ${witnessHits.length} time(s) and aborted`);
 
       const missed = opened.filter((o) => !o.tapped);
+      const silent = opened.filter((o) => !(o.delta > 0));
       const totalCues = opened.length ? opened[opened.length - 1].cues : 0;
       const map = opened.find((o) => o.id === 1);
       if (missed.length) BAD(`${missed.length} of ${PADS.length} pads could not be pressed`,
         `${missed.map((m) => `${m.id} ${m.label}`).join(', ')} — a pad that never opened contacts no new origin, which is exactly what a clean result looks like`);
-      else if (totalCues < PADS.length) BAD(`${totalCues} cue(s) observed across ${PADS.length} pads — fewer than one each`,
-        'every pad handler plays a cue before it does anything else, so a missing cue means the tap landed on nothing and that pad was never actually visited');
+      else if (silent.length) BAD(`${silent.length} of ${PADS.length} pad handlers made no sound of their own`,
+        `${silent.map((o) => `${o.id} ${o.label}`).join(', ')} — every pad handler plays a cue before it does anything else, so a pad whose tap produced NO new cue was never actually visited, and "no unapproved origin" is exactly what an app nobody exercised reports`);
       else if (!map || !(map.grew > 0)) BAD('the Map pad was pressed and no surface opened',
         'the Map panel is the one pad whose origin this check exists for — if it did not open, the basemap could not have been requested and a clean result below means nothing');
-      else OK(`all ${PADS.length} pads pressed with a finger, ${totalCues} cue(s) observed from the app's own doSound (at least one per pad, and panels make their own), and the Map panel opened — the walk is real, not an empty set wearing a green label`);
+      else OK(`all ${PADS.length} pads pressed with a finger, EACH producing at least one new cue of its own from the app's doSound (${totalCues} in total, since panels make their own too), and the Map panel opened — the walk is real, not an empty set wearing a green label`);
     }
 
     if (want(1)) {
@@ -288,7 +295,16 @@ try {
         }).join('\n        ')
         + '\n        The allowlist is ONE named exception (northstar invariant 3 and §5, ruled 2026-09-04) plus two recorded-but-UNRATIFIED CDNs. A new origin is not covered by any of them, and "no second exception" is the amendment\'s own wording.');
       else {
-        const rl = ratifiedSeen.length ? ratifiedSeen.join(', ') : 'none contacted in this run';
+        /* THE RATIFIED ORIGIN IS NEVER CONTACTED IN THIS ENVIRONMENT, AND THAT IS THE
+         * FINDING RATHER THAN A HOLE. Leaflet is aborted like every other third-party
+         * request, `L` is therefore undefined, and `openTreasureMap` throws at
+         * `L.map(...)` before it ever reaches `L.tileLayer`. So the tile origin cannot be
+         * observed here — the ratified exception is downstream of an unratified one. The
+         * allowlist entry for it is exercised by §3 against the predicate rather than
+         * against live traffic, which is stated here instead of being papered over with a
+         * fabricated Leaflet that would make this check green on traffic the app did not
+         * make. */
+        const rl = ratifiedSeen.length ? ratifiedSeen.join(', ') : 'NOT CONTACTED — Leaflet is blocked like every third party, so L is undefined and the Map panel throws before requesting a tile; the ratified origin is downstream of an unratified one';
         const ul = unratifiedSeen.length ? unratifiedSeen.join(', ') : 'none contacted in this run';
         OK(`every origin contacted is on the allowlist — RATIFIED: ${RATIFIED.map((e) => `${e.label} (${e.date}, ${e.why.split(' — ')[0]})`).join('; ')} [seen: ${rl}]. UNRATIFIED AND OWED, nobody has ruled on either: ${UNRATIFIED.map((e) => e.label).join(', ')} [seen: ${ul}]`);
         info('a green run means "only these", not "none" — the two UNRATIFIED origins above are shipped behaviour that no owner has approved (architecture §10), and the ratified basemap CANNOT LOAD without the first of them');
