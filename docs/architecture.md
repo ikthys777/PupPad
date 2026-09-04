@@ -532,6 +532,15 @@ converts the whole close-tidily class into a **refusal**. *The heuristic is stil
 `if (s) /re/` — pinned in the controls as REFUSING. **Being wrong is allowed; being wrong
 quietly is not.***
 
+**AND THE BOUNDARY IS NARROWER THAN CC-A FIRST RECORDED IT.** The merge record said *"the
+oracle only knows about imports."* **The precise statement is: STATIC imports are
+parse-backed; DYNAMIC imports and every tier token still rest on the lexer.**
+`dependencySpecifiers` lists a module's *dependencies*, and **a dynamic `import()` is a call
+expression, not a dependency** — the file says so at `dynamicImports()`, which still scans
+stripped text with a regex. *The builder's correction to CC-A's own record, and it makes the
+owed work order bigger and better defined: **both halves want the same mechanism**, a tier
+scan and a dynamic-import scan that read a parse rather than a string.*
+
 **A PROBE THAT SELECTS ITS SUBJECT BY A VALUE FILTER CANNOT SEE THE VALUE IT IS HUNTING.**
 *(Ruled 2026-09-04. The builder's.)*
 
