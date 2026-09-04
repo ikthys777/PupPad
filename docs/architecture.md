@@ -270,6 +270,40 @@ empty `send()`, so a broadcast piggybacking on the camera's already-open channel
 for zero new channels and pass. **"No transport was used" and "no transport is possible"
 are different claims, and only the second is what a deletion buys.**
 
+**PLANT THE CLAIM, NOT ITS CONSEQUENCES — AND FOR A REDUNDANTLY-CARRIED STATE THAT MEANS
+THE STATE VARIABLE.** *(Ruled 2026-09-04. **The builder's, and it is the missing half of
+the plant rule above.**)*
+
+`PUP-WO-0703`'s central acceptance is that a child can tell three slot states apart with
+every word covered. Its plants removed **one painted difference at a time** — amplitude,
+then border width, then colour — **and each correctly reported GREEN**, because the row
+carries four signals *by design* so that no single one is load-bearing on a dim screen.
+Chasing them individually was not a weak plant; it was **the wrong SHAPE of plant.**
+
+> **Name the claim in one sentence, then find the smallest edit that makes THAT SENTENCE
+> false.** For a state deliberately carried by several redundant signals, degrading one
+> signal is a change the design absorbs on purpose. **Collapse the state itself.**
+
+*The corollary is a comfort, not a warning: a plant that stays green after removing one of
+several redundant signals is **evidence the redundancy is real**. Read it as a measurement
+of the design, then go and write the plant that actually contradicts the claim.*
+
+**A PROBE THAT SELECTS ITS SUBJECT BY A VALUE FILTER CANNOT SEE THE VALUE IT IS HUNTING.**
+*(Ruled 2026-09-04. The builder's.)*
+
+A clamp probe found the node it wanted by filtering for a gain `> 0 && < 0.5`. **An
+unclamped `99` fell outside the filter, was never read, and the probe reported clean** —
+the check searched for its subject using the very property whose violation it existed to
+detect. Read by **position**, or by identity, never by the value under test.
+
+> **Same family as *check the effect, never the installation*: both are a check agreeing
+> with itself. A filter written from the expected value is a rediscovery of the
+> expectation.**
+
+*And its process sibling, from the same round: **a watcher that matches only the success
+marker is silent through a crash**, and silence is indistinguishable from still-running.
+Wait on completion — success OR failure — never on success alone.*
+
 **A PLANT THAT APPLIES IS NOT A PLANT THAT REPRODUCES.** *(Ruled 2026-09-03. **The
 builder's, from `PUP-WO-0701` round 3, and it cost two false controls in one file.**)*
 
