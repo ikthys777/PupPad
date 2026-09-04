@@ -270,6 +270,44 @@ empty `send()`, so a broadcast piggybacking on the camera's already-open channel
 for zero new channels and pass. **"No transport was used" and "no transport is possible"
 are different claims, and only the second is what a deletion buys.**
 
+**THE EVENT THAT ENDS THE WORK ALSO REFRESHES EVERY LIVENESS SIGNAL.** *(Ruled
+2026-09-04. **The FOURTH variant of the handoff defect, and the only one with no detector at
+all.**)*
+
+The builder compacted **mid-task** and stopped. Its last words before `/compact` were
+*"Starting that now"* — **and it never started.** Ten minutes idle with the §0 analysis
+complete and the build not begun. **Scotty noticing a still pane is what recovered it.**
+
+**Every health signal read green, and each one for a reason the compaction itself produced:**
+
+| signal | why it said healthy |
+|---|---|
+| the transcript had just moved | **compaction IS activity** |
+| the working tree was clean | nothing had been built yet |
+| nothing unpushed | same |
+| no PR parked | the work had not started |
+| the stall watchdog's clock | **reset BY the compaction** |
+
+**That is not five independent checks failing. It is one event that satisfies all five** — so
+adding a sixth of the same kind buys nothing. A watchdog that asks *"has anything happened"*
+**cannot distinguish "working" from "just compacted and stopped"**, because compaction is the
+thing that happened.
+
+> **RULED: a session that compacts mid-task must leave a DURABLE MARKER saying the work is
+> incomplete, or resume itself from its own artifact.** *Liveness is not the question.
+> **Completion** is — and only the session knows what it had started.*
+
+**THE ARTIFACT DISCIPLINE IS WHAT MAKES SELF-RESUME POSSIBLE, and it already worked once
+without being asked to.** The builder recovered because `docs/feedback/PUP-WO-0704.md` was
+**committed at `1c0f71c` before the compaction** — it re-read its own measurement instead of
+needing anyone to repeat it. **So the marker is not a new mechanism; it is the existing one
+used on purpose:** commit enough to resume from *before* compacting, and say in it what is
+not yet done.
+
+*Its three siblings — the builder finishes and nobody is told, a review dies in a compaction,
+a dispatch never arrives — each had a detector built for it. **This one is back where we were
+before the unclaimed-PR watchdog existed: a human noticing a still pane.***
+
 **A MESSAGE IS ADDRESSED TO A SESSION; AN ARTIFACT IS ADDRESSED TO THE WORK. SESSIONS ARE
 THE THING THAT KEEPS CHANGING.** *(Ruled 2026-09-04. **The co-architect found it, and only
 because Scotty said the panes looked dead.**)*

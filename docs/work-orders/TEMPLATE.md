@@ -85,6 +85,23 @@ ships — was travelling by the one channel we already knew does not survive.**
 
 > **A review is an artifact. If it exists only in a context window, it does not exist.**
 
+### 9d. COMMIT BEFORE YOU COMPACT, AND SAY WHAT IS NOT DONE
+
+*Added 2026-09-04, after a session compacted mid-task, said "Starting that now", and did not
+start.*
+
+**Compaction refreshes every liveness signal a watchdog can read** — the transcript moved,
+the clock reset — **while ending the turn that was going to do the work.** No detector of the
+"has anything happened" kind can see it.
+
+**Before compacting mid-task:** commit the analysis, the measurement, the partial feedback
+doc — **whatever the next turn would otherwise have to redo** — and **write in it what is NOT
+yet done.** Then the resuming context reads its own artifact instead of needing the operator
+to repeat the task.
+
+*This is not extra work. It is the artifact discipline already in §9b, applied to the one
+reader who is always context-less: **yourself, one compaction later.***
+
 ### 9c. CHECK THE FENCE WITH THREE DOTS, NOT TWO
 
 *Added 2026-09-04, after the builder found and disclosed that every fence check they had run
