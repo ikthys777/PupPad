@@ -59,3 +59,58 @@ distinct graph, slider, playback, with no send control in the DOM.
 **Device fidelity.** All driving was desktop Chromium at 869×412 with `hasTouch`, not the
 fleet. Unchanged from every previous round, and item 5's human test is still what settles
 the things a harness cannot.
+
+---
+
+# ROUND 2 — CC-A's review of PR #66
+
+**All six claims verified at source before acting. All six reproduce.** The deletion itself
+was not in question in either round: **every finding across both rounds has been about a
+witness or a sentence.**
+
+## Three holes, all in the witnesses for this work order's headline acceptance
+
+| # | finding | disposition |
+|---|---|---|
+| **W1** | **§24's "proved nothing" guard was a SUM.** `drew = strokes + stamps` with `drew >= 2` — satisfied by **two pen strokes**. Rename the branch value `'stamp'` to `'sticker'` (an ordinary refactor, no transport touched) and the stamp gesture degrades into a second stroke: `1+1 === 2+0`, the guard stays quiet, and a live `{lat,lng,did}` broadcast on the stamp path ships green. **And its own failure message named the requirement it could not enforce** — *"a plant on it is invisible if nothing stamps"*. | **FIXED** — strokes and stamps counted and asserted **separately**, with their own messages. Plant (c) demonstrates it. |
+| **W2** | **§24 had NO WebSocket witness at all.** `page.on('request')` does not fire for sockets, and §23 restored `window.WebSocket` in its own last line — so **under `--only=24`, which is exactly how the controls harness runs it, nothing was watching.** The isolation mode that proves a section can see was the mode in which it could not. | **FIXED** — §24 installs and restores **its own** constructor hook. Plant (a) opens a raw socket carrying the coordinates. |
+| **W3** | **§24's REST detection was borrowed from a global §23 forgot to restore.** §24 never set `supabaseUrl`, so `supabaseFetch` resolved against `''`, went same-origin, and the outbound filter discarded it. A `supabaseFetch('pup_pad_xmarks','POST',{lat,lng,device_id})` on the stamp path passed green. | **FIXED** — §24 sets and restores **its own** `supabaseUrl`/`supabaseKey`. Plant (b) writes the coordinates over REST. |
+
+**None of the three plants restores a deleted symbol name**, so a source grep sees nothing
+in any of them. That is the point: *"no transport was used" and "no transport is possible"
+are different claims, and only the second is what a deletion buys.*
+
+## The cheaper ones, all taken
+
+- **§23's piggyback assertion could not reach its own state** — `cameraChannel` is null
+  throughout a voice session, so *"sent a broadcast on an existing channel"* was
+  unreachable. **A plant that applies is not a plant that reproduces, in this very file,
+  one work order after we wrote that rule.** The arrange now opens the camera channel and
+  resets the recorders after it, so the arrange's own channel is not counted as the panel's.
+- **And the arrange could kill the check.** A plant that breaks `joinCameraChannel` threw an
+  uncaught `TypeError` — a stack trace where a FAIL line belonged, **the third time this
+  file has learned that lesson**. A failed arrange is now a reportable condition.
+- **§23's drive was record/play/exit with no preset tap**, so a transport planted in a
+  preset handler was never executed. Preset and slider added.
+- **§23 left four stubs installed and restored one** — which this file's own prose forbids,
+  and which is exactly how §24 came to depend on §23 having run first. All restored.
+- **Check 24's map row was a hardcoded name list** (a working transport under different
+  names passed it) **and its geolocation sub-assertion was a browser API no mutation of
+  this app could turn red.** Both founded on effect: the row now **opens the map** with a
+  recording client and a spied geolocation and asks what it did — zero channels, zero
+  sends, zero sockets, while geolocation is still called and the marker still placed. Its
+  plant became a **working** transport under a new name, because a dead `var mapChannel`
+  takes no channel and the row is right to ignore it.
+- **Two byte-identical §7 plants** — one removed.
+
+## The sentence, and who owns it
+
+CC-A: *"The sentence was mine and you were right to kill it."* It traced `geolocation` to
+`setView` and stopped **one layer short of what `setView` causes**. Recorded there as
+architecture §6.1 member 7, second occurrence. **What is worth keeping from both sides: the
+tracing was correct and the conclusion was still wrong, because the question was not "what
+does this variable reach" but "what does this variable cause".**
+
+Two rules from this work order are now architecture §5: **a stub is legitimate for
+BEHAVIOUR and illegitimate for EGRESS**, and **a suite can stop exercising a transport
+without ever forbidding one.**

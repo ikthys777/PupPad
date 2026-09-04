@@ -169,18 +169,67 @@ try {
    * because the thing it asserted is GONE rather than because a property holds, which is
    * the exact failure that work order names. The row below replaces it with the stronger
    * claim: there is no handle to release. */
-  const noChannel = await page.evaluate(() => ({
-    handle: typeof window.mapChannel,
-    join: typeof window.joinMapChannel,
-    sends: ['broadcastMapStroke', 'broadcastMapStamp', 'broadcastMapClear'].filter((f) => typeof window[f] === 'function'),
-    geo: typeof navigator.geolocation.watchPosition === 'function',
-  }));
-  if (noChannel.handle !== 'undefined' || noChannel.join !== 'undefined' || noChannel.sends.length)
-    bad('the map transport still exists',
-      `mapChannel=${noChannel.handle}, joinMapChannel=${noChannel.join}, senders=[${noChannel.sends.join(', ')}] — it carried REAL WGS84 coordinates beside a stable device id on an unscoped global channel`);
-  else if (!noChannel.geo) bad('navigator.geolocation is gone too',
-    'the map is meant to keep knowing where it is and stop telling anyone — local FUNCTION, not local ignorance');
-  else ok('the map has no channel, no join and no senders — and still has geolocation');
+  /* BY EFFECT, NOT BY A LIST OF NAMES.
+   *
+   * This asked `typeof window.broadcastMapStroke` against a HARDCODED list — so a working
+   * transport under different names passed it, which is a name search wearing a runtime
+   * costume. And its geolocation half read `typeof navigator.geolocation.watchPosition`:
+   * A BROWSER API THAT NO MUTATION OF THIS APP CAN TURN RED, so it asserted nothing at all.
+   *
+   * Both are founded on effect now: OPEN THE MAP with a recording client and a spied
+   * geolocation, and ask what it did. Leaflet is stubbed minimally — the map only has to
+   * get far enough to take a channel, which it did before any Leaflet call. */
+  const noChannel = await page.evaluate(async () => {
+    const asks = [], sends = [];
+    let geoCalls = 0;
+    const realGet = window.getSupabaseClient, realCfg = window.isSupabaseConfigured;
+    const realL = window.L, realGeo = navigator.geolocation;
+    const RealWS = window.WebSocket;
+    const sockets = [];
+    window.WebSocket = function (u, pr) { sockets.push(String(u)); return new RealWS(u, pr); };
+    window.WebSocket.prototype = RealWS.prototype;
+    window.getSupabaseClient = () => ({
+      channel: (n) => { asks.push(n);
+        return { on() { return this; }, subscribe() { return this; }, send(m) { sends.push(m && m.event); return this; } }; },
+      removeChannel() {},
+    });
+    window.isSupabaseConfigured = () => true;
+    const ll = (a, b) => (typeof a === 'object' ? { lat: a.lat, lng: a.lng } : { lat: a, lng: b });
+    const off = { enable() {}, disable() {} };
+    window.L = {
+      map: () => ({ setView() { return this; }, on() { return this; }, remove() {},
+                    latLngToContainerPoint: () => ({ x: 0, y: 0 }),
+                    containerPointToLatLng: () => ll(0, 0),
+                    dragging: off, touchZoom: off, doubleClickZoom: off, scrollWheelZoom: off }),
+      tileLayer: () => ({ addTo() { return this; } }), divIcon: () => ({}),
+      marker: () => ({ addTo() { return this; }, setLatLng() { return this; }, getLatLng: () => ll(0, 0) }),
+      latLng: ll, point: (x, y) => ({ x, y }),
+    };
+    const fix = { coords: { latitude: 1, longitude: 2 } };
+    Object.defineProperty(navigator, 'geolocation', { configurable: true, value: {
+      getCurrentPosition: (ok2) => { geoCalls++; setTimeout(() => ok2(fix), 0); },
+      watchPosition: (ok2) => { geoCalls++; setTimeout(() => ok2(fix), 0); return 3; },
+      clearWatch() {},
+    }});
+    try {
+      openTreasureMap();
+      await new Promise((r) => setTimeout(r, 250));
+      const marker = !!window.mapLocationMarker;
+      closeTreasureMap();
+      return { asks, sends, sockets, geoCalls, marker };
+    } finally {
+      window.getSupabaseClient = realGet; window.isSupabaseConfigured = realCfg;
+      window.L = realL; window.WebSocket = RealWS;
+      Object.defineProperty(navigator, 'geolocation', { configurable: true, value: realGeo });
+    }
+  });
+  if (noChannel.asks.length || noChannel.sends.length || noChannel.sockets.length)
+    bad('opening the map still takes a transport',
+      `channels=[${noChannel.asks.join(', ')}], sends=[${noChannel.sends.join(', ')}], sockets=${noChannel.sockets.length} — it carried REAL WGS84 coordinates beside a stable device id on an unscoped global channel`);
+  else if (!noChannel.geoCalls) bad('the map never asked for a location',
+    'it is meant to keep knowing where it is and stop telling anyone — local FUNCTION, not local ignorance');
+  else if (!noChannel.marker) bad('the map asked for a location and did not place the marker');
+  else ok(`opening the map takes NO channel, sends nothing and opens no socket, while still calling geolocation ${noChannel.geoCalls}x and placing the marker`);
 
   const panels = [
     { name: 'camera', close: 'closeCamera', handle: 'cameraChannel', overlay: 'cameraOverlay' },

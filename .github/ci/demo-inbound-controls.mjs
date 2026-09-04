@@ -118,9 +118,13 @@ plan(5, 'closeCanvas stops releasing', {
  * demonstrating is the transport COMING BACK -- which is what a future edit would do by
  * accident, and what the check must catch. Re-declaring the handle is enough: the row
  * asserts there is no handle, no join and no senders. */
+/* THE ROW IS FOUNDED ON EFFECT NOW, so the plant must be a WORKING transport rather than
+ * a declared variable -- a dead `var mapChannel` takes no channel and the row is right to
+ * ignore it. This one joins for real, under a name nothing greps for. */
 plan(5, 'the map transport is re-introduced', {
-  mutate: (s) => sub(s, "var mapStrokes = [];", "var mapChannel = null;\nvar mapStrokes = [];"),
-  expectText: 'the map transport still exists',
+  mutate: (s) => sub(s, "  doSound('chime');\n\n  var overlay = document.createElement('div');\n  overlay.id = 'mapOverlay';",
+    "  doSound('chime');\n  try { var mc = getSupabaseClient(); if (mc) mc.channel('puppad-map-v2').subscribe(function(){}); } catch (e) {}\n\n  var overlay = document.createElement('div');\n  overlay.id = 'mapOverlay';"),
+  expectText: 'opening the map still takes a transport',
 });
 
 console.log(`  ${QUEUE.length} planted defects, run one at a time.\n`);

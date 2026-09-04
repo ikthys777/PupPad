@@ -993,13 +993,36 @@ try {
         window.isSupabaseConfigured = () => true;
       });
       const before = requests.length;
-      await page.evaluate(() => { closeVoice(); });
+      /* AN OPEN CHANNEL TO PIGGYBACK ON, or the piggyback assertion cannot reach its own
+       * state. `cameraChannel` is null throughout a voice session, so "the panel SENT a
+       * broadcast on an existing channel" was unreachable — a plant that applies is not a
+       * plant that reproduces, in this very file, one work order after we wrote that rule. */
+      /* THE ARRANGE MUST NOT BE ABLE TO KILL THE CHECK. A plant that breaks
+       * joinCameraChannel made this throw an uncaught TypeError — a stack trace where a
+       * FAIL line belonged, which is the third time this file has learned that lesson. A
+       * failed arrange is a REPORTABLE condition, not an exception. */
+      const staged = await page.evaluate(() => {
+        closeVoice(); window.cameraChannel = null;
+        let err = null;
+        try { joinCameraChannel(); } catch (e) { err = String((e && e.message) || e); }
+        /* The arrange's OWN channel must not be counted as the voice panel's. Reset after
+         * opening it, so what follows measures only the voice session. */
+        window.__chanAsks = []; window.__sends = []; window.__sockets = [];
+        return { err, channel: !!window.cameraChannel };
+      });
+      if (staged.err) bad('the arrange could not open a channel to piggyback on', `joinCameraChannel threw: ${staged.err} — the piggyback assertion below cannot reach its own state`);
       await finger('.pad-btn[data-id="0"]');
       await page.waitForTimeout(250);
       await finger('#voiceRecBtn');
       await page.waitForTimeout(900);
       await finger('#voiceRecBtn');
       await page.waitForTimeout(900);
+      /* A PRESET TAP, because the drive was record/play/exit and a transport planted in a
+       * preset handler was never executed. */
+      await finger('.voice-preset[data-preset="robot"]');
+      await page.waitForTimeout(300);
+      await finger('#voiceSlider');
+      await page.waitForTimeout(300);
       await finger('#voicePlayBtn');
       await page.waitForTimeout(400);
       const st = await page.evaluate(() => window.__voice.state());
@@ -1035,8 +1058,21 @@ try {
       else if (!control.sockets.length) bad('the socket recorder never fired for a socket that WAS opened',
         'page.on("websocket") misses a connection that fails before the handshake, which is exactly what CI produces');
       else ok(`all three recorders fire on paths that do the thing (camera took ${control.asks.join(', ')}, sent ${control.sends.join(', ')}, ${control.sockets.length} socket) — the zeros above are measurements, not silences`);
-      await page.evaluate(() => { if (window.__realWS) window.WebSocket = window.__realWS; });
-    } finally { page.off('request', onReq); }
+    } finally {
+      page.off('request', onReq);
+      /* EVERY STUB RESTORED. This section installed four globals and put back one, which
+       * this file's own prose forbids — and the one it did not restore (`supabaseUrl`) was
+       * then silently depended on by §24, so §24's REST detection worked only when §23 had
+       * run first. A section that leaves state behind is a section the next one's result
+       * depends on. */
+      await page.evaluate(() => {
+        if (window.__realWS) { window.WebSocket = window.__realWS; delete window.__realWS; }
+        delete window.getSupabaseClient; delete window.isSupabaseConfigured;
+        window.supabaseUrl = ''; window.supabaseKey = '';
+        window.cameraChannel = null;
+        delete window.__chanAsks; delete window.__sends; delete window.__sockets;
+      });
+    }
   }
 
   /* ---- §24. THE MAP KNOWS WHERE IT IS AND TELLS NOBODY ------------------
@@ -1067,7 +1103,24 @@ try {
     page.on('request', onReq);
     try {
       const res = await page.evaluate(async () => {
-        const asks = [], sends = [];
+        const asks = [], sends = [], sockets = [];
+        /* ITS OWN WITNESSES, BECAUSE BORROWED ONES ARE NOT WITNESSES.
+         *
+         * §24 had NO socket hook at all — page.on('request') does not fire for sockets,
+         * and §23 restores window.WebSocket in its own last line, so under --only=24 (which
+         * is exactly how the controls harness runs it) a raw socket carrying {lat,lng,did}
+         * on the stamp path passed green. THE ISOLATION MODE THAT PROVES A SECTION CAN SEE
+         * WAS THE MODE IN WHICH IT COULD NOT.
+         *
+         * And it never set `supabaseUrl`, so `supabaseFetch` resolved against '' — same
+         * origin — and the outbound filter discarded it. A REST write of the child's
+         * coordinates walked straight past. Both are set here and restored below. */
+        const RealWS = window.WebSocket;
+        window.WebSocket = function (u, pr) { sockets.push(String(u)); return new RealWS(u, pr); };
+        window.WebSocket.prototype = RealWS.prototype;
+        const realUrl = window.supabaseUrl, realKey = window.supabaseKey;
+        window.supabaseUrl = 'https://map-probe.invalid';
+        window.supabaseKey = 'probe-key';
         const realGet = window.getSupabaseClient, realCfg = window.isSupabaseConfigured;
         window.getSupabaseClient = () => ({
           channel: (n) => { asks.push(n);
@@ -1112,7 +1165,7 @@ try {
           const tracked = !!window.mapLocationMarker;
           /* Draw, stamp and clear through the app's OWN handlers. */
           const cv = document.getElementById('mapDrawCanvas') || document.querySelector('#mapOverlay canvas');
-          let drew = 0;
+          let strokes = 0, stamps = 0;
           if (cv) {
             window.mapIsDrawMode = true;
             const ev = (t, x, y) => cv.dispatchEvent(new PointerEvent(t, { bubbles: true, clientX: x, clientY: y, pointerId: 1 }));
@@ -1122,18 +1175,28 @@ try {
              * stamp is the one that carried {lat, lng, did} — the payload this whole work
              * order is about. A plant on the stamp broadcast stayed green because nothing
              * ever stamped. */
+            /* COUNTED SEPARATELY, BECAUSE A SUM CANNOT TELL YOU WHICH PATH RAN.
+             * `drew = strokes + stamps >= 2` was satisfied by TWO PEN STROKES: rename the
+             * branch value 'stamp' to 'sticker' — an ordinary refactor — and the stamp
+             * gesture degrades into a second stroke, 1+1 === 2+0, and the section passes
+             * with a live {lat,lng,did} broadcast on the stamp path. Its own failure
+             * message named the requirement it could not enforce. */
+            const beforeStamps = (window.mapStamps || []).length;
             window.mapDrawTool = 'stamp';
             ev('pointerdown', 200, 200); ev('pointerup', 200, 200);
-            drew = (window.mapStrokes || []).length + (window.mapStamps || []).length;
+            strokes = (window.mapStrokes || []).length;
+            stamps = (window.mapStamps || []).length - beforeStamps;
           }
           const clearBtn = document.getElementById('mapClearBtn');
           if (clearBtn) clearBtn.click();
           closeTreasureMap();
-          return { opened, tracked, drew, asks, sends, tiles, canvas: !!cv };
+          return { opened, tracked, strokes, stamps, asks, sends, sockets, tiles, canvas: !!cv };
         } finally {
           window.L = realL;
           Object.defineProperty(navigator, 'geolocation', { configurable: true, value: realGeo });
           window.getSupabaseClient = realGet; window.isSupabaseConfigured = realCfg;
+          window.WebSocket = RealWS;
+          window.supabaseUrl = realUrl; window.supabaseKey = realKey;
         }
       });
 
@@ -1142,13 +1205,16 @@ try {
       else if (!res.tracked) bad('mapLocationMarker did not track the fix',
         'geolocation must STAY — the map knows where it is; it just stops telling anyone');
       else if (!res.canvas) bad('the drawing canvas was not found', 'the draw and stamp paths were never driven — this section proved nothing');
-      else if (res.drew < 2) bad(`drawing produced only ${res.drew} mark(s)`, 'BOTH the stroke path and the stamp path must be driven — the stamp is the one that carried {lat, lng, did}, and a plant on it is invisible if nothing stamps');
+      else if (!res.strokes) bad('the STROKE path was never driven', 'this section proved nothing about it');
+      else if (!res.stamps) bad('the STAMP path was never driven',
+        'the stamp is the one that carried {lat, lng, did} — and a plant on it is invisible if nothing stamps. A SUM CANNOT TELL YOU WHICH PATH RAN');
       else if (res.asks.length) bad(`the map asked for ${res.asks.length} Supabase channel(s)`, res.asks.join(', '));
       else if (res.sends.length) bad(`the map SENT ${res.sends.length} broadcast(s)`, res.sends.join(', '));
+      else if (res.sockets.length) bad(`${res.sockets.length} WebSocket(s) opened while drawing on the map`, res.sockets.slice(0, 4).join(' | '));
       else if (outbound.length) bad(`${outbound.length} outbound request(s) while drawing on the map`, outbound.slice(0, 4).join(' | '));
       else if (!res.tiles.length) bad('the tile layer was not created', 'this section cannot speak to the tile egress it exists to name — and the map would show no map');
       else {
-        ok(`the map opens, tracks a real fix, draws ${res.drew} mark(s) and clears — ZERO channels, ZERO broadcasts, ZERO PupPad outbound. It no longer tells another device where the child is`);
+        ok(`the map opens, tracks a real fix, draws ${res.strokes} stroke(s) AND ${res.stamps} stamp(s) and clears — ZERO channels, ZERO broadcasts, ZERO sockets, ZERO PupPad outbound. It no longer tells another device where the child is`);
         console.log(`        AND IT IS NOT SILENT, WHICH THIS SECTION REFUSES TO CERTIFY PAST: the tile layer is`);
         console.log(`        ${res.tiles[0]}`);
         console.log('        — a tile URL IS a coordinate, and at zoom 16 it bounds the child to ~500 m. Stubbed');
