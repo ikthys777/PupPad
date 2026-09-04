@@ -1679,9 +1679,10 @@ function closeCamera() {
 }
 
 /* ============================ THE VOICE PANEL — PUP-WO-0701 §S2 =============
- * Record a short clip, change the voice, hear it back, send it. The pieces were all
- * present: getUserMedia is live in the camera path, ONE AudioContext is live for the
- * console cues, and the broadcast transport shipped in part 1. This is composition.
+ * Record a short clip, change the voice, hear it back. IT USED TO SEND, AND SINCE
+ * PUP-WO-0702 IT DOES NOT: Scotty ruled the audience and the answer was not "scope the
+ * channel" but "there is no channel." The pieces were all present: getUserMedia is live in
+ * the camera path and ONE AudioContext is live for the console cues. This is composition.
  *
  * §S.1 RULED THAT NOTHING IS STORED. There is no table, no Cache API entry and no
  * localStorage key here, and that is the whole retention mechanism: NOTHING DELETES IT
@@ -1830,18 +1831,18 @@ function buildVoiceGraph(ctx, buffer, presetId, value) {
   return { source: src, out: out, nodes: nodes };
 }
 
-/* How long the rendered result runs, given that `up`/`down` change the clip's duration
- * and `cave` adds a decaying tail. Used by the send render and by check 26. */
-function voiceRenderSeconds(buffer, presetId, value) {
-  var d = buffer.duration;
-  if (presetId === 'up' || presetId === 'down') {
-    return d / clampNum(value, VOICE_RATE_MIN, VOICE_RATE_MAX) + 0.05;
-  }
-  if (presetId === 'cave') {
-    return d + clampNum(value, CAVE_DELAY_MIN, CAVE_DELAY_MAX) * 8 + 0.05;
-  }
-  return d + 0.05;
-}
+/* `voiceRenderSeconds` LIVED HERE AND HAS BEEN MOVED INTO CHECK 26.
+ *
+ * It computed how long a preset's RENDERED output runs, and its only app caller was the
+ * send render. PUP-WO-0702 removed that, leaving a function exported to a check and called
+ * by nothing in the app -- which is the same dead limb this file just deleted an audio
+ * branch to avoid, and a comment saying "the check drives the shipping graph rather than a
+ * copy of it" would have been false of it.
+ *
+ * `buildVoiceGraph` is still shared, because live playback still calls it and the check
+ * measuring a COPY of it would be agreeing with itself. Duration is different: nothing
+ * ships that computes it, so there is no shipping formula for a check to agree with, and
+ * the check owning its own is honest rather than duplicative. */
 
 function voiceTrack(node) { voiceNodes.push(node); return node; }
 
@@ -2335,10 +2336,10 @@ function closeVoice() {
   doSound('blip');
 }
 
-/* The check drives the shipping graph rather than a copy of it — see buildVoiceGraph. */
+/* The check drives the SHIPPING graph rather than a copy of it — see buildVoiceGraph,
+ * which live playback calls. Nothing else here is exported for a check's convenience. */
 window.__voice = {
   buildGraph: buildVoiceGraph,
-  renderSeconds: voiceRenderSeconds,
   presets: VOICE_PRESETS,
   clamp: clampNum,
   MAX_RECORD_MS: MAX_RECORD_MS,
@@ -2403,8 +2404,24 @@ var MAP_COLORS = ['#FF4444','#FBBF24','#34D399','#60A5FA','#A78BFA','#F472B6','#
  *
  * `navigator.geolocation` STAYS, and that distinction is the whole work order. Verified
  * at source: getCurrentPosition and watchPosition set `treasureMap.setView` and
- * `mapLocationMarker` and nothing else. THE MAP STILL KNOWS WHERE IT IS AND STOPS TELLING
- * ANYONE -- local function, not local ignorance. */
+ * `mapLocationMarker` and nothing else.
+ *
+ * WHAT THIS DELETION DOES AND DOES NOT BUY -- STATED EXACTLY, BECAUSE THE FIRST DRAFT OF
+ * THIS COMMENT OVERCLAIMED AND AN ADVERSARIAL PASS CAUGHT IT.
+ *
+ * BOUGHT: the map no longer tells ANOTHER PUPPAD DEVICE where the child is. No channel,
+ * no broadcast, no coordinates on the wire, no device id beside them.
+ *
+ * NOT BOUGHT: `L.tileLayer` below still fetches OpenStreetMap tiles, and A TILE URL IS A
+ * COORDINATE. Re-centred on the fix at zoom 16, the requested tile bounds the child to
+ * roughly a 500 m square -- and `maxZoom: 19` takes that to about 60 m if they pinch in.
+ * OSM's CDN sees those paths beside the client IP. That egress is PRE-EXISTING and is
+ * already logged as an open northstar re-ratification for Scotty in docs/architecture.md;
+ * this work order neither created it nor closes it.
+ *
+ * So: "local function, not local ignorance" is true, and "stops telling anyone" WAS NOT.
+ * It stops telling other PupPad devices. Check 26 §24 asserts the first clause and names
+ * the second rather than certifying past it. */
 
 /* convert lat/lng to canvas pixel via Leaflet */
 function latLngToPixel(lat, lng) {

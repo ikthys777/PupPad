@@ -345,9 +345,15 @@ plan(24, 'the map broadcasts a stamp again — real coordinates on a global chan
 /* AND GEOLOCATION MUST NOT BE THE THING THAT GETS DELETED. "Local function only" means the
  * map still knows where it is; removing the tracking is the wrong fix in the other
  * direction and the section must catch that too. */
+/* BOTH CREATION PATHS, because getCurrentPosition and watchPosition each create the
+ * marker and either alone keeps the map tracking. Removing one is defence in depth
+ * working, and a plant that removes one half correctly reports green. */
 plan(24, 'the location marker is removed along with the transport', {
-  mutate: (s) => sub(s, "    mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);\n  }, function() {",
-    "  }, function() {"),
+  mutate: (s) => sub(sub(s,
+      "    mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);\n  }, function() {",
+      "  }, function() {"),
+      "    if (mapLocationMarker) mapLocationMarker.setLatLng([lat, lng]);\n    else mapLocationMarker = L.marker([lat, lng], {icon: pawIcon}).addTo(treasureMap);",
+      "    if (mapLocationMarker) mapLocationMarker.setLatLng([lat, lng]);"),
   expectText: 'did not track the fix',
 });
 

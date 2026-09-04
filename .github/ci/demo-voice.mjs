@@ -33,6 +33,21 @@ const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m, d) => { failures.push({ m, d }); console.log(`  FAIL  ${m}`); if (d) console.log(`        ${d}`); };
 const run = (n) => !ONLY || ONLY.split(',').includes(String(n));
 
+/* MOVED OUT OF index.html BY PUP-WO-0702. It computed how long a preset's rendered output
+ * runs, and its only app caller was the send render. With that gone it was a function the
+ * app exported and never called — a dead limb, by the same rule that deleted the audio
+ * branch of the gate. It lives here now: nothing ships that computes duration, so there is
+ * no shipping formula for this check to agree with, and owning it is honest rather than
+ * duplicative. The GRAPH is still driven from the app, because live playback calls it. */
+function renderSeconds(buffer, presetId, value) {
+  const P = { up: [0.55, 2.20], down: [0.55, 2.20], cave: [0.06, 0.40] };
+  const clamp = (v, lo, hi) => (!isFinite(Number(v)) ? lo : Math.min(Math.max(Number(v), lo), hi));
+  const d = buffer.duration;
+  if (presetId === 'up' || presetId === 'down') return d / clamp(value, ...P.up) + 0.05;
+  if (presetId === 'cave') return d + clamp(value, ...P.cave) * 8 + 0.05;
+  return d + 0.05;
+}
+
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 const server = createServer(async (req, res) => {
   try {
@@ -106,8 +121,9 @@ try {
 
   /* ---- §2. ACCEPTANCE 3 — FOUR PRESETS, MEASURED ------------------------- */
   if (run(2)) {
-    const spec = await page.evaluate(async () => {
+    const spec = await page.evaluate(async (RS_SRC) => {
       if (!window.__voice || !window.__voice.buildGraph) return { missing: true };
+      const RS = new Function('return ' + RS_SRC)();
       const SR = 24000, DUR = 0.5;
       /* A voice-like source: a fundamental and two harmonics. */
       function makeBuf(ctx) {
@@ -142,7 +158,7 @@ try {
       async function render(id, value) {
         const probe = new OfflineAudioContext(1, 8, SR);
         const buf = makeBuf(probe);
-        const secs = window.__voice.renderSeconds(buf, id, value);
+        const secs = RS(buf, id, value);
         const off = new OfflineAudioContext(1, Math.ceil(SR * secs), SR);
         const src = makeBuf(off);
         const g = window.__voice.buildGraph(off, src, id, value);
@@ -164,7 +180,7 @@ try {
         pairs.push({ a: ps[i].id, b: ps[j].id, d: cosDist(rendered[ps[i].id].spec, rendered[ps[j].id].spec) });
       }
       return { nullDist, pairs, secs: ps.map((p) => ({ id: p.id, s: rendered[p.id].secs })) };
-    });
+    }, renderSeconds.toString());
 
     if (spec.missing) bad('window.__voice.buildGraph does not exist', 'the check cannot drive the shipping graph');
     else {
@@ -242,7 +258,8 @@ try {
      * SUM of dry and every echo gets. Measured on the first build: peak 1.78 against a 0.70
      * source, clipping on seven of nine cave slider positions. Swept across every preset's
      * whole range, because "a number is only correct at the value it was measured at". */
-    const peaks = await page.evaluate(async () => {
+    const peaks = await page.evaluate(async (RS_SRC) => {
+      const RS = new Function('return ' + RS_SRC)();
       const SR = 24000, DUR = 0.4;
       const out = [];
       for (const p of window.__voice.presets) {
@@ -253,7 +270,7 @@ try {
             for (let k = 0; k < d.length; k++) { const t = k / SR;
               d[k] = 0.5 * Math.sin(2 * Math.PI * 200 * t) + 0.3 * Math.sin(2 * Math.PI * 400 * t) + 0.2 * Math.sin(2 * Math.PI * 800 * t); }
             return b; };
-          const secs = window.__voice.renderSeconds(mk(probe), p.id, v);
+          const secs = RS(mk(probe), p.id, v);
           const off = new OfflineAudioContext(1, Math.ceil(SR * secs), SR);
           const g = window.__voice.buildGraph(off, mk(off), p.id, v);
           g.out.connect(off.destination); g.source.start();
@@ -265,7 +282,7 @@ try {
         }
       }
       return out;
-    });
+    }, renderSeconds.toString());
     const clipped = peaks.filter((x) => x.peak > 1);
     const silent = peaks.filter((x) => x.rms < 0.005);
     if (clipped.length) bad(`${clipped.length} of ${peaks.length} preset/slider positions CLIP (peak > 1)`,
@@ -466,7 +483,20 @@ try {
   if (run(8)) {
     const scenario = async (unconfigured) => page.evaluate(async (off) => {
       const realGet = window.getSupabaseClient, realCfg = window.isSupabaseConfigured;
+      /* BOTH SIDES ARE STUBBED, and that is the fix rather than tidiness. Only the
+       * unconfigured side used to be forced, so the "configured" run used whatever CI
+       * happened to have — which is nothing. Two unconfigured runs are identical for a
+       * reason that has nothing to do with the property, and a plant that added a
+       * configured-only control stayed green because the control never appeared in
+       * either run. AN EQUALITY BETWEEN TWO COPIES OF THE SAME STATE PROVES NOTHING. */
       if (off) { window.getSupabaseClient = () => null; window.isSupabaseConfigured = () => false; }
+      else {
+        window.isSupabaseConfigured = () => true;
+        window.getSupabaseClient = () => ({
+          channel: () => ({ on() { return this; }, subscribe() { return this; }, send() {} }),
+          removeChannel() {},
+        });
+      }
       try {
         closeVoice();
         openVoice();
@@ -920,20 +950,44 @@ try {
    * asks a Supabase client for. The panel is then driven end to end with a finger. */
   if (run(23)) {
     const requests = [];
-    const sockets = [];
     const onReq = (r) => requests.push(r.url());
-    const onWs = (w) => sockets.push(w.url());
     page.on('request', onReq);
-    page.on('websocket', onWs);
     try {
+      /* THE SOCKET WITNESS IS THE CONSTRUCTOR, NOT page.on('websocket').
+       *
+       * Playwright's event fires on a CONNECTED socket. A connection that fails before
+       * the handshake — which is exactly what CI produces, offline, against an
+       * unresolvable Supabase host — emits nothing. Measured: the event recorded 0 while
+       * the page console showed three `wss://…supabase.co/realtime/v1/websocket`
+       * failures, and a constructor hook caught all three. "Zero sockets" from that event
+       * was a SILENCE, not a measurement.
+       *
+       * And `supabaseUrl` is '' in CI, so `supabaseFetch` resolves against the test origin
+       * and the same-origin filter below discarded it. The stub therefore hands the app a
+       * REAL-LOOKING off-origin URL, so a REST-shaped re-add is visible as outbound. */
+      await page.evaluate(() => {
+        window.__sockets = [];
+        const RealWS = window.WebSocket;
+        window.WebSocket = function (u, p) { window.__sockets.push(String(u)); return new RealWS(u, p); };
+        window.WebSocket.prototype = RealWS.prototype;
+        window.__realWS = RealWS;
+        window.supabaseUrl = 'https://voice-probe.invalid';
+        window.supabaseKey = 'probe-key';
+      });
       /* A REAL client that records, rather than a null one. A null client makes "no
        * channel was created" true for the wrong reason — the app never had one to ask.
        * This one would hand over a channel if anything asked. */
       await page.evaluate(() => {
         window.__chanAsks = [];
+        window.__sends = [];
         window.getSupabaseClient = () => ({
           channel: (name) => { window.__chanAsks.push(name);
-            return { on() { return this; }, subscribe() { return this; }, send() {} }; },
+            /* `send` RECORDS. An empty send() meant a re-add that piggybacked on the
+             * camera's or canvas's ALREADY-OPEN channel asked for zero new channels and
+             * went unseen — the suite would have stopped exercising a transport without
+             * forbidding one. */
+            return { on() { return this; }, subscribe() { return this; },
+                     send(m) { window.__sends.push(m && m.event); return this; } }; },
           removeChannel() {},
         });
         window.isSupabaseConfigured = () => true;
@@ -949,33 +1003,40 @@ try {
       await finger('#voicePlayBtn');
       await page.waitForTimeout(400);
       const st = await page.evaluate(() => window.__voice.state());
-      const asks = await page.evaluate(() => window.__chanAsks.slice());
+      const probe = await page.evaluate(() => ({ asks: window.__chanAsks.slice(), sends: window.__sends.slice(), sockets: window.__sockets.slice() }));
       await page.evaluate(() => closeVoice());
 
       const outbound = requests.slice(before).filter((u) => !u.startsWith(ORIGIN));
       if (st.stage !== 'ready') bad(`the panel did not record (stage ${st.stage})`, 'this section proved nothing — the drive must reach the code that would have sent');
-      else if (asks.length) bad(`the voice panel asked for ${asks.length} Supabase channel(s)`, asks.join(', '));
+      else if (probe.asks.length) bad(`the voice panel asked for ${probe.asks.length} Supabase channel(s)`, probe.asks.join(', '));
+      else if (probe.sends.length) bad(`the voice panel SENT ${probe.sends.length} broadcast(s) on an existing channel`, probe.sends.join(', '));
       else if (outbound.length) bad(`${outbound.length} outbound request(s) during a voice session`, outbound.slice(0, 4).join(' | '));
-      else if (sockets.length) bad(`${sockets.length} WebSocket(s) opened during a voice session`, sockets.slice(0, 4).join(' | '));
-      else ok(`record → play → exit asks for ZERO channels, makes ZERO outbound requests and opens ZERO sockets — with a client standing by that would have given one`);
+      else if (probe.sockets.length) bad(`${probe.sockets.length} WebSocket(s) opened during a voice session`, probe.sockets.slice(0, 4).join(' | '));
+      else ok(`record → play → exit asks for ZERO channels, sends ZERO broadcasts, makes ZERO outbound requests and opens ZERO sockets — with a client standing by that would have given one`);
 
       /* AND THE INSTRUMENT MUST SHOW IT CAN SEE. A witness that has never fired is not a
        * witness: the camera DOES take a channel, on the same recorder, in the same page. */
-      const camAsks = await page.evaluate(() => {
-        window.__chanAsks = [];
+      const control = await page.evaluate(() => {
+        window.__chanAsks = []; window.__sends = []; window.__sockets = [];
         window.cameraChannel = null;
         try { joinCameraChannel(); } catch (e) {}
-        const n = window.__chanAsks.slice();
+        try { broadcastPhoto('data:image/png;base64,AAAA'); } catch (e) {}
+        /* AND THE SOCKET WITNESS MUST BE SHOWN TO FIRE TOO. It never was: only the
+         * channel recorder had a control, so "zero sockets" was the one claim in this
+         * section with no evidence behind it. */
+        try { new WebSocket('ws://127.0.0.1:9/probe'); } catch (e) {}
+        const out = { asks: window.__chanAsks.slice(), sends: window.__sends.slice(), sockets: window.__sockets.slice() };
         window.cameraChannel = null;
-        return n;
+        return out;
       });
-      if (!camAsks.length) bad('the channel recorder never fired for a path that DOES take a channel',
+      if (!control.asks.length) bad('the channel recorder never fired for a path that DOES take a channel',
         'it cannot be trusted to report zero for voice — an instrument must demonstrate it would have seen the thing');
-      else ok(`the channel recorder does fire when a channel is taken (camera asked for ${camAsks.join(', ')}) — the zero above is a measurement, not a silence`);
-    } finally {
-      page.off('request', onReq);
-      page.off('websocket', onWs);
-    }
+      else if (!control.sends.length) bad('the broadcast recorder never fired for a path that DOES broadcast');
+      else if (!control.sockets.length) bad('the socket recorder never fired for a socket that WAS opened',
+        'page.on("websocket") misses a connection that fails before the handshake, which is exactly what CI produces');
+      else ok(`all three recorders fire on paths that do the thing (camera took ${control.asks.join(', ')}, sent ${control.sends.join(', ')}, ${control.sockets.length} socket) — the zeros above are measurements, not silences`);
+      await page.evaluate(() => { if (window.__realWS) window.WebSocket = window.__realWS; });
+    } finally { page.off('request', onReq); }
   }
 
   /* ---- §24. THE MAP KNOWS WHERE IT IS AND TELLS NOBODY ------------------
@@ -984,23 +1045,34 @@ try {
    * coordinates — Leaflet's own lat/lng — beside a stable device id, on an unscoped
    * global channel, from a map re-centred on getCurrentPosition at zoom 16.
    *
-   * LEAFLET IS A CDN SCRIPT AND IS UNREACHABLE IN CI, so it is stubbed. THAT IS
-   * LEGITIMATE AND THE BOUNDARY MATTERS: Leaflet is the DEPENDENCY, not the subject.
-   * Nothing below asserts anything about Leaflet. What is driven is the app's own
-   * pointer handlers and its own clear button, and what is asserted is that no channel is
-   * taken and nothing leaves the browser. A stub that returned wrong geometry would still
-   * exercise the same send paths, because the send paths do not depend on the geometry
-   * being right — they depend on existing. */
+   * LEAFLET IS A CDN SCRIPT AND IS UNREACHABLE IN CI, so it is stubbed — and THE FIRST
+   * VERSION OF THIS SECTION DEFENDED THAT STUB WITH AN ARGUMENT THAT WAS WRONG ON ITS OWN
+   * TERMS. It said "Leaflet is the dependency, not the subject; nothing below asserts
+   * anything about Leaflet" — while its outbound witness measured precisely Leaflet's
+   * traffic, which the stub had removed. So it reported ZERO OUTBOUND and passed a line
+   * reading "it tells nobody", about a map that fetches OpenStreetMap tiles.
+   *
+   * A TILE URL IS A COORDINATE. Re-centred on the fix at zoom 16 the requested tile bounds
+   * the child to roughly a 500 m square, and maxZoom 19 takes that to about 60 m. That
+   * egress is PRE-EXISTING and already logged as an open northstar re-ratification for
+   * Scotty; this work order neither created it nor closes it.
+   *
+   * SO THE SECTION ASSERTS THE CLAIM IT CAN AND NAMES THE ONE IT CANNOT. What it proves:
+   * no Supabase channel, no broadcast, no coordinates to another PupPad device. What it
+   * REFUSES to certify: that the map is silent. The tile layer is recorded and asserted to
+   * be PRESENT, so nobody can quietly conclude from a green run that nothing leaves. */
   if (run(24)) {
     const requests = [];
     const onReq = (r) => requests.push(r.url());
     page.on('request', onReq);
     try {
       const res = await page.evaluate(async () => {
-        const asks = [];
+        const asks = [], sends = [];
         const realGet = window.getSupabaseClient, realCfg = window.isSupabaseConfigured;
         window.getSupabaseClient = () => ({
-          channel: (n) => { asks.push(n); return { on() { return this; }, subscribe() { return this; }, send() {} }; },
+          channel: (n) => { asks.push(n);
+            return { on() { return this; }, subscribe() { return this; },
+                     send(m) { sends.push(m && m.event); return this; } }; },
           removeChannel() {},
         });
         window.isSupabaseConfigured = () => true;
@@ -1015,9 +1087,10 @@ try {
           dragging: off, touchZoom: off, doubleClickZoom: off, scrollWheelZoom: off,
         };
         const realL = window.L;
+        const tiles = [];
         window.L = {
           map: () => mapObj,
-          tileLayer: () => ({ addTo() { return this; } }),
+          tileLayer: (url) => { tiles.push(String(url)); return { addTo() { return this; } }; },
           divIcon: () => ({}),
           marker: (a) => ({ _ll: ll(a[0], a[1]), addTo() { return this; },
                             setLatLng(v) { this._ll = ll(v[0], v[1]); return this; },
@@ -1044,12 +1117,19 @@ try {
             window.mapIsDrawMode = true;
             const ev = (t, x, y) => cv.dispatchEvent(new PointerEvent(t, { bubbles: true, clientX: x, clientY: y, pointerId: 1 }));
             ev('pointerdown', 120, 120); ev('pointermove', 160, 150); ev('pointerup', 160, 150);
+            /* AND THE STAMP PATH, which the default tool ('pen') never reaches. A drive
+             * that exercises one of two send paths leaves the other untested, and the
+             * stamp is the one that carried {lat, lng, did} — the payload this whole work
+             * order is about. A plant on the stamp broadcast stayed green because nothing
+             * ever stamped. */
+            window.mapDrawTool = 'stamp';
+            ev('pointerdown', 200, 200); ev('pointerup', 200, 200);
             drew = (window.mapStrokes || []).length + (window.mapStamps || []).length;
           }
           const clearBtn = document.getElementById('mapClearBtn');
           if (clearBtn) clearBtn.click();
           closeTreasureMap();
-          return { opened, tracked, drew, asks, canvas: !!cv };
+          return { opened, tracked, drew, asks, sends, tiles, canvas: !!cv };
         } finally {
           window.L = realL;
           Object.defineProperty(navigator, 'geolocation', { configurable: true, value: realGeo });
@@ -1062,10 +1142,18 @@ try {
       else if (!res.tracked) bad('mapLocationMarker did not track the fix',
         'geolocation must STAY — the map knows where it is; it just stops telling anyone');
       else if (!res.canvas) bad('the drawing canvas was not found', 'the draw and stamp paths were never driven — this section proved nothing');
-      else if (!res.drew) bad('drawing produced no stroke or stamp', 'the send paths were never reached — this section proved nothing');
+      else if (res.drew < 2) bad(`drawing produced only ${res.drew} mark(s)`, 'BOTH the stroke path and the stamp path must be driven — the stamp is the one that carried {lat, lng, did}, and a plant on it is invisible if nothing stamps');
       else if (res.asks.length) bad(`the map asked for ${res.asks.length} Supabase channel(s)`, res.asks.join(', '));
+      else if (res.sends.length) bad(`the map SENT ${res.sends.length} broadcast(s)`, res.sends.join(', '));
       else if (outbound.length) bad(`${outbound.length} outbound request(s) while drawing on the map`, outbound.slice(0, 4).join(' | '));
-      else ok(`the map opens, tracks a real fix, draws ${res.drew} mark(s) and clears — ZERO channels, ZERO outbound. It knows where it is and tells nobody`);
+      else if (!res.tiles.length) bad('the tile layer was not created', 'this section cannot speak to the tile egress it exists to name — and the map would show no map');
+      else {
+        ok(`the map opens, tracks a real fix, draws ${res.drew} mark(s) and clears — ZERO channels, ZERO broadcasts, ZERO PupPad outbound. It no longer tells another device where the child is`);
+        console.log(`        AND IT IS NOT SILENT, WHICH THIS SECTION REFUSES TO CERTIFY PAST: the tile layer is`);
+        console.log(`        ${res.tiles[0]}`);
+        console.log('        — a tile URL IS a coordinate, and at zoom 16 it bounds the child to ~500 m. Stubbed');
+        console.log('        here for determinism; PRE-EXISTING, and an open northstar re-ratification for Scotty.');
+      }
     } finally { page.off('request', onReq); }
   }
 
@@ -1077,4 +1165,4 @@ if (failures.length) {
   for (const f of failures) { console.error(`  ${f.m}`); if (f.d) console.error(`    ${f.d}`); }
   process.exit(1);
 }
-console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4; four presets are spectrally distinct through the shipping graph builder, null result first; every value is clamped and nothing clips or goes silent across 36 preset/slider positions; NO MICROPHONE SURVIVES TEARDOWN from any state, including repeated taps during a pending grant and a grant \u2014 or a REJECTION \u2014 that crosses a teardown; one finger tap leaves from idle, mid-record and mid-playback; the recorder stops on its own timer; an open microphone locks out playback; an abandoned clip does not appear in the next panel; a second openVoice is a no-op and a client without removeChannel still falls back to unsubscribe; the slider's knob lands under the finger; the four preset glyphs are distinct code points, with rendered distinctness UNRESOLVED wherever the pad's own glyphs do not render; the panel is INDISTINGUISHABLE configured and unconfigured; A FULL VOICE SESSION ASKS FOR ZERO CHANNELS, MAKES ZERO OUTBOUND REQUESTS AND OPENS ZERO SOCKETS with a client standing by that would have given one; and THE MAP OPENS, TRACKS A REAL FIX, DRAWS AND CLEARS while asking for no channel and sending nothing.`);
+console.log(`\nCHECK 26 PASSED at ${COMMIT.slice(0, 12)} — button 0 opens the panel to a real finger with the pad still 4+4; four presets are spectrally distinct through the shipping graph builder, null result first; every value is clamped and nothing clips or goes silent across 36 preset/slider positions; NO MICROPHONE SURVIVES TEARDOWN from any state, including repeated taps during a pending grant and a grant \u2014 or a REJECTION \u2014 that crosses a teardown; one finger tap leaves from idle, mid-record and mid-playback; the recorder stops on its own timer; an open microphone locks out playback; an abandoned clip does not appear in the next panel; a second openVoice is a no-op and a client without removeChannel still falls back to unsubscribe; the slider's knob lands under the finger; the four preset glyphs are distinct code points, with rendered distinctness UNRESOLVED wherever the pad's own glyphs do not render; the panel is INDISTINGUISHABLE configured and unconfigured; A FULL VOICE SESSION ASKS FOR ZERO CHANNELS, MAKES ZERO OUTBOUND REQUESTS AND OPENS ZERO SOCKETS with a client standing by that would have given one; and THE MAP OPENS, TRACKS A REAL FIX, DRAWS AND CLEARS while asking for no channel and broadcasting nothing \u2014 it no longer tells another device where the child is, which is NOT the same as being silent: the OpenStreetMap tile layer is named above and is Scotty's open ratification, not this work order's claim.`);
