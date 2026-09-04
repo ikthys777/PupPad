@@ -494,6 +494,44 @@ a section that now measures a STILLED panel by design cannot see a defect in the
 **Keeping it would have been a plant whose section cannot see its own defect.** The missing
 one is accounted for rather than lost — which is the whole of the no-derived-counts rule.*
 
+**WHEN REFINEMENT DOES NOT CONVERGE, THE TOOL IS WRONG — AND THE AUTHORITY IS OFTEN ALREADY
+IN THE FILE.** *(Ruled 2026-09-04, from `PUP-WO-0113`.)*
+
+Check 11 enforces northstar invariant 3 by finding module-level imports. It did so with a
+**regular expression over text**, and whether `/` opens a regex or divides is **a grammar
+question** — `a = b\n/re/.test(c)` and `a = b / c / d` differ only in what the parser decided
+`b` was, and ASI can insert the boundary that changes the answer. **No lookbehind settles it.**
+
+**Two adversarial passes, seven false greens. Four closed by refinement; the next pass found
+three more. Each refinement bought one input and cost another.** That is not a rough edge to
+sand down.
+
+**And `scanModule` was already building a `vm.SourceTextModule` to prove the file parses — and
+throwing it away**, while a regex tried to work out from text what that object knew exactly.
+**`dependencySpecifiers` is V8's own list of every static specifier, produced by the parser the
+browser will use. It cannot be fooled by a template, a comment, or prose, because it is not
+reading text.** Adopting it closed two of the three remaining false greens **outright, with no
+refinement to either**.
+
+> **Count the rounds. If each fix opens a case the last did not consider, stop fixing and
+> change the mechanism.** And **look for the authority you already have**: a parser you ran for
+> another reason, a value you computed and discarded.
+
+**TWO SHAPES WORTH KEEPING FROM IT.**
+
+**A constraint that says *"do not weaken X"* is satisfied better by removing the need for X.**
+The work order forbade bounding the unbounded gap, because bounding it reintroduced an evasion.
+The gap turned out not to need **keeping** either — it left the enforcement path entirely.
+
+**AND A PARSE MAKES AN ORACLE FOR A LEXER.** The tier scans still read stripped text, so a
+mis-lex could still hide a token — and `.broke` catches only a mis-lex that runs off the end of
+the file, never one that closes tidily. **So: V8 knows every specifier; the stripper keeps a
+string's own quotes while blanking a comment entirely; therefore at a specifier's opening quote
+an intact module shows that quote and a swallowed one shows a space.** One `indexOf` per import
+converts the whole close-tidily class into a **refusal**. *The heuristic is still wrong about
+`if (s) /re/` — pinned in the controls as REFUSING. **Being wrong is allowed; being wrong
+quietly is not.***
+
 **A PROBE THAT SELECTS ITS SUBJECT BY A VALUE FILTER CANNOT SEE THE VALUE IT IS HUNTING.**
 *(Ruled 2026-09-04. The builder's.)*
 
