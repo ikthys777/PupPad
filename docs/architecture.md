@@ -298,6 +298,14 @@ same scenario, the same arrange step, the same handful of values the state can h
 *The same holds for a code fix: after adding a guard, ask what the guarded path was
 carrying besides the thing you were stopping.*
 
+**AND THE EMPIRICAL ANCHOR, BECAUSE IT IS THE CLEANEST THIS PROJECT HAS PRODUCED: the
+full suite went GREEN on that build.** 24m48s, every check passing, on a tree where three
+taps with a finger leave the voice panel's presets, both sliders and the play button dead
+for the life of the session, and where five separate assertions could not have failed
+whatever the code did. **Nothing was broken in CI and nothing was missing from it** — the
+checks ran, went green, and certified a panel a child could not use. *A passing suite is
+not evidence a tool works; it is evidence the suite did not object.*
+
 **PLANT THE CLAIM, NOT ITS CONSEQUENCES — AND FOR A REDUNDANTLY-CARRIED STATE THAT MEANS
 THE STATE VARIABLE.** *(Ruled 2026-09-04. **The builder's, and it is the missing half of
 the plant rule above.**)*
