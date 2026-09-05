@@ -479,7 +479,7 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0113` — check 11 must scan code, not English** | **PR #69 OPEN, in review.** **BLOCKS #68.** The regex lexer is retired: enforcement now reads `vm.SourceTextModule`'s `dependencySpecifiers` — V8's own parse — after seven false greens across two adversarial passes proved refinement could not converge |
+| 1 | **`PUP-WO-0706` — the camera's destroying close, and the retention** | **AUTHORED 2026-09-05 from Scotty's device report.** A pass-through click after the viewer's CLOSE lands on `#camCloseBtn` — the one control still on bare `click` — and `closeCamera()` **empties every photo.** Plus the retention `PUP-WO-0700`'s own comment admits is stricter than §1.0a ruled | nobody |
 | 2 | **`PUP-WO-0704` — Block Pop's celebration** | **PR #68 OPEN, blocked by check 11's false positive.** §0 found the real defect: the flash sits under the celebration's own scrim, so a perfect clear was "the screen goes dark and a word appears" |
 | 3 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
 | 4 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
