@@ -432,6 +432,29 @@ the mechanism's first live use. Keep it: **a notification moves attention; the m
 carries an action it is a remote control**, and it inherits the correctness of whatever
 computes its premise.*
 
+**SECOND FALSE FIRING, 2026-09-10, AND THE MECHANISM IS DIFFERENT WHILE THE ROOT IS THE
+SAME.** It reported *"open and GREEN for 20 min."* Measured at that moment:
+
+```
+head: db67fda   (moved twice since the previous check)
+Checks:         (conclusion EMPTY)
+run list -> in_progress  20m45s ... plus two earlier runs, both CANCELLED
+```
+
+**The run had no conclusion at all.** The first misfire tolerated `SKIPPED` and called a
+`FAILURE` green; this one **read a null conclusion as a pass and the in-flight run's AGE as a
+duration of greenness.** *Two different bugs, one root: **the absence of a failure signal read
+as the presence of a success signal.*** Same family as *zero sockets was a silence, not an
+absence*, and *a missing check and a passing one are the same colour*.
+
+> **A NULL CONCLUSION IS NOT A PASS, AND A RUN'S AGE IS NOT A DURATION OF BEING GREEN.**
+> Require `conclusion == SUCCESS` explicitly; treat empty, `null`, `in_progress` and
+> `cancelled` as **not green**, never as *not failed*.
+
+*The verb held again: it said REVIEW, so a second false premise cost a second look. **Two
+firings, two false premises, zero damage** — which is what a notification that carries no
+action is for.*
+
 **AN ALARM ROUTED ONLY TO SOMEONE WHO CANNOT ACT ON IT IS A DETECTOR WITH NO ACTOR.**
 *(Ruled 2026-09-04, and it is the SECOND failure of this loop's notification path in two
 days — a different one.)*
