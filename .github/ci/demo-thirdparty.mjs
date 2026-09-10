@@ -83,9 +83,27 @@ const RATIFIED = [
   },
 ];
 
-/* UNRATIFIED — present in the shipped app, contacted on EVERY cold load before a child
- * touches anything, and NOBODY HAS RULED ON EITHER. Architecture §10 keeps the question
- * open and it is Scotty's, not this file's and not the builder's.
+/* RULED FOR REMOVAL — TRACKED BY PUP-WO-0707. NOT "unratified, awaiting a ruling", which
+ * is what this list was when it was written and what it stopped being on 2026-09-10.
+ *
+ * SCOTTY RULED: VENDOR LEAFLET INTO THE REPO, DO NOT RATIFY cdnjs. Three reasons, recorded
+ * in PUP-WO-0705 §A.2 so nobody reopens them — it removes a third-party origin PERMANENTLY
+ * rather than trusting a CDN not to serve altered JavaScript into a child's app; it makes
+ * the map's own code work OFFLINE, moving the panel TOWARD invariant 3 rather than further
+ * from it; and IT LEAVES THIS LIST WITH EXACTLY ONE ENTRY. That third reason is an argument
+ * about the SHAPE of the assertion rather than about convenience: a second entry appearing
+ * in a list of one is unambiguous, where a third among two is a judgement call.
+ *
+ * AN OPEN QUESTION AND A TRACKED DEBT ARE NOT THE SAME THING, AND ONLY ONE OF THEM IS A
+ * RULING. They stay listed rather than RED because the removal has not landed, and a check
+ * that is red on `main` for work in flight is a red that is not a defect — which is how a
+ * suite gets ignored. When 0707 lands these come out and the allowlist is the shape §1 was
+ * written for.
+ *
+ * AND THE SECOND ORIGIN IS RAISED, NOT ASSUMED. Scotty's ACTION names Leaflet; his REASON
+ * — exactly one entry — is not achieved by that action alone, because jsdelivr still serves
+ * supabase-js from the same unconditional head. Whether the ruling extends to it is with
+ * him, and it is a flag-and-stop in 0707. This file does not decide it.
  *
  * AND ONE OF THEM IS NOT A PEER OF THE RATIFIED ORIGIN, IT IS ITS PRECONDITION. The word
  * "unratified" invites the reading that these are lesser siblings awaiting paperwork.
@@ -112,9 +130,10 @@ const RATIFIED = [
  * cdnjs.cloudflare.com, and that is a decision he may not know he made. */
 const UNRATIFIED = [
   { label: 'https://cdnjs.cloudflare.com', test: (o) => /^https:\/\/cdnjs\.cloudflare\.com$/.test(o),
-    precondition: true,
+    precondition: true, ruledForRemoval: 'PUP-WO-0707',
     why: 'Leaflet 1.9.4 CSS and JS, index.html:12-13, loaded on every cold start — and it is the PRECONDITION OF THE RATIFIED EXCEPTION, not a peer of it: the basemap is built by L.tileLayer, Leaflet\'s own constructor, so with this origin gone there is no basemap' },
   { label: 'https://cdn.jsdelivr.net', test: (o) => /^https:\/\/cdn\.jsdelivr\.net$/.test(o),
+    ruledForRemoval: 'PUP-WO-0707 (and whether the ruling extends to supabase-js is with Scotty)',
     why: 'supabase-js v2 UMD, index.html:11 — loaded on every cold start whether or not a Supabase URL is configured' },
 ];
 
@@ -387,8 +406,8 @@ try {
          * make. */
         const rl = ratifiedSeen.length ? ratifiedSeen.join(', ') : 'NOT CONTACTED — Leaflet is blocked like every third party, so L is undefined and the Map panel throws before requesting a tile; the ratified origin is downstream of an unratified one';
         const ul = unratifiedSeen.length ? unratifiedSeen.join(', ') : 'none contacted in this run';
-        OK(`every origin THIS BUILD contacts is on the allowlist — RATIFIED: ${RATIFIED.map((e) => `${e.label} (${e.date}, ${e.why.split(' — ')[0]})`).join('; ')} [seen: ${rl}]. UNRATIFIED AND OWED, nobody has ruled on either: ${UNRATIFIED.map((e) => e.label).join(', ')} [seen: ${ul}]`);
-        info('a green run means "only these", not "none" — the two UNRATIFIED origins above are shipped behaviour that no owner has approved (architecture §10), and the first is not a peer of the ratified origin but its PRECONDITION: without it there is no Leaflet, so no basemap');
+        OK(`every origin THIS BUILD contacts is on the allowlist — RATIFIED: ${RATIFIED.map((e) => `${e.label} (${e.date}, ${e.why.split(' — ')[0]})`).join('; ')} [seen: ${rl}]. RULED FOR REMOVAL, tracked by PUP-WO-0707 — listed because the removal has not landed, NOT because they are approved: ${UNRATIFIED.map((e) => e.label + (e.precondition ? ' (the PRECONDITION of the ratified origin — no Leaflet, no basemap)' : '')).join('; ')} [seen: ${ul}]`);
+        info('a green run means "only these", not "none" — the two origins above ship today and are RULED FOR REMOVAL (Scotty, 2026-09-10: vendor Leaflet, do not ratify cdnjs), tracked by PUP-WO-0707. Until it lands they are a DEBT, not an approval, and the first is the PRECONDITION of the ratified origin rather than a peer of it: no Leaflet, no basemap');
         /* THE SENTENCE IS ABOUT THE BUILD, NOT ABOUT THE RUNNING APP, AND THE FIRST
          * VERSION SAID "every origin this app contacts". ON A CONFIGURED DEVICE THAT IS
          * FALSE. A parent who sets a Supabase URL in the Settings panel gives the app a
@@ -403,7 +422,11 @@ try {
          * one. Not a security finding: the backend is ruled family-only. The defect was a
          * check that overclaimed, and that closes by narrowing the sentence rather than
          * widening the list. */
-        info('OUT OF SCOPE AND SAID SO: a Supabase origin a parent configures in Settings is DATA, not code — it differs per device, cannot be enumerated at build time, and is polled every 3s on a device that has one. This check enumerates what the BUILD ships. Its own number.');
+        /* NAMED AS EXCLUDED, NEVER BY SILENCE. TEMPLATE.md §9a applied to a check's own
+         * output rather than to a review: a future reader must be able to tell
+         * "considered and excluded" from "never thought about", and only one of those is
+         * a ruling. The word BUILD in the line above implies it; this states it. */
+        info('CONSIDERED AND EXCLUDED (Scotty, 2026-09-10), not overlooked: a Supabase origin a parent configures in Settings is operator-supplied CONFIGURATION, not a vendor the code chose — it differs per device, cannot be enumerated at build time, and is polled every 3s where one is set. A second household would run its own backend entirely. This check enumerates what the BUILD ships; that origin has its own number.');
       }
     }
 
@@ -471,5 +494,5 @@ if (failures.length) {
 if (ONLY) {
   console.log(`\nCHECK 27 PASSED at ${COMMIT.slice(0, 12)} — sections ${[...ONLY].join(', ')}, ${asserted} assertion(s). NOT a full run: this says nothing about the sections it did not run.`);
 } else {
-  console.log(`\nCHECK 27 PASSED at ${COMMIT.slice(0, 12)} — ${asserted} assertion(s). Every origin THIS BUILD contacts, on a cold load and across all eight pads, is on a list declared in exactly one place: ONE RATIFIED EXCEPTION, the Map panel's OpenStreetMap basemap, owner-approved 2026-09-04 against three costed alternatives; and TWO UNRATIFIED origins that ship today and that NOBODY HAS RULED ON — cdnjs.cloudflare.com, which is not a peer of the ratified one but its PRECONDITION because the basemap is built by Leaflet's own constructor, and cdn.jsdelivr.net. Both are recorded so they cannot be forgotten, not because they are approved. NOT COVERED, DELIBERATELY: a Supabase origin a parent configures in Settings is data rather than code, differs per device, and has its own number. A third-party origin outside that list fails this check, which is the whole of what PUP-WO-0705 was for.`);
+  console.log(`\nCHECK 27 PASSED at ${COMMIT.slice(0, 12)} — ${asserted} assertion(s). Every origin THIS BUILD contacts, on a cold load and across all eight pads, is on a list declared in exactly one place: ONE RATIFIED EXCEPTION, the Map panel's OpenStreetMap basemap, owner-approved 2026-09-04 against three costed alternatives; and TWO origins that ship today and are RULED FOR REMOVAL, tracked by PUP-WO-0707 — cdnjs.cloudflare.com, which is not a peer of the ratified one but its PRECONDITION because the basemap is built by Leaflet's own constructor, and cdn.jsdelivr.net. They are listed because the removal has not landed, not because they are approved; when it does, this allowlist is one entry, which is a far stronger assertion than two. CONSIDERED AND EXCLUDED rather than overlooked: a Supabase origin a parent configures in Settings is operator-supplied configuration rather than a vendor the code chose, differs per device, and has its own number. A third-party origin outside that list fails this check, which is the whole of what PUP-WO-0705 was for.`);
 }

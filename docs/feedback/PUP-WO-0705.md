@@ -235,3 +235,41 @@ described, the clause is decoration.
 
 *And the fourth member is the same family one level up: `ease-out` on a multi-stop opacity
 envelope, where the number the check read was real and the number the child saw was not.*
+
+---
+
+# §A — SCOTTY'S RULING, AND WHAT IT CHANGED IN THIS CHECK
+
+**Ruled 2026-09-10: vendor Leaflet into the repo; do not ratify `cdnjs`.** The reason worth
+keeping is the third one, because it is an argument about the **shape of the assertion**
+rather than about convenience:
+
+> **An allowlist of one is a far stronger assertion than an allowlist of two.** A second
+> entry appearing in a list of one is unambiguous; a third among two is a judgement call.
+
+**My recommendation was the right shape and the wrong terminal state.** I proposed a closed
+unratified list reported as **OWED**, and treated "somebody must rule on these" as the end
+of the road. Scotty ruled *through* it: the origins are not to be blessed or refused, they
+are **to be removed**. An open question and a tracked debt look identical in a list and are
+not the same thing — **and only one of them is a ruling.**
+
+So the list is relabelled, not deleted. They stay listed because the removal has not landed
+and **a check that is red on `main` for work in flight is a red that is not a defect**, which
+is how a suite gets ignored. They now read **`RULED FOR REMOVAL — tracked by PUP-WO-0707`**,
+in the declaration, in each entry, in the info line and in the pass banner.
+
+**And the exclusion is now stated rather than implied.** Narrowing the sentence to *"this
+BUILD"* made it true; it did not make it legible. A reader could not tell **"considered and
+excluded"** from **"never thought about"**, and only one of those is a ruling — so a green
+run now says the Supabase origin was considered, by whom, when, and why it is out. *That is
+`TEMPLATE.md` §9a applied to a check's own output instead of to a review.*
+
+## What I did NOT do
+
+**`supabase-js` is untouched.** Scotty's action names Leaflet; his *reason* — exactly one
+entry — is not achieved by that action alone, because `jsdelivr` still serves supabase-js
+from the same unconditional `<head>`. **All three of his reasons apply to it identically and
+the third is only true if the ruling extends to it** — which CC-A has put to him and which is
+a flag-and-stop in 0707. **Vendoring or removing it on my own judgement would be deciding a
+question that is explicitly open**, and the check's entry for `jsdelivr` says so on its own
+line rather than leaving the next reader to wonder why one was vendored and one was not.
