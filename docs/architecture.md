@@ -270,6 +270,28 @@ empty `send()`, so a broadcast piggybacking on the camera's already-open channel
 for zero new channels and pass. **"No transport was used" and "no transport is possible"
 are different claims, and only the second is what a deletion buys.**
 
+**A BLOCKER ON A PUSH IS NOT A STATUS LINE. IT IS THE MESSAGE.** *(Ruled 2026-09-10.
+**The builder's finding, and CC-A had the same defect worse.**)*
+
+An approval gate held a push for **four days**. The builder parked quietly and **reported the
+blocker as a mint** — *"four commits and 897 insertions sat on ONE DISK for four days."*
+**CC-A did the same and worse:** three commits stranded for **six**, one of them
+`PUP-WO-0706`, which describes **a live defect that destroys a child's photographs** — and it
+was reported at the bottom of a message as housekeeping. **PR #68 sat green and unmerged for
+the same six days behind the same gate.**
+
+**Unpushed work is the one state where waiting has a real downside**, and it is worth naming
+why: **a disk is not a backup, and nobody else can see it.** Every other blocked thing in this
+project is *visible* while it waits — a parked PR, an open question, a queued work order. **A
+local commit is invisible to everyone including the person who could clear the gate.**
+
+> **A gate on a PUSH is escalated, led with, and repeated until it clears — not appended.**
+> Treat it differently from a gate on anything else.
+
+*And it compounds with the artifact discipline: `SendMessage` is the pointer and the artifact
+is the record — **but an unpushed artifact is not a record at all.** The whole of §9b assumes
+the commit reached somewhere another session can read it.*
+
 **THE EVENT THAT ENDS THE WORK ALSO REFRESHES EVERY LIVENESS SIGNAL.** *(Ruled
 2026-09-04. **The FOURTH variant of the handoff defect, and the only one with no detector at
 all.**)*

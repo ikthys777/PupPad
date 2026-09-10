@@ -479,8 +479,8 @@ Promotion is Scotty's alone.**
 
 | # | work | state | blocked on |
 |---|---|---|---|
-| 1 | **`PUP-WO-0706` — the camera's destroying close, and the retention** | **AUTHORED 2026-09-05 from Scotty's device report.** A pass-through click after the viewer's CLOSE lands on `#camCloseBtn` — the one control still on bare `click` — and `closeCamera()` **empties every photo.** Plus the retention `PUP-WO-0700`'s own comment admits is stricter than §1.0a ruled | nobody |
-| 2 | **`PUP-WO-0704` — Block Pop's celebration** | **PR #68 OPEN, blocked by check 11's false positive.** §0 found the real defect: the flash sits under the celebration's own scrim, so a perfect clear was "the screen goes dark and a word appears" |
+| 1 | **`PUP-WO-0706` — the camera's destroying close** | **NEXT, and the builder is on it.** A pass-through click lands on `#camCloseBtn`, the last control on bare `click`, and `closeCamera()` **empties every photo.** Plus the retention Scotty ruled on 2026-09-05 | nobody |
+| 2 | **`PUP-WO-0705` — the tile allowlist** | **PR #70 OPEN, reviewed, both rulings given.** Found that **the ratified tile origin is reached ZERO times and depends on cdnjs, which nobody ratified** | CI |
 | 3 | **`PUP-WO-0705` — the tile exception in the mechanism** | authored. An allowlist of exactly ONE third-party origin, so a SECOND goes red. **Owed half of Scotty's tile ruling** | nobody |
 | 4 | `PUP-WO-0104` — the cache gate at the right shape | authored, unbuilt | nobody |
 | 3 | `PUP-WO-0110` — check 14's flake: **instrumentation, NOT a fix** | scoped in §4a, no file | nobody |
