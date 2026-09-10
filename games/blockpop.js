@@ -234,6 +234,76 @@ export default function mount(host, api) {
   var CELEB_MS = 3400;
   var CELEB_MS_REDUCED = 1600;
 
+  /* §2 THE WIN'S OWN LIGHT AND ITS OWN BLOOM — PUP-WO-0704, AND EVERY NUMBER HERE IS
+   * DOWNSTREAM OF A MEASUREMENT RATHER THAN OF A PREFERENCE.
+   *
+   * Scotty, from the device: "no colour, no flash, no fireworks, nothing explosive or
+   * popping." All four were true, and §0 measured three separate causes:
+   *
+   *   1. `burstAt` returns 0 when `reduced` is set, so a Samsung with power saving on
+   *      drew 48 sparks in one world and EXACTLY 0 in the other, from the same seed and
+   *      the same finger. By construction, not by accident.
+   *   2. The celebration's `flash()` was real — peak 0.44, 600ms, confirmed at build
+   *      time — AND IT NEVER REACHED THE GLASS IN EITHER WORLD. It paints into `.bp-fx`
+   *      at z-index 4 inside `boardWrap`, and the celebration's own overlay is z-index
+   *      12 with a 30% navy scrim ON TOP OF IT. Its bright centre sat behind the opaque
+   *      lozenge (`elementFromPoint` returned `bp-cheer`), and its gradient reached zero
+   *      at 72% of the radius. Measured between two frames of the reduced world with the
+   *      bubble on its opacity plateau in both, so the difference WAS the flash: maximum
+   *      summed-RGB delta 13 of 765, and not one pixel above 16. In the unreduced world
+   *      it is invisible for a second reason — 48 sparks are flying over it.
+   *   3. What was left on the device was the scrim (54.0% of the board) and the lozenge
+   *      (5.0%). A perfect clear was: THE SCREEN GOES DARK AND A WORD APPEARS — which is
+   *      the opposite of a celebration for a child who cannot read the word.
+   *
+   * SO THE LIGHT MOVED LAYERS RATHER THAN GETTING BRIGHTER. A bigger `--bp-peak` under
+   * the same scrim is another round of "still nothing"; the fix is that the celebration
+   * paints its light INSIDE ITS OWN OVERLAY, above its own scrim. And the gradient is
+   * INVERTED from `.bp-flash`'s — transparent at the centre, full at the rim — because
+   * the centre is exactly where the lozenge is, and that is where the old one put all
+   * of its brightness.
+   *
+   * AND REDUCED MOTION GETS THE BLOOM. Gyre is the reference the work order pointed at,
+   * and its ruling is not "turn the effect off": `wander` goes 10 -> 4, `tailScale` 1 ->
+   * 0.45, the fade is capped higher. EVERY PARAMETER STILL MOVES. Nothing returns zero.
+   * A bloom is that ruling applied to a particle: the discs are the sparks with the
+   * TRAVEL taken out and the colour, the size and the light kept, so stillness costs the
+   * child the vestibular motion the preference is about and costs him nothing else.
+   * `.bp-spark` still returns 0 under `reduced` and check 21 §19.7 still asserts that —
+   * a travelling particle is the thing the preference forbids, and the bloom is not one.
+   *
+   * INDEX ARITHMETIC, NOT `Math.random`, for the same reason `burstAt` uses it: check
+   * 21 pins Math.random to a constant, so a random field would collapse to one point
+   * under the instrument and look nothing like what ships.
+   *
+   * AND THE FIRST VERSION OF THESE NUMBERS WAS 37, 61 AND A SPREAD OF 8, WITH A COMMENT
+   * SAYING NO TWO DISCS LAND ON EACH OTHER. THE ADVERSARIAL PASS COMPUTED THEM AND THEY
+   * DID. `bi -> (bi * a) mod 100` is linear, so discs `bi` and `bi + k` are separated by
+   * a CONSTANT offset for every `bi` — and with BLOOM_N exactly twice BLOOM_SPREAD, the
+   * pair `bi` / `bi + 8` also shared an identical delay. Sixteen discs were eight
+   * two-lobed blobs 54px apart arriving in eight steps: measured worst overlap **-43.9px**
+   * with motion reduced, where the discs are 1.35x larger. Everything the comment claimed
+   * was false, and nothing in the check could see it because a bloom's rect is honest.
+   *
+   * SO THE SEPARATION IS MEASURED RATHER THAN ARGUED FROM COPRIMALITY. With 29, 53 and a
+   * spread of 7 the closest pair on the WORST fleet viewport clears by **+10.0px** with
+   * motion reduced and +35.3px without, and no disc reaches the layer's edge in either
+   * world (1.8px of clearance at the tightest). BLOOM_N is no longer a multiple of
+   * BLOOM_SPREAD, so no two discs share both a position offset and a delay. */
+  var BLOOM_N = 16;
+  var BLOOM_MS = 820;
+  var BLOOM_STAGGER = 70;
+  /* The last disc must finish inside the SHORTER of the two windows, or the reduced
+   * celebration ends with a bloom still on the glass and the layer is torn out from
+   * under it: (BLOOM_SPREAD - 1) * BLOOM_STAGGER + BLOOM_MS = 1240 against
+   * CELEB_MS_REDUCED's 1600. Written from the names because the first version pasted 8
+   * and 70 into the arithmetic, which is a second expression of two constants and would
+   * have gone stale silently the moment either moved.
+   * `CELEB_MS` and `CELEB_MS_REDUCED` are Scotty's to change, not this file's. */
+  var BLOOM_SPREAD = 7;
+  /* Still, so it may be bigger: what the disc loses in travel it takes back in area. */
+  var BLOOM_CALM_SCALE = 1.35;
+
   /* THE WINNING TAP MUST NOT ALSO BE THE DISMISSING TAP, AND IT WAS.
    *
    * Measured, not reasoned: the celebration opens synchronously inside the `touchend`
@@ -737,11 +807,77 @@ export default function mount(host, api) {
     '.bp-celeb{position:absolute;inset:0;z-index:12;display:flex;align-items:center;',
     'justify-content:center;touch-action:none;-webkit-tap-highlight-color:transparent;',
     'background:rgb(15 29 58 / .30)}',
+    /* §2 THE WIN'S OWN LIGHT LAYER — PUP-WO-0704, AND IT IS A LAYER RATHER THAN A
+     * BRIGHTER FLASH ON PURPOSE. `.bp-flash` is z-index 3 inside `.bp-fx` at z-index 4
+     * inside `boardWrap`; `.bp-celeb` is z-index 12 over the whole root with a navy
+     * scrim. Anything the celebration paints through `flash()` is therefore painted
+     * UNDER the celebration's own dimming, and §0 measured what that costs: a peak of
+     * 0.44 arrived as a maximum summed-RGB delta of 13 out of 765, in BOTH worlds. A
+     * child cannot see 13. So the win's light is a CHILD OF `.bp-celeb` — above the
+     * scrim, and above every layer the board owns. The ONE thing that paints in front of
+     * it is the lozenge, deliberately and by one line of z-index fifty lines below; that
+     * is the point of putting the gradient's hole where the lozenge stands.
+     *
+     * THE GRADIENT IS INVERTED FROM `.bp-flash`'S, AND THAT IS THE SECOND MEASUREMENT.
+     * `.bp-flash` puts its only full-strength stop at the centre, and the centre is
+     * where the lozenge is: `elementFromPoint` at the peak returned `bp-cheer`. So this
+     * one is TRANSPARENT at the centre and full from 46% out to the corners — the light
+     * is put where nothing is standing in front of it, and the lozenge sits in a clear
+     * hole rather than on top of the only bright pixels.
+     *
+     * IT IS AN OPACITY FADE AND NOTHING ELSE — no scale, no travel — which is the same
+     * argument `.bp-flash` already makes for itself and the reason it needs no calm
+     * variant: what prefers-reduced-motion protects against is vestibular motion, and a
+     * brightness that rises and falls in place has none. `--bp-peak` and `--bp-fade`
+     * are custom properties for the same reason they are on `.bp-flash`: a check reads
+     * PAINT, not intent. */
+    '.bp-burst{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:0}',
+    '.bp-wash{position:absolute;inset:0;pointer-events:none;',
+    'background:radial-gradient(circle at 50% 46%,',
+    'rgb(255 236 176 / 0) 0%,rgb(255 209 92 / var(--bp-peak)) 46%,',
+    'rgb(255 128 44 / var(--bp-peak)) 100%);',
+    /* LINEAR, AND THE FIRST VERSION WAS `ease-out`, WHICH IS WHY THE LIGHT WAS GONE
+     * BEFORE THE WIN WAS. A timing function applies to EVERY keyframe interval, not to
+     * the animation as a whole, so `ease-out` front-loaded the decay inside the last
+     * segment: at 90% of the window the authored 0.205 was painting about 0.04, and
+     * check 21 §20's late sample measured the celebration adding 0.00% of the screen to
+     * its own scrim with a third of its duration still to run. An opacity ENVELOPE
+     * should mean what its percentages say; the easing belongs on things that move.
+     * The hold also runs to 78% now rather than 58%, so what the child sees for most of
+     * the win is the light rather than the dimming underneath it. */
+    'animation:bp-wash var(--bp-fade) linear both}',
+    '@keyframes bp-wash{0%{opacity:0}7%{opacity:1}78%{opacity:.9}100%{opacity:0}}',
+
+    /* THE BLOOM — A SPARK WITH THE TRAVEL TAKEN OUT. Gyre's ruling, which the work order
+     * named as the reference: reduced motion SCALES a parameter, it does not zero one.
+     * So the win keeps colour, size and light in both worlds and gives up only the thing
+     * the preference is actually about. Unreduced it pops and swells; calm it appears at
+     * its full size, brightens, holds and goes — `bp-bloom-calm` sets NO transform at
+     * all, so the rect a disc occupies at 100ms is the rect it occupies at 700ms, and
+     * check 21 §21 measures exactly that rather than trusting this comment. */
+    '.bp-bloom{position:absolute;width:var(--bp-sz);height:var(--bp-sz);',
+    'margin-left:calc(var(--bp-sz) / -2);margin-top:calc(var(--bp-sz) / -2);',
+    'border-radius:50%;will-change:transform,opacity;',
+    'background:radial-gradient(circle at 42% 36%,',
+    'rgb(255 255 255 / .92) 0%,var(--bp-c) 44%,rgb(255 255 255 / 0) 74%);',
+    'animation:bp-bloom var(--bp-dur) cubic-bezier(.18,.9,.36,1) var(--bp-del) both}',
+    '@keyframes bp-bloom{0%{transform:scale(.15);opacity:0}',
+    '18%{transform:scale(1.14);opacity:1}',
+    '34%{transform:scale(.96);opacity:1}',
+    '68%{transform:scale(1.06);opacity:.92}',
+    '100%{transform:scale(1.5);opacity:0}}',
+    '.bp-celeb-calm .bp-bloom{animation:bp-bloom-calm var(--bp-dur) ease-in-out var(--bp-del) both}',
+    '@keyframes bp-bloom-calm{0%{opacity:0}24%{opacity:1}72%{opacity:1}100%{opacity:0}}',
+
     '.bp-cheer{font-size:min(15vh,64px);font-weight:800;line-height:1;color:#fff;',
     'letter-spacing:.5px;padding:.35em .6em;border-radius:999px;white-space:nowrap;',
     'background:radial-gradient(circle at 34% 28%,#ffe9a8,#f0a93c 62%,#e0761f 100%);',
     'color:#3a1d02;box-shadow:0 10px 30px rgb(0 0 0 / .45),',
     'inset 0 4px 0 rgb(255 255 255 / .55);',
+    /* `position:relative;z-index:1` because `.bp-burst` is POSITIONED and this is not:
+     * a positioned sibling with z-index auto paints above in-flow content, so without
+     * this line the win's own light layer would cover the words it is lighting. */
+    'position:relative;z-index:1;',
     'animation:bp-cheer 1500ms cubic-bezier(.28,1.5,.52,1) both}',
     /* POPS UP, GROWS FAST, BURSTS — the three verbs the work order asked for, in that
      * order, and the burst is the reason this is `both` rather than `forwards`: the
@@ -1444,9 +1580,23 @@ export default function mount(host, api) {
    * and both call it.
    *
    * THE WORDS ARE NOT THE MESSAGE. "Good Job!" is text and Buddy cannot read it, so by
-   * invariant 1 it may not be the only expression: with it covered, the win is still a
-   * screenful of fireworks, a rising powerUp under a chime, and a board that just went
-   * empty. Acceptance §1 measures that with every painted word masked. */
+   * invariant 1 it may not be the only expression: with it covered, the win is a
+   * screenful of gold light and sixteen coloured blooms, a rising powerUp under a
+   * chime, and a board that just went empty. Check 21 §20 measures that with every
+   * painted word masked AND WITH THE LOZENGE ITSELF REMOVED FROM THE FRAME, in both
+   * motion worlds.
+   *
+   * THE SENTENCE THAT USED TO STAND HERE CLAIMED A CHECK THAT DID NOT EXIST. It read
+   * "with it covered, the win is still a screenful of fireworks ... Acceptance §1
+   * measures that with every painted word masked", and PUP-WO-0704 §0 resolved the
+   * citation: `coverWords` was called in exactly ONE place in check 21 — §17, which
+   * compares a clearing placement against a non-clearing one on the BOARD — and no
+   * check anywhere photographed a celebration with words masked. So the guarantee was
+   * being made by a comment, and the claim it made was FALSE on the child's device by
+   * construction, because `burstAt` returns 0 under reduced motion and there were no
+   * fireworks to be left with. A described guarantee reads exactly like a kept one;
+   * this file has now been bitten by that twice, and the fix both times was to write
+   * the check the comment was standing in for. */
   function endCelebration() {
     if (celebEl && celebEl.parentNode) celebEl.parentNode.removeChild(celebEl);
     celebEl = null;
@@ -1465,6 +1615,47 @@ export default function mount(host, api) {
     celebEl = document.createElement('div');
     celebEl.className = reduced ? 'bp-celeb bp-celeb-calm' : 'bp-celeb';
     celebEl.setAttribute('data-celebrate', '');
+
+    /* THE LIGHT AND THE BLOOM GO IN FIRST, so the lozenge is the last child and the
+     * words are lit rather than buried. Both live INSIDE the celebration, which is the
+     * whole of the repair: the old `flash()` call painted the same peak into `.bp-fx`
+     * underneath this element's own scrim and delivered 13/765 to the glass. */
+    var burst = document.createElement('div');
+    burst.className = 'bp-burst';
+
+    /* THE PEAK AND THE WINDOW ARE THE ONES THE CELEBRATION ALREADY OWNED. The peak is
+     * still the top of the combo ladder — the same expression the removed `flash()`
+     * call used, so the constant's lineage is unbroken and nothing here is a new number
+     * chosen to make a picture brighter. What changed is the LAYER and the GEOMETRY.
+     * The window is the celebration's own length, so the light is present for as long
+     * as the win is rather than for 600ms of it. Neither CELEB_MS nor CELEB_MS_REDUCED
+     * is retuned; they are read. */
+    var wash = document.createElement('div');
+    wash.className = 'bp-wash';
+    wash.style.setProperty('--bp-peak', String(Math.round((FLASH_PEAK_BASE + FLASH_PEAK_STEP * (COMBO_TOP - 1)) * 1000) / 1000));
+    wash.style.setProperty('--bp-fade', (reduced ? CELEB_MS_REDUCED : CELEB_MS) + 'ms');
+    burst.appendChild(wash);
+
+    for (var bi = 0; bi < BLOOM_N; bi++) {
+      var dot = document.createElement('span');
+      dot.className = 'bp-bloom';
+      /* Inset from the rim, and the inset is a PERCENTAGE while the radius it has to
+       * clear is in PIXELS — so "no disc is clipped" is not something this line can
+       * promise on its own, and the first version's comment promised it anyway. It is
+       * true of these strides at these sizes on all three fleet viewports, measured:
+       * the tightest disc clears the layer's edge by 1.8px with motion reduced, where
+       * the discs are largest. A shorter root would clip; the fleet is 412 tall. */
+      dot.style.left = (4 + ((bi * 29) % 100) * 0.92) + '%';
+      dot.style.top = (6 + ((bi * 53) % 100) * 0.88) + '%';
+      dot.style.setProperty('--bp-sz',
+        Math.round((34 + ((bi * 23) % 5) * 11) * (reduced ? BLOOM_CALM_SCALE : 1)) + 'px');
+      dot.style.setProperty('--bp-c', CANDY[bi % CANDY.length].light);
+      dot.style.setProperty('--bp-dur', BLOOM_MS + 'ms');
+      dot.style.setProperty('--bp-del', ((bi % BLOOM_SPREAD) * BLOOM_STAGGER) + 'ms');
+      burst.appendChild(dot);
+    }
+    celebEl.appendChild(burst);
+
     var cheer = document.createElement('div');
     cheer.className = 'bp-cheer';
     cheer.textContent = 'Good Job!';
@@ -1494,12 +1685,27 @@ export default function mount(host, api) {
     cue(CUE.win);
     fxAfter(180, function () { cue(CUE.cheer); });
 
-    /* THE FIREWORKS. Staggered, so the S10+ never animates all of them at once: three
-     * volleys of eight land 260ms apart, so at most ~16 sparks overlap. Under reduced
-     * motion burstAt returns 0 without building anything and the win is carried by the
-     * bubble, the flash and both cues — the distinction is never removed, only stilled. */
+    /* THE TRAVELLING FIREWORKS, WHICH ARE THE ONE PART OF THIS THE PREFERENCE REMOVES.
+     * Staggered so the S10+ does not start all of them on one frame: three volleys of
+     * `per` land 260ms apart. THE OLD COMMENT SAID "volleys of eight, so at most ~16
+     * overlap" AND BOTH NUMBERS WERE WRONG — `per` is 10, and with SPARK_MS at 620 a
+     * volley is still alive when the one after next begins, so all three overlap between
+     * 520 and 620ms: THIRTY, not sixteen. The stagger buys a spread START, not a smaller
+     * peak. Recorded rather than quietly corrected because it is a budget claim about a
+     * real phone and it was overstated by half. Under reduced motion `burstAt`
+     * returns 0 without building anything — and that is now the ONLY thing reduced
+     * motion takes, because the wash and the sixteen blooms above are built in both
+     * worlds. Before PUP-WO-0704 this branch was the whole visual celebration, so the
+     * calm path had the scrim and a word and nothing else; the distinction is stilled
+     * now rather than deleted, which is what the line was always claiming. */
     var per = SPARKS_PER_CELL_BASE + SPARKS_PER_CELL_STEP * (COMBO_TOP - 1) + 3;
-    flash(FLASH_PEAK_BASE + FLASH_PEAK_STEP * (COMBO_TOP - 1), FLASH_MS * 2);
+    /* THERE IS NO `flash()` CALL HERE ANY MORE, AND ITS ABSENCE IS ASSERTED RATHER THAN
+     * ASSUMED — check 21 §20 fails if `.bp-flash` reappears inside `.bp-celeb`, because
+     * a light painted there is a light the child does not receive. `flash()` itself is
+     * untouched and `comboReact` still calls it: a line clear has no overlay above it,
+     * so that flash does reach the glass and §16 measures its peak in pixels. Deleting a
+     * mechanism orphans its assertions, so the peak it carried moved to `.bp-wash` by
+     * the same expression rather than being dropped. */
     if (!reduced) {
       var br = boardWrap.getBoundingClientRect();
       var spread = Math.max(24, (br.width || 240) * 0.34);
