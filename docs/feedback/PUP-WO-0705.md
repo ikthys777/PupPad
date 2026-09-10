@@ -176,3 +176,62 @@ origin inside this allowlist's scope at all, or is it a separate class?
 the witness itself. Check 28's only mutation surface is `index.html`, and nothing planted
 there can break the route handler. *An assertion never shown red is not yet a check* — said
 plainly rather than left for the next pass to find.
+
+---
+
+# THE RULINGS, APPLIED
+
+**Both came back from CC-A; both are in the mechanism now, not only here.**
+
+## One — the third option, with a sharpening I had missed
+
+The allowlist stays **one ratified origin**, a **closed named unratified list of exactly
+two**, reported as **OWED on every run**, anything in neither **RED**.
+
+**The sharpening is the part I had wrong.** I wrote the two as peers — *"unratified"* —
+which invites the reading that they are lesser siblings awaiting paperwork.
+**`cdnjs.cloudflare.com` is not that. It is the PRECONDITION of the ratified exception.**
+The basemap is built by `L.tileLayer(...)`, Leaflet's own constructor, so without that
+origin there is no `L`, no tile layer, and no request to the approved origin at all. The
+check now says *precondition* on the line, in the entry, and in the pass banner.
+
+## Two — the operator-configured origin is a separate class, and my sentence was false
+
+**Not a hole to widen — an overclaim to narrow.** The pass line said *"every origin this
+**app** contacts"*, and on a device where a parent has configured Supabase **that sentence
+is false**: a fourth origin, polled every three seconds, that this check cannot see.
+
+It now says *"every origin this **BUILD** contacts"*, and states the exclusion and its
+reason on its own line. **This allowlist enumerates origins the build ships; an
+operator-supplied origin is DATA, not CODE** — it varies per device, cannot be enumerated
+at build time, and covering it here would make this check either unfalsifiable or red on
+every configured device. It gets its own number: a check that **reads** the configured
+value rather than hardcoding one. Not a security finding — the backend is ruled
+family-only. **The defect was a check that overclaimed, and that closes by narrowing the
+sentence, not by widening the list.**
+
+---
+
+# A CLASS, NOT THREE INCIDENTS
+
+**Three instruments in one cycle failed the same way, and naming it is worth more than the
+three fixes.**
+
+| where | the clause | why it could not fail |
+|---|---|---|
+| `demo-blockpop.mjs` §20 | `celebEl.querySelectorAll('.bp-flash')` | the scope **can never contain** the subject — `flash()` appends to a sibling |
+| `demo-blockpop.mjs` §20 | the headline floor, 0.30 | the **state it rejects already cleared it** — the scrim alone repaints 53.95% |
+| `demo-thirdparty.mjs` §2 | a **cumulative** `doSound` count reaching eight | **something other than the subject** satisfies it — the console makes cues for other things |
+
+> **AN ASSERTION MUST BE ABLE TO FAIL FOR ITS OWN REASON, AND THERE ARE EXACTLY THREE WAYS
+> IT CANNOT:** its scope cannot contain its subject; its threshold is already met by the
+> state it exists to reject; or something other than its subject satisfies it.
+
+**None of the three was found by reading. All three were found by a plant** — which is the
+argument for the plant discipline stated as a mechanism rather than a habit. The test that
+separates them from real assertions is one question asked before the plant is written:
+**what exact build makes this clause print its failure message?** If that build cannot be
+described, the clause is decoration.
+
+*And the fourth member is the same family one level up: `ease-out` on a multi-stop opacity
+envelope, where the number the check read was real and the number the child saw was not.*

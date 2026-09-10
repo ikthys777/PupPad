@@ -87,6 +87,14 @@ const RATIFIED = [
  * touches anything, and NOBODY HAS RULED ON EITHER. Architecture §10 keeps the question
  * open and it is Scotty's, not this file's and not the builder's.
  *
+ * AND ONE OF THEM IS NOT A PEER OF THE RATIFIED ORIGIN, IT IS ITS PRECONDITION. The word
+ * "unratified" invites the reading that these are lesser siblings awaiting paperwork.
+ * `cdnjs.cloudflare.com` is not that. The basemap Scotty ratified is constructed by
+ * `L.tileLayer(...)` — LEAFLET'S OWN CONSTRUCTOR — so without cdnjs there is no `L`, no
+ * tile layer, and no request to the approved origin at all. The exception cannot function
+ * without it. Ratifying the basemap ratified this origin implicitly, and that is a
+ * decision the owner may not know he made.
+ *
  * THEY ARE LISTED SO THEY CANNOT BE FORGOTTEN, NOT SO THEY ARE APPROVED. Listing them is
  * what keeps this check GREEN on `main` — and the northstar's own amendment is the
  * argument for that: "a faithful check enforcing invariant 3 would go RED on approved
@@ -104,7 +112,8 @@ const RATIFIED = [
  * cdnjs.cloudflare.com, and that is a decision he may not know he made. */
 const UNRATIFIED = [
   { label: 'https://cdnjs.cloudflare.com', test: (o) => /^https:\/\/cdnjs\.cloudflare\.com$/.test(o),
-    why: 'Leaflet 1.9.4 CSS and JS, index.html:12-13 — loaded on every cold start, and the ratified basemap DEPENDS ON IT' },
+    precondition: true,
+    why: 'Leaflet 1.9.4 CSS and JS, index.html:12-13, loaded on every cold start — and it is the PRECONDITION OF THE RATIFIED EXCEPTION, not a peer of it: the basemap is built by L.tileLayer, Leaflet\'s own constructor, so with this origin gone there is no basemap' },
   { label: 'https://cdn.jsdelivr.net', test: (o) => /^https:\/\/cdn\.jsdelivr\.net$/.test(o),
     why: 'supabase-js v2 UMD, index.html:11 — loaded on every cold start whether or not a Supabase URL is configured' },
 ];
@@ -378,8 +387,23 @@ try {
          * make. */
         const rl = ratifiedSeen.length ? ratifiedSeen.join(', ') : 'NOT CONTACTED — Leaflet is blocked like every third party, so L is undefined and the Map panel throws before requesting a tile; the ratified origin is downstream of an unratified one';
         const ul = unratifiedSeen.length ? unratifiedSeen.join(', ') : 'none contacted in this run';
-        OK(`every origin contacted is on the allowlist — RATIFIED: ${RATIFIED.map((e) => `${e.label} (${e.date}, ${e.why.split(' — ')[0]})`).join('; ')} [seen: ${rl}]. UNRATIFIED AND OWED, nobody has ruled on either: ${UNRATIFIED.map((e) => e.label).join(', ')} [seen: ${ul}]`);
-        info('a green run means "only these", not "none" — the two UNRATIFIED origins above are shipped behaviour that no owner has approved (architecture §10), and the ratified basemap CANNOT LOAD without the first of them');
+        OK(`every origin THIS BUILD contacts is on the allowlist — RATIFIED: ${RATIFIED.map((e) => `${e.label} (${e.date}, ${e.why.split(' — ')[0]})`).join('; ')} [seen: ${rl}]. UNRATIFIED AND OWED, nobody has ruled on either: ${UNRATIFIED.map((e) => e.label).join(', ')} [seen: ${ul}]`);
+        info('a green run means "only these", not "none" — the two UNRATIFIED origins above are shipped behaviour that no owner has approved (architecture §10), and the first is not a peer of the ratified origin but its PRECONDITION: without it there is no Leaflet, so no basemap');
+        /* THE SENTENCE IS ABOUT THE BUILD, NOT ABOUT THE RUNNING APP, AND THE FIRST
+         * VERSION SAID "every origin this app contacts". ON A CONFIGURED DEVICE THAT IS
+         * FALSE. A parent who sets a Supabase URL in the Settings panel gives the app a
+         * FOURTH origin, polled every three seconds — and this check cannot see it, on
+         * purpose: it is gated on localStorage a fresh context never has.
+         *
+         * Ruled a SEPARATE CLASS rather than a hole. This allowlist enumerates origins
+         * THE BUILD SHIPS; an operator-supplied origin is DATA, NOT CODE. It varies per
+         * device, cannot be enumerated at build time, and covering it here would make
+         * this check either unfalsifiable or red on every configured device. It wants its
+         * own number — a check that READS the configured value rather than hardcoding
+         * one. Not a security finding: the backend is ruled family-only. The defect was a
+         * check that overclaimed, and that closes by narrowing the sentence rather than
+         * widening the list. */
+        info('OUT OF SCOPE AND SAID SO: a Supabase origin a parent configures in Settings is DATA, not code — it differs per device, cannot be enumerated at build time, and is polled every 3s on a device that has one. This check enumerates what the BUILD ships. Its own number.');
       }
     }
 
@@ -447,5 +471,5 @@ if (failures.length) {
 if (ONLY) {
   console.log(`\nCHECK 27 PASSED at ${COMMIT.slice(0, 12)} — sections ${[...ONLY].join(', ')}, ${asserted} assertion(s). NOT a full run: this says nothing about the sections it did not run.`);
 } else {
-  console.log(`\nCHECK 27 PASSED at ${COMMIT.slice(0, 12)} — ${asserted} assertion(s). Every origin this app contacts, on a cold load and across all eight pads, is on a list declared in exactly one place: ONE RATIFIED EXCEPTION, the Map panel's OpenStreetMap basemap, owner-approved 2026-09-04 against three costed alternatives; and TWO UNRATIFIED origins that ship today and that NOBODY HAS RULED ON — cdnjs.cloudflare.com and cdn.jsdelivr.net — recorded here so they cannot be forgotten rather than because they are approved. A third-party origin outside that list fails this check, which is the whole of what PUP-WO-0705 was for.`);
+  console.log(`\nCHECK 27 PASSED at ${COMMIT.slice(0, 12)} — ${asserted} assertion(s). Every origin THIS BUILD contacts, on a cold load and across all eight pads, is on a list declared in exactly one place: ONE RATIFIED EXCEPTION, the Map panel's OpenStreetMap basemap, owner-approved 2026-09-04 against three costed alternatives; and TWO UNRATIFIED origins that ship today and that NOBODY HAS RULED ON — cdnjs.cloudflare.com, which is not a peer of the ratified one but its PRECONDITION because the basemap is built by Leaflet's own constructor, and cdn.jsdelivr.net. Both are recorded so they cannot be forgotten, not because they are approved. NOT COVERED, DELIBERATELY: a Supabase origin a parent configures in Settings is data rather than code, differs per device, and has its own number. A third-party origin outside that list fails this check, which is the whole of what PUP-WO-0705 was for.`);
 }

@@ -602,7 +602,16 @@ jobs:
         # A GREEN RUN HERE MEANS "ONLY THESE", NOT "NONE". Its pass line names the one
         # ratified exception with its date AND the two origins that ship today which
         # NOBODY HAS RULED ON (architecture §10) — so a reader of a green build learns
-        # they exist instead of inferring silence.
+        # they exist instead of inferring silence. One of those two is not a peer of the
+        # ratified origin but its PRECONDITION: the basemap is built by Leaflet's own
+        # constructor, so without cdnjs there is no basemap at all.
+        #
+        # AND IT ENUMERATES WHAT THE BUILD SHIPS, NOT WHAT A CONFIGURED DEVICE CONTACTS.
+        # A Supabase origin a parent sets in Settings is DATA, not code — it varies per
+        # device, cannot be enumerated at build time, and is polled every 3s where one is
+        # set. Covering it here would make this check either unfalsifiable or red on every
+        # configured device, so it is ruled a separate class with its own number. The
+        # pass line says so rather than implying coverage it does not have.
         run: node .github/ci/demo-thirdparty.mjs .
 
       - name: "Check 28 — check 27's controls, a second origin shown red"
