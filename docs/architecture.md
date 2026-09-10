@@ -466,6 +466,35 @@ alone, the review still happens, and a bad nudge costs one wasted look. **The mo
 channel carries an action rather than an attention, it stops being a notification and
 becomes a remote control, and that is a ruling for Scotty rather than for CC-A.**
 
+**AN ASSERTION MUST BE ABLE TO FAIL FOR ITS OWN REASON — AND THERE ARE EXACTLY THREE WAYS IT
+CANNOT.** *(Ruled 2026-09-10. **The builder's, and it unifies findings this record had been
+keeping as separate incidents.**)*
+
+Three instruments failed the same way in one cycle. **They are one shape, not three
+accidents:**
+
+| # | the way it cannot fail | the instance |
+|---|---|---|
+| **1 · SCOPE** | its scope **cannot contain** its subject | `celebEl.querySelectorAll('.bp-flash')` — and `flash()` appends to a **sibling**, so the count is structurally zero for every build that could exist |
+| **2 · THRESHOLD** | the threshold is **already met by the state it exists to reject** | the win floor at `0.30` — and the scrim **alone** scores `0.5395`, so the exact state §0 condemned cleared it by 1.8× |
+| **3 · SUBSTITUTE** | **something other than its subject** satisfies it | a **cumulative** `doSound` count reaching eight — which a plant breaking *every pad handler* still cleared |
+
+> **THE TEST, ASKED BEFORE THE PLANT IS WRITTEN: what EXACT BUILD makes this clause print its
+> failure message?** *If that build cannot be described, the clause is decoration.*
+
+**AND THE EMPIRICAL FACT IS THE REASON TO ADOPT THE TEST: none of the three was found by
+reading. All three were found by a plant.** Each had been read many times — two of them
+carried comments asserting they stood guard. **Reading an assertion tells you what it says;
+only a plant tells you what it can do.**
+
+**A FOURTH SHAPE, ADJACENT AND WORTH SEPARATING.** `ease-out` on a multi-stop opacity envelope
+front-loaded the final segment, so **over a third of the win was a dark screen with the word
+already gone** — while the check's number was correct. That clause **could** fail; it simply
+measured a proxy that had diverged from the thing the child sees. **Not "cannot fail" but
+"fails about the wrong thing"** — the family §6.1 member 7 names, and it wants a different
+remedy: not a plant, but asking whether the quantity measured is still the quantity that
+matters.
+
 **A REPAIR INHERITS THE DEFECT'S SHAPE. PLANT THE FIX.** *(Ruled 2026-09-04, after it
 happened THREE TIMES IN ONE WORK ORDER.)*
 
